@@ -1,0 +1,853 @@
+// Bridge into the game's compiled GML.
+//
+// Two runtime helpers are needed, and both are located by CONSENSUS pattern
+// scanning over many named functions rather than by hardcoded address:
+//
+//   YYSetString(RValue* dst, const char* src)
+//       Every script that touches a string literal does
+//           lea rdx, [rip+disp]        ; -> a printable string in .rdata
+//           call <YYSetString>
+//       so we tally the call target across hundreds of functions and take the
+//       one that dominates.
+//
+//   g_pCurrentSelf  (CInstance** )
+//       Every script prologue stores its `self` into one global:
+//           mov [rip+disp], rcx
+//       Same tally trick. Reading it gives us a valid CInstance to pass along,
+//       which matters because some scripts dereference `self`.
+
+#include "gml.h"
+#include "log.h"
+#include "symbols.h"
+#include "tracer.h"
+
+#include <windows.h>
+#include <intrin.h>
+#include <MinHook.h>
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <unordered_map>
+
+namespace mod::gml {
+namespace {
+
+using SetStringFn = void (*)(RValue*, const char*);
+using ScriptFn    = RValue* (*)(void* self, void* other, RValue* result,
+                                int argc, RValue** args);
+// Object events take only the instance pair.
+using EventFn     = void (*)(void* self, void* other);
+
+// Defined with the player tracker further down; the weapon recorder feeds it a
+// known instance/x/y triple so the position offset can be found exactly.
+void CalibrateFromKnown(const void* inst, double x, double y);
+
+SetStringFn g_setString    = nullptr;
+void**      g_pCurrentSelf = nullptr;
+
+// Recorded from a genuine call by the game; see InstallCapture below.
+Capture     g_capture;
+bool        g_useCaptured     = true;
+ScriptFn    g_captureOriginal = nullptr;
+EventFn     g_captureEventOrig = nullptr;
+void*       g_capturedFn      = nullptr;
+
+// Always-on recorder for the weapon spawner, kept separate from the
+// user-driven capture so the two never contend for one hook slot.
+Capture     g_weaponRec;
+ScriptFn    g_weaponRecOrig = nullptr;
+bool        g_capturedIsEvent = false;
+
+bool        g_ready  = false;
+std::string g_status = "not initialised";
+
+// How far into each function we look for the patterns.
+constexpr std::size_t kScanWindow = 2048;
+// How many resolved functions to sample. Larger samples make the vote margins
+// clearer; the whole scan still costs well under a tenth of a second.
+constexpr std::size_t kSampleSize = 4000;
+
+bool Readable(std::uintptr_t p, std::size_t n) {
+    return sym::TextRange().contains(p) && sym::TextRange().contains(p + n);
+}
+
+bool PrintableStringAt(std::uintptr_t p, std::size_t minLen) {
+    auto rdata = sym::RdataRange();
+    if (!rdata.contains(p)) return false;
+
+    const auto* s = reinterpret_cast<const unsigned char*>(p);
+    for (std::size_t i = 0; i < 64; ++i) {
+        if (p + i >= rdata.hi) return false;
+        if (s[i] == 0) return i >= minLen;
+        if (s[i] < 0x20 || s[i] > 0x7e) return false;
+    }
+    return true;
+}
+
+// Tally `call rel32` targets that immediately follow a `lea rdx, [rip+d32]`
+// pointing at a printable .rdata string.
+void TallySetString(std::uintptr_t fn, std::unordered_map<std::uintptr_t, int>& votes) {
+    for (std::size_t i = 0; i + 12 < kScanWindow; ++i) {
+        const std::uintptr_t at = fn + i;
+        if (!Readable(at, 12)) return;
+
+        const auto* b = reinterpret_cast<const unsigned char*>(at);
+        // 48 8D 15 d32  =  lea rdx, [rip+d32]
+        if (!(b[0] == 0x48 && b[1] == 0x8D && b[2] == 0x15)) continue;
+
+        std::int32_t disp;
+        std::memcpy(&disp, b + 3, 4);
+        const std::uintptr_t strTarget = at + 7 + static_cast<std::intptr_t>(disp);
+        if (!PrintableStringAt(strTarget, 3)) continue;
+
+        // Look a short way ahead for the consuming call.
+        for (std::size_t j = 7; j < 28 && Readable(at + j, 5); ++j) {
+            const auto* c = reinterpret_cast<const unsigned char*>(at + j);
+            if (c[0] != 0xE8) continue;
+            std::int32_t rel;
+            std::memcpy(&rel, c + 1, 4);
+            const std::uintptr_t target = at + j + 5 + static_cast<std::intptr_t>(rel);
+            if (sym::TextRange().contains(target)) ++votes[target];
+            break;
+        }
+    }
+}
+
+// Tally `mov [rip+d32], rcx` (48 89 0D d32) in function prologues.
+void TallyCurrentSelf(std::uintptr_t fn, std::unordered_map<std::uintptr_t, int>& votes) {
+    for (std::size_t i = 0; i + 7 < 0x100; ++i) {
+        const std::uintptr_t at = fn + i;
+        if (!Readable(at, 7)) return;
+
+        const auto* b = reinterpret_cast<const unsigned char*>(at);
+        if (!(b[0] == 0x48 && b[1] == 0x89 && b[2] == 0x0D)) continue;
+
+        std::int32_t disp;
+        std::memcpy(&disp, b + 3, 4);
+        const std::uintptr_t target = at + 7 + static_cast<std::intptr_t>(disp);
+        if (sym::DataRange().contains(target)) ++votes[target];
+    }
+}
+
+// Returns the winner only if it clearly dominates; a weak consensus means the
+// pattern changed and we must not guess.
+std::uintptr_t Winner(const std::unordered_map<std::uintptr_t, int>& votes,
+                      int minVotes, const char* what) {
+    std::uintptr_t best = 0, second = 0;
+    int bestN = 0, secondN = 0;
+    for (const auto& [addr, n] : votes) {
+        if (n > bestN) { second = best; secondN = bestN; best = addr; bestN = n; }
+        else if (n > secondN) { second = addr; secondN = n; }
+    }
+    Logf("gml: %s consensus -> %p (%d votes; runner-up %p %d)",
+         what, reinterpret_cast<void*>(best), bestN,
+         reinterpret_cast<void*>(second), secondN);
+
+    if (bestN < minVotes || bestN < secondN * 2) {
+        Logf("[!] gml: %s consensus too weak", what);
+        return 0;
+    }
+    return best;
+}
+
+// Structural check that a candidate really is YYSetString: its body must write
+// the STRING kind (1) into offset 0x0C of the RValue it was handed, i.e.
+//   mov dword ptr [reg+0x0C], 1   ->   C7 4x 0C 01 00 00 00
+// Register-agnostic, so a recompile that picks a different register still matches.
+bool LooksLikeSetString(std::uintptr_t fn) {
+    for (std::size_t i = 0; i + 7 < 0x140; ++i) {
+        if (!Readable(fn + i, 7)) return false;
+        const auto* b = reinterpret_cast<const unsigned char*>(fn + i);
+        if (b[0] != 0xC7) continue;
+        if ((b[1] & 0xF8) != 0x40) continue;   // mod=01, reg=000, rm=any base
+        if (b[2] != 0x0C) continue;            // displacement = RValue.kind
+        std::int32_t imm;
+        std::memcpy(&imm, b + 3, 4);
+        if (imm == kString) return true;
+    }
+    return false;
+}
+
+// Ranks candidates by votes, then returns the first that passes validation.
+std::uintptr_t BestValidated(const std::unordered_map<std::uintptr_t, int>& votes,
+                             bool (*validate)(std::uintptr_t), const char* what) {
+    std::vector<std::pair<int, std::uintptr_t>> ranked;
+    ranked.reserve(votes.size());
+    for (const auto& [addr, n] : votes) ranked.emplace_back(n, addr);
+    std::sort(ranked.rbegin(), ranked.rend());
+
+    for (std::size_t i = 0; i < ranked.size() && i < 8; ++i) {
+        const bool ok = validate(ranked[i].second);
+        Logf("gml: %s candidate #%zu %p (%d votes) -> %s",
+             what, i + 1, reinterpret_cast<void*>(ranked[i].second),
+             ranked[i].first, ok ? "VALIDATED" : "rejected");
+        if (ok) return ranked[i].second;
+    }
+    Logf("[!] gml: no %s candidate passed validation", what);
+    return 0;
+}
+
+} // namespace
+
+bool Init() {
+    g_ready = false;
+
+    if (!sym::Healthy()) {
+        g_status = "symbol resolver unhealthy";
+        return false;
+    }
+
+    std::unordered_map<std::uintptr_t, int> strVotes, selfVotes;
+
+    std::size_t sampled = 0;
+    for (const sym::Entry& e : sym::All()) {
+        if (sampled >= kSampleSize) break;
+        if (std::strncmp(e.name, "gml_Script_", 11) != 0) continue;
+        ++sampled;
+
+        const auto fn = reinterpret_cast<std::uintptr_t>(e.func);
+        TallySetString(fn, strVotes);
+        TallyCurrentSelf(fn, selfVotes);
+    }
+    Logf("gml: sampled %zu functions", sampled);
+
+    // Votes narrow the field; the structural check picks the winner, so a thin
+    // margin between similar string helpers cannot pick the wrong one.
+    const std::uintptr_t setStr = BestValidated(strVotes, &LooksLikeSetString, "YYSetString");
+    const std::uintptr_t selfP  = Winner(selfVotes, 40, "currentSelf");
+
+    if (!setStr || !selfP) {
+        g_status = "could not resolve runtime helpers";
+        return false;
+    }
+
+    g_setString    = reinterpret_cast<SetStringFn>(setStr);
+    g_pCurrentSelf = reinterpret_cast<void**>(selfP);
+
+    g_ready  = true;
+    g_status = "ok";
+    Logf("gml: bridge ready");
+    return true;
+}
+
+bool        Ready()  { return g_ready; }
+const char* Status() { return g_status.c_str(); }
+
+void SetReal(RValue& v, double value) {
+    v.real  = value;
+    v.flags = 0;
+    v.kind  = kReal;
+}
+
+void SetUndefined(RValue& v) {
+    v.i64   = 0;
+    v.flags = 0;
+    v.kind  = kUndefined;
+}
+
+bool SetString(RValue& v, const char* text) {
+    if (!g_ready || !g_setString) return false;
+    // Note: the game stores `text` by pointer, so the caller's buffer must
+    // stay alive until the call that consumes this RValue returns.
+    g_setString(&v, text);
+    return v.kind == kString;
+}
+
+std::string ToString(const RValue& v) {
+    switch (v.kind) {
+    case kReal:   { char b[64]; std::snprintf(b, sizeof(b), "%g", v.real); return b; }
+    case kBool:   return v.i32 ? "true" : "false";
+    case kInt32:  { char b[32]; std::snprintf(b, sizeof(b), "%d", v.i32); return b; }
+    case kInt64:  { char b[32]; std::snprintf(b, sizeof(b), "%lld", static_cast<long long>(v.i64)); return b; }
+    case kUndefined: return "<undefined>";
+    case kRef:       return "<ref>";
+    case kUnset:     return "<unset>";
+    case kString: {
+        const auto* rs = static_cast<const RefString*>(v.ptr);
+        if (!rs || !rs->chars) return "<null string>";
+        const int len = rs->length & 0x7FFFFFFF;
+        if (len < 0 || len > (1 << 20)) return "<bad string>";
+        return std::string(rs->chars, static_cast<std::size_t>(len));
+    }
+    default: {
+        char b[64];
+        std::snprintf(b, sizeof(b), "<kind %d>", v.kind);
+        return b;
+    }
+    }
+}
+
+namespace {
+
+// 0xE06D7363 is a C++ throw. When the game's GML runtime rejects a call it
+// raises one of these rather than faulting, and the thrown object carries the
+// error text - which is far more useful than "it failed". A vectored handler
+// lets us read that text without disturbing normal exception handling: we only
+// look, then always continue the search.
+constexpr DWORD kCppException = 0xE06D7363;
+
+thread_local bool  g_inCall = false;
+thread_local char  g_lastError[512] = {};
+
+bool ReadableString(const char* p, std::size_t minLen) {
+    if (!p) return false;
+    __try {
+        std::size_t i = 0;
+        for (; i < 300; ++i) {
+            const auto c = static_cast<unsigned char>(p[i]);
+            if (c == 0) break;
+            if (c < 0x09 || c > 0x7e) return false;
+        }
+        return i >= minLen;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+LONG CALLBACK ExceptionProbe(EXCEPTION_POINTERS* info) {
+    if (!g_inCall) return EXCEPTION_CONTINUE_SEARCH;
+    const EXCEPTION_RECORD* er = info->ExceptionRecord;
+    if (er->ExceptionCode != kCppException) return EXCEPTION_CONTINUE_SEARCH;
+    if (er->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
+
+    // ExceptionInformation[1] points at the thrown object. Rather than decode
+    // MSVC's throw metadata, scan the first few slots for a pointer to text.
+    auto* obj = reinterpret_cast<const char* const*>(er->ExceptionInformation[1]);
+    if (!obj) return EXCEPTION_CONTINUE_SEARCH;
+
+    __try {
+        for (int i = 0; i < 8; ++i) {
+            const char* candidate = obj[i];
+            if (ReadableString(candidate, 8)) {
+                std::snprintf(g_lastError, sizeof(g_lastError), "%s", candidate);
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
+        }
+        // Some throws hold the text inline.
+        if (ReadableString(reinterpret_cast<const char*>(obj), 8))
+            std::snprintf(g_lastError, sizeof(g_lastError), "%s",
+                          reinterpret_cast<const char*>(obj));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void* g_vehHandle = nullptr;
+
+} // namespace
+
+const char* LastError() { return g_lastError; }
+
+bool Call(void* func, RValue* result, RValue** args, int argc) {
+    // Prefer a self/other pair recorded from a genuine call - many scripts only
+    // behave when run as the right instance. Otherwise borrow whatever instance
+    // the game last ran code as, since a null self would fault.
+    void* self  = g_pCurrentSelf ? *g_pCurrentSelf : nullptr;
+    void* other = self;
+    if (g_useCaptured && g_capture.valid && g_capture.self) {
+        self  = g_capture.self;
+        other = g_capture.other;
+    }
+    return CallAs(func, result, args, argc, self, other);
+}
+
+bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, void* other) {
+    if (!g_ready || !func || !result) return false;
+
+    if (!g_vehHandle) g_vehHandle = AddVectoredExceptionHandler(1, &ExceptionProbe);
+    g_lastError[0] = '\0';
+
+    result->ptr   = nullptr;
+    result->flags = 0;
+    result->kind  = kUnset;
+
+    auto fn = reinterpret_cast<ScriptFn>(func);
+
+    g_inCall = true;
+    __try {
+        fn(self, other, result, argc, args);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_inCall = false;
+        const DWORD code = GetExceptionCode();
+        if (g_lastError[0])
+            Logf("[!] gml: %s rejected the call: %s",
+                 code == kCppException ? "the game" : "fault", g_lastError);
+        else
+            Logf("[!] gml: exception 0x%08lX calling %p (no message recovered)", code, func);
+        return false;
+    }
+    g_inCall = false;
+    return true;
+}
+
+bool CallByName(const std::string& symbol, RValue* result, RValue** args, int argc) {
+    void* fn = sym::Find(symbol);
+    if (!fn) {
+        Logf("[!] gml: symbol not found: %s", symbol.c_str());
+        return false;
+    }
+    return Call(fn, result, args, argc);
+}
+
+// ------------------------------------------------------------- observation
+
+namespace {
+
+RValue* STDMETHODCALLTYPE CaptureDetour(void* self, void* other, RValue* result,
+                                        int argc, RValue** args) {
+    // Who invoked us matters as much as the arguments: it names the routine that
+    // actually builds the thing we are trying to reproduce.
+    const void* retAddr = _ReturnAddress();
+    const char* caller  = sym::OwnerOf(retAddr);
+    g_capture.self  = self;
+    g_capture.other = other;
+    g_capture.argc  = argc;
+    g_capture.args.clear();
+    g_capture.raw.clear();
+    ++g_capture.hits;
+
+    if (args) {
+        for (int i = 0; i < argc && i < 12; ++i) {
+            char line[160];
+            if (args[i]) {
+                std::snprintf(line, sizeof(line), "kind=%d %s",
+                              args[i]->kind, ToString(*args[i]).c_str());
+            } else {
+                std::snprintf(line, sizeof(line), "<null>");
+            }
+            g_capture.args.emplace_back(line);
+            // Keep the exact value too: argument 1 is a REF, which we cannot
+            // construct ourselves and can only replay.
+            g_capture.raw.push_back(args[i] ? *args[i] : RValue{});
+        }
+    }
+    g_capture.valid  = true;
+    g_capture.caller = caller ? caller : "<unknown>";
+
+    // The game calls this often; a few samples are plenty and keep the log usable.
+    if (g_capture.hits <= 5) {
+        Logf("capture: %s called by the game - self=%p other=%p argc=%d",
+             g_capture.symbol.c_str(), self, other, argc);
+        Logf("capture:    <- called from %s", caller ? caller : "<unknown>");
+        for (std::size_t i = 0; i < g_capture.args.size(); ++i)
+            Logf("capture:    arg[%zu] %s", i, g_capture.args[i].c_str());
+    }
+
+    return g_captureOriginal(self, other, result, argc, args);
+}
+
+// Events carry no arguments, so there is nothing to record beyond the pair of
+// instances - which is exactly what we need to run the event ourselves later.
+void STDMETHODCALLTYPE CaptureEventDetour(void* self, void* other) {
+    const void* retAddr = _ReturnAddress();
+    const char* caller  = sym::OwnerOf(retAddr);
+
+    g_capture.self   = self;
+    g_capture.other  = other;
+    g_capture.argc   = 0;
+    g_capture.args.clear();
+    g_capture.raw.clear();
+    g_capture.valid  = true;
+    g_capture.caller = caller ? caller : "<unknown>";
+    ++g_capture.hits;
+
+    if (g_capture.hits <= 5) {
+        Logf("capture: %s (event) - self=%p other=%p", g_capture.symbol.c_str(), self, other);
+        Logf("capture:    <- called from %s", caller ? caller : "<unknown>");
+    }
+    g_captureEventOrig(self, other);
+}
+
+// Records every scr_weapon_loot the game makes, so a replay is always available
+// without the player having to run a capture by hand.
+RValue* STDMETHODCALLTYPE WeaponRecDetour(void* self, void* other, RValue* result,
+                                          int argc, RValue** args) {
+    if (args && argc > 0) {
+        const int n = argc > 16 ? 16 : argc;
+        g_weaponRec.raw.assign(static_cast<std::size_t>(n), RValue{});
+        for (int i = 0; i < n; ++i)
+            if (args[i]) g_weaponRec.raw[static_cast<std::size_t>(i)] = *args[i];
+        g_weaponRec.self  = self;
+        g_weaponRec.other = other;
+        g_weaponRec.argc  = argc;
+        if (!g_weaponRec.valid)
+            Logf("weapon recorder: first sample captured (argc=%d)", argc);
+        g_weaponRec.valid = true;
+        // A real call gives an instance together with the exact x/y it was
+        // handed - a known answer for locating the position fields.
+        if (argc > 2 && args[1] && args[2] &&
+            args[1]->kind == kReal && args[2]->kind == kReal)
+            CalibrateFromKnown(self, args[1]->real, args[2]->real);
+        ++g_weaponRec.hits;
+    }
+    return g_weaponRecOrig(self, other, result, argc, args);
+}
+
+bool g_abiTested = false;
+bool g_abiProven = false;
+
+} // namespace
+
+bool InstallCapture(const std::string& symbol) {
+    void* fn = sym::Find(symbol);
+    if (!fn) {
+        fn = sym::Find("gml_Script_" + symbol);
+        if (!fn) { Logf("[!] capture: symbol not found: %s", symbol.c_str()); return false; }
+    }
+    // Re-targeting must work: the whole point of the tool is to move it from one
+    // function to the next while hunting a signature.
+    if (g_capturedFn) {
+        if (g_capturedFn == fn) {
+            Logf("capture: already watching %s - resetting samples", symbol.c_str());
+            const std::string keep = g_capture.symbol;
+            g_capture = Capture{};
+            g_capture.symbol = keep;
+            return true;
+        }
+        MH_DisableHook(g_capturedFn);
+        MH_RemoveHook(g_capturedFn);
+        Logf("capture: stopped watching %s", g_capture.symbol.c_str());
+        g_capturedFn       = nullptr;
+        g_captureOriginal  = nullptr;
+        g_captureEventOrig = nullptr;
+    }
+
+    const bool isEvent = IsEventSymbol(symbol);
+    void* detour = isEvent ? reinterpret_cast<void*>(&CaptureEventDetour)
+                           : reinterpret_cast<void*>(&CaptureDetour);
+    void** orig  = isEvent ? reinterpret_cast<void**>(&g_captureEventOrig)
+                           : reinterpret_cast<void**>(&g_captureOriginal);
+
+    if (MH_CreateHook(fn, detour, orig) != MH_OK) {
+        Logf("[!] capture: MH_CreateHook failed for %s", symbol.c_str());
+        return false;
+    }
+    if (MH_EnableHook(fn) != MH_OK) {
+        Logf("[!] capture: MH_EnableHook failed for %s", symbol.c_str());
+        MH_RemoveHook(fn);
+        g_captureOriginal  = nullptr;
+        g_captureEventOrig = nullptr;
+        return false;
+    }
+
+    g_capturedFn      = fn;
+    g_capturedIsEvent = isEvent;
+    g_capture         = Capture{};
+    g_capture.symbol  = symbol;
+    Logf("capture: watching %s at %p - trigger it in game", symbol.c_str(), fn);
+    return true;
+}
+
+bool IsEventSymbol(const std::string& symbol) {
+    return symbol.rfind("gml_Object_", 0) == 0 || symbol.rfind("gml_RoomCC_", 0) == 0;
+}
+
+bool CallEvent(void* func, void* self, void* other) {
+    if (!g_ready || !func) return false;
+
+    // No instance given: fall back the same way Call() does, since an event
+    // always runs as some instance and a null self would fault immediately.
+    if (!self) {
+        if (g_useCaptured && g_capture.valid && g_capture.self) {
+            self  = g_capture.self;
+            other = g_capture.other;
+        } else if (g_pCurrentSelf) {
+            self = *g_pCurrentSelf;
+        }
+    }
+    if (!self) return false;
+
+    if (!g_vehHandle) g_vehHandle = AddVectoredExceptionHandler(1, &ExceptionProbe);
+    g_lastError[0] = '\0';
+
+    auto fn = reinterpret_cast<EventFn>(func);
+    g_inCall = true;
+    __try {
+        fn(self, other ? other : self);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_inCall = false;
+        const DWORD code = GetExceptionCode();
+        if (g_lastError[0]) Logf("[!] gml: event rejected: %s", g_lastError);
+        else                Logf("[!] gml: exception 0x%08lX in event %p", code, func);
+        return false;
+    }
+    g_inCall = false;
+    return true;
+}
+
+const Capture& LastCapture()  { return g_capture; }
+const Capture& WeaponRecord() { return g_weaponRec; }
+
+// ---------------------------------------------------------------- player
+
+namespace {
+
+void*    g_playerInst       = nullptr;
+EventFn  g_playerStepOrig   = nullptr;
+int      g_posOffset        = -1;    // byte offset of x inside the CInstance
+bool     g_posExact         = false; // true once derived from a known-answer sample
+int      g_posCandidate     = -1;
+int      g_posCandidateHits = 0;
+
+constexpr int kSnapshotBytes = 0x200;
+unsigned char g_prevSnap[kSnapshotBytes];
+bool          g_haveSnap = false;
+
+// World coordinates are hundreds to thousands of pixels. Rejecting zero and
+// near-zero matters: the first attempt at this latched onto a field that merely
+// wobbled around 0.0, and the game then dropped items at the tile origin.
+bool PlausibleCoord(double v) {
+    if (v != v) return false;                       // NaN
+    const double a = v < 0.0 ? -v : v;
+    return a > 8.0 && a < 1.0e6;
+}
+
+// Reads instance bytes defensively: the allocation may be smaller than our
+// window, and faulting inside a per-frame hook would take the game down.
+bool SafeRead(const void* src, void* dst, int n) {
+    __try {
+        std::memcpy(dst, src, static_cast<std::size_t>(n));
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Exact calibration. A recorded scr_weapon_loot call hands us an instance plus
+// the very x/y it was given, so the offset can be found by matching rather than
+// guessing. This always wins over the movement heuristic below.
+void CalibrateFromKnown(const void* inst, double x, double y) {
+    if (g_posExact || !inst) return;
+    if (!PlausibleCoord(x) || !PlausibleCoord(y)) return;
+
+    unsigned char buf[kSnapshotBytes];
+    if (!SafeRead(inst, buf, kSnapshotBytes)) return;
+
+    for (int off = 0; off + 16 <= kSnapshotBytes; off += 8) {
+        double a, b;
+        std::memcpy(&a, buf + off, 8);
+        std::memcpy(&b, buf + off + 8, 8);
+        if (a == x && b == y) {
+            g_posOffset = off;
+            g_posExact  = true;
+            Logf("player tracker: position offset 0x%X confirmed against a real spawn "
+                 "(x=%.1f y=%.1f)", off, x, y);
+            return;
+        }
+    }
+}
+
+// Fallback heuristic. The first version of this took the first offset that
+// looked like movement and stopped there, so an unrelated low field always won
+// and the real coordinates were never reached. Instead, score every candidate
+// across many frames and take the one that consistently behaves like a
+// position - adjacent doubles, sane magnitude, small per-frame deltas.
+constexpr int kMaxCandidates = 64;
+int g_candOff[kMaxCandidates];
+int g_candHits[kMaxCandidates];
+int g_candCount  = 0;
+int g_calibFrames = 0;
+
+void NoteCandidate(int off) {
+    for (int i = 0; i < g_candCount; ++i)
+        if (g_candOff[i] == off) { ++g_candHits[i]; return; }
+    if (g_candCount < kMaxCandidates) {
+        g_candOff[g_candCount]  = off;
+        g_candHits[g_candCount] = 1;
+        ++g_candCount;
+    }
+}
+
+void CalibratePosition(const void* inst) {
+    if (g_posExact || g_posOffset >= 0 || !inst) return;
+
+    unsigned char cur[kSnapshotBytes];
+    if (!SafeRead(inst, cur, kSnapshotBytes)) return;
+
+    if (!g_haveSnap) {
+        std::memcpy(g_prevSnap, cur, kSnapshotBytes);
+        g_haveSnap = true;
+        return;
+    }
+
+    bool moved = false;
+    for (int off = 0; off + 16 <= kSnapshotBytes; off += 8) {
+        double oldX, newX, oldY, newY;
+        std::memcpy(&oldX, g_prevSnap + off, 8);
+        std::memcpy(&newX, cur + off, 8);
+        std::memcpy(&oldY, g_prevSnap + off + 8, 8);
+        std::memcpy(&newY, cur + off + 8, 8);
+
+        if (!PlausibleCoord(newX) || !PlausibleCoord(newY)) continue;
+        if (!PlausibleCoord(oldX) || !PlausibleCoord(oldY)) continue;
+
+        const double dx = newX - oldX, dy = newY - oldY;
+        if (dx == 0.0 && dy == 0.0) continue;                  // needs movement
+        if (dx < -64.0 || dx > 64.0 || dy < -64.0 || dy > 64.0) continue;
+
+        NoteCandidate(off);
+        moved = true;
+    }
+    std::memcpy(g_prevSnap, cur, kSnapshotBytes);
+    if (!moved) return;
+
+    // Decide once there is enough evidence, and only if one candidate clearly wins.
+    if (++g_calibFrames < 40) return;
+
+    int best = -1, bestHits = 0, secondHits = 0;
+    for (int i = 0; i < g_candCount; ++i) {
+        if (g_candHits[i] > bestHits) { secondHits = bestHits; best = g_candOff[i]; bestHits = g_candHits[i]; }
+        else if (g_candHits[i] > secondHits) { secondHits = g_candHits[i]; }
+    }
+    if (best < 0 || bestHits < 12 || bestHits < secondHits + 4) {
+        g_calibFrames = 0;                                     // keep gathering
+        return;
+    }
+
+    double vx, vy;
+    std::memcpy(&vx, cur + best, 8);
+    std::memcpy(&vy, cur + best + 8, 8);
+    g_posOffset = best;
+    Logf("player tracker: position at instance+0x%X by movement (x=%.1f y=%.1f, %d/%d votes)",
+         best, vx, vy, bestHits, secondHits);
+}
+
+void STDMETHODCALLTYPE PlayerStepDetour(void* self, void* other) {
+    if (self) {
+        if (!g_playerInst) Logf("player tracker: player instance %p", self);
+        g_playerInst = self;
+        CalibratePosition(self);
+
+        // Feeds the activity log so movement can be lined up against the
+        // script trace on a shared clock.
+        double px = 0.0, py = 0.0;
+        const bool havePos = PlayerPosition(px, py);
+        tracer::NotePlayerStep(px, py, havePos);
+    }
+    g_playerStepOrig(self, other);
+}
+
+} // namespace
+
+bool ReadMemory(const void* src, void* dst, int bytes) {
+    if (!src || !dst || bytes <= 0 || bytes > 1 << 16) return false;
+    return SafeRead(src, dst, bytes);
+}
+
+void* PlayerInstance() { return g_playerInst; }
+
+bool PlayerPosition(double& x, double& y) {
+    if (!g_playerInst || g_posOffset < 0) return false;
+    const auto* base = static_cast<const unsigned char*>(g_playerInst) + g_posOffset;
+    double vx, vy;
+    if (!SafeRead(base, &vx, 8) || !SafeRead(base + 8, &vy, 8)) return false;
+    if (!PlausibleCoord(vx) || !PlausibleCoord(vy)) return false;
+    x = vx;
+    y = vy;
+    return true;
+}
+
+bool InstallPlayerTracker() {
+    if (g_playerStepOrig) return true;
+    void* fn = sym::Find("gml_Object_o_player_Step_0");
+    if (!fn) { Logf("[!] player tracker: o_player Step not found"); return false; }
+
+    if (MH_CreateHook(fn, reinterpret_cast<void*>(&PlayerStepDetour),
+                      reinterpret_cast<void**>(&g_playerStepOrig)) != MH_OK ||
+        MH_EnableHook(fn) != MH_OK) {
+        Logf("[!] player tracker: hook failed");
+        g_playerStepOrig = nullptr;
+        return false;
+    }
+    Logf("player tracker: watching o_player Step");
+    return true;
+}
+
+bool InstallWeaponRecorder() {
+    if (g_weaponRecOrig) return true;
+    void* fn = sym::Find("gml_Script_scr_weapon_loot");
+    if (!fn) { Logf("[!] weapon recorder: scr_weapon_loot not found"); return false; }
+
+    if (MH_CreateHook(fn, reinterpret_cast<void*>(&WeaponRecDetour),
+                      reinterpret_cast<void**>(&g_weaponRecOrig)) != MH_OK ||
+        MH_EnableHook(fn) != MH_OK) {
+        Logf("[!] weapon recorder: hook failed");
+        g_weaponRecOrig = nullptr;
+        return false;
+    }
+    g_weaponRec.symbol = "scr_weapon_loot";
+    Logf("weapon recorder: watching scr_weapon_loot");
+    return true;
+}
+
+void SetUseCapturedContext(bool on) { g_useCaptured = on; }
+bool UseCapturedContext()           { return g_useCaptured; }
+
+bool AbiProven() { return g_abiProven; }
+
+void AbiSelfTest() {
+    if (g_abiTested || !g_ready) return;
+    g_abiTested = true;
+
+    // Wait until the game has actually run some GML, otherwise the borrowed
+    // `self` global is still null.
+    if (!g_pCurrentSelf || !*g_pCurrentSelf) {
+        g_abiTested = false;   // try again next frame
+        return;
+    }
+
+    Logf("gml: --- ABI self-test (self=%p) ---", *g_pCurrentSelf);
+
+    int passed = 0;
+
+    // 1) Zero-argument call. Only probes that do not need a loaded character,
+    //    since at the main menu there is no player and game-state lookups fault.
+    {
+        RValue result{};
+        if (CallByName("gml_Script_scr_console_sethp_help", &result, nullptr, 0)) {
+            Logf("gml:   no-arg call        -> kind=%d (%s)",
+                 result.kind, ToString(result).c_str());
+            if (result.kind != kUnset) ++passed;
+        } else {
+            Logf("gml:   no-arg call        -> FAILED");
+        }
+    }
+
+    // 2) Argument marshalling, using a pure numeric helper so nothing in the
+    //    game's state is involved: approach(0, 10, 3) must return 3.
+    {
+        RValue a{}, b{}, c{};
+        SetReal(a, 0.0);
+        SetReal(b, 10.0);
+        SetReal(c, 3.0);
+        RValue* args[3] = {&a, &b, &c};
+
+        RValue result{};
+        if (CallByName("gml_Script_scr_approach", &result, args, 3)) {
+            Logf("gml:   approach(0,10,3)   -> kind=%d value=%s",
+                 result.kind, ToString(result).c_str());
+            if (result.kind == kReal && result.real == 3.0) ++passed;
+        } else {
+            Logf("gml:   approach(0,10,3)   -> FAILED");
+        }
+    }
+
+    // 3) String construction round-trip through the game's own allocator.
+    {
+        static const char kProbe[] = "stoneshard-mod";   // must outlive the call
+        RValue s{};
+        if (SetString(s, kProbe)) {
+            const std::string back = ToString(s);
+            Logf("gml:   string round-trip  -> kind=%d value=\"%s\"", s.kind, back.c_str());
+            if (back == kProbe) ++passed;
+        } else {
+            Logf("gml:   string round-trip  -> FAILED");
+        }
+    }
+
+    g_abiProven = passed >= 2;
+    Logf("gml: --- ABI self-test %s (%d/3 checks) ---",
+         g_abiProven ? "PASSED" : "FAILED", passed);
+}
+
+} // namespace mod::gml

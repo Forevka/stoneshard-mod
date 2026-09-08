@@ -1,0 +1,12 @@
+# Build output and fetched third-party sources (ImGui, MinHook)
+build/
+_deps/
+
+# Runtime artifacts the mod writes into its own workspace
+*.log
+imgui.ini
+debug-cmd.txt
+debug-reply.txt
+
+# Copies of the player's save data, taken before the first cheat
+save-backups/
