@@ -58,8 +58,10 @@ add_library(stoneshard_mod SHARED
     src/hooks.cpp
     src/overlay.cpp
     src/log.cpp
+    src/paths.cpp
     src/symbols.cpp
     src/gml.cpp
+    src/builtins.cpp
     src/console.cpp
     src/cheats.cpp
     src/assets.cpp

@@ -10,3 +10,11 @@ debug-reply.txt
 
 # Copies of the player's save data, taken before the first cheat
 save-backups/
+
+# Per-instance mod data dirs for co-op testing (SSMOD_DATA_DIR)
+run/
+
+# OMC operational state, and Python caches from tools/re
+.omc/
+__pycache__/
+*.pyc

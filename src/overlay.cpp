@@ -7,10 +7,12 @@
 #include "cheats.h"
 #include "console.h"
 #include "gml.h"
+#include "builtins.h"
 #include "inspector.h"
 #include "tracer.h"
 #include "remote.h"
 #include "log.h"
+#include "paths.h"
 #include "symbols.h"
 
 #include <windows.h>
@@ -100,8 +102,9 @@ bool EnsureInitialised(IDXGISwapChain* swapChain) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
 
-    // Keep imgui.ini in the project workspace, NOT the game folder.
-    static std::string iniPath = std::string(MOD_DATA_DIR) + "\\imgui.ini";
+    // Keep imgui.ini in the mod's data dir, NOT the game folder - and one dir
+    // per process, so two instances do not fight over one layout file.
+    static std::string iniPath = paths::File("imgui.ini");
     io.IniFilename = iniPath.c_str();
 
     ImGui::StyleColorsDark();
@@ -166,6 +169,18 @@ void DrawStatusTab() {
         else
             ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f),
                                "Locating player - load a save to enable gear giving");
+    }
+
+    {
+        // The builtin registry is what makes instance fields readable by name.
+        if (builtins::Ready()) {
+            ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.45f, 1.0f),
+                               "Builtin registry OK - %zu functions (reflection available)",
+                               builtins::Count());
+            ImGui::TextDisabled("self-test: %s", builtins::SelfTestReport());
+        } else {
+            ImGui::TextDisabled("Builtin registry: %s", builtins::Status());
+        }
     }
 
     ImGui::Separator();
@@ -364,8 +379,12 @@ void OverlayRender(IDXGISwapChain* swapChain) {
     // We are on the game's render thread here, which is where GML must be
     // called from. Give the game a moment to run its own code first so the
     // borrowed `self` instance is populated.
-    if (g_frameCount > 120)
+    if (g_frameCount > 120) {
         gml::AbiSelfTest();
+        // Phase A runs as soon as the registry resolves; phase B waits for a
+        // character, so this keeps being called until one is loaded.
+        builtins::SelfTest();
+    }
 
     // The game hides the OS cursor, so ImGui has to draw its own while visible.
     ImGui::GetIO().MouseDrawCursor = g_visible;

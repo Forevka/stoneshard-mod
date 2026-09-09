@@ -1,5 +1,6 @@
 #include "savebackup.h"
 #include "log.h"
+#include "paths.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -48,7 +49,7 @@ void EnsureBackupOnce() {
         return;
     }
 
-    const auto dst = std::filesystem::path(MOD_DATA_DIR) / "save-backups" / Timestamp();
+    const auto dst = std::filesystem::path(paths::DataDir()) / "save-backups" / Timestamp();
     std::filesystem::create_directories(dst, ec);
     std::filesystem::copy(src, dst,
                           std::filesystem::copy_options::recursive |

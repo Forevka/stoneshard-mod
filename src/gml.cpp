@@ -19,6 +19,7 @@
 #include "gml.h"
 #include "log.h"
 #include "symbols.h"
+#include "builtins.h"
 #include "tracer.h"
 
 #include <windows.h>
@@ -586,6 +587,7 @@ void*    g_playerInst       = nullptr;
 EventFn  g_playerStepOrig   = nullptr;
 int      g_posOffset        = -1;    // byte offset of x inside the CInstance
 bool     g_posExact         = false; // true once derived from a known-answer sample
+bool     g_posFromReflection = false;
 int      g_posCandidate     = -1;
 int      g_posCandidateHits = 0;
 
@@ -736,14 +738,37 @@ bool ReadMemory(const void* src, void* dst, int bytes) {
 
 void* PlayerInstance() { return g_playerInst; }
 
+void* CurrentSelf() { return g_pCurrentSelf ? *g_pCurrentSelf : nullptr; }
+
 bool PlayerPosition(double& x, double& y) {
-    if (!g_playerInst || g_posOffset < 0) return false;
+    if (!g_playerInst) return false;
+
+    // Preferred: ask the game for "x"/"y" by NAME through GameMaker's reflection
+    // API. Two earlier attempts guessed the CInstance layout by watching which
+    // doubles changed while walking; both latched onto the wrong field. Reading
+    // the named variable removes the guesswork entirely, and it stays correct
+    // across game updates because nothing is pinned to an offset.
+    gml::RValue vx{}, vy{};
+    if (builtins::GetInstanceVar(g_playerInst, "x", &vx) &&
+        builtins::GetInstanceVar(g_playerInst, "y", &vy) &&
+        vx.kind == kReal && vy.kind == kReal) {
+        if (!g_posFromReflection) {
+            Logf("player position via reflection: x=%.2f y=%.2f", vx.real, vy.real);
+            g_posFromReflection = true;
+        }
+        x = vx.real;
+        y = vy.real;
+        return true;
+    }
+
+    // Fallback: the offset the movement heuristic settled on, if it ever did.
+    if (g_posOffset < 0) return false;
     const auto* base = static_cast<const unsigned char*>(g_playerInst) + g_posOffset;
-    double vx, vy;
-    if (!SafeRead(base, &vx, 8) || !SafeRead(base + 8, &vy, 8)) return false;
-    if (!PlausibleCoord(vx) || !PlausibleCoord(vy)) return false;
-    x = vx;
-    y = vy;
+    double bx, by;
+    if (!SafeRead(base, &bx, 8) || !SafeRead(base + 8, &by, 8)) return false;
+    if (!PlausibleCoord(bx) || !PlausibleCoord(by)) return false;
+    x = bx;
+    y = by;
     return true;
 }
 

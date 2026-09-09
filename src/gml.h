@@ -116,6 +116,11 @@ bool  PlayerPosition(double& x, double& y);
 // CInstance without risking a fault on a short allocation.
 bool  ReadMemory(const void* src, void* dst, int bytes);
 
+// Whatever instance the game last ran code as. Null until the game has run
+// some GML, which is why anything calling into the runtime waits for it.
+// Builtins need a plausible `self` even when they never look at it.
+void* CurrentSelf();
+
 bool           InstallWeaponRecorder();
 const Capture& WeaponRecord();
 

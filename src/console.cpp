@@ -47,7 +47,10 @@ std::vector<std::string> Tokenize(const std::string& line) {
 
     for (char c : line) {
         if (c == '"') { inQuotes = !inQuotes; has = true; continue; }
-        if (!inQuotes && (c == ' ' || c == '\t')) {
+        // \r and \n matter: commands arrive from a file read with fgets, which
+        // keeps the newline. Without this a symbol lookup sees "scr_savegame\n"
+        // and fails silently.
+        if (!inQuotes && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) {
             if (has) { out.push_back(cur); cur.clear(); has = false; }
             continue;
         }

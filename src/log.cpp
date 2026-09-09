@@ -1,4 +1,5 @@
 #include "log.h"
+#include "paths.h"
 
 #include <windows.h>
 #include <cstdarg>
@@ -29,7 +30,7 @@ std::string Timestamp() {
 void LogInit() {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_file) return;
-    g_file = std::fopen(MOD_DATA_DIR "\\stoneshard-mod.log", "w");
+    g_file = std::fopen(paths::File("stoneshard-mod.log").c_str(), "w");
 }
 
 void LogShutdown() {
