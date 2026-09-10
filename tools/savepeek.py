@@ -1,9 +1,9 @@
 """Read Stoneshard save files.
 
 The on-disk format is zlib(<json text><32 hex chars><NUL>), not the positional
-array over numeric variable ids that docs/multiplayer-research.md §4.4 concluded
-from `saveSelfData` having no field-name strings. The compiled serialiser may
-well be positional; what it *writes* is keyed JSON.
+array over numeric variable ids that `saveSelfData` having no field-name
+strings suggests. The compiled serialiser may well be positional; what it
+*writes* is keyed JSON.
 
 The 32-hex trailer looks like an MD5 but its input is UNVERIFIED: it is not
 md5 of the JSON body in UTF-8 or UTF-16, nor of the character or folder name.

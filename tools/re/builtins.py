@@ -76,10 +76,3 @@ if __name__ == '__main__':
     print('failure kinds:', Counter(k for k,_ in fails))
     json.dump({k:{'func':hex(v['func']),'nargs':v['nargs'],'flag':v['flag'],'site':hex(v['site']),'name_va':hex(v['name_va'])}
                for k,v in out.items()}, open('builtin_table.json','w'), indent=0)
-    print()
-    for n in ['network_create_socket','network_create_socket_ext','network_create_server','network_create_server_raw',
-              'network_connect','network_connect_raw','network_connect_async','network_connect_raw_async',
-              'network_send_packet','network_send_raw','network_send_broadcast','network_send_udp','network_send_udp_raw',
-              'network_resolve','network_destroy','network_set_timeout','network_set_config']:
-        v = out.get(n)
-        print('  %-28s %-14s nargs=%-4s flag=%s' % (n, hex(v['func']) if v else 'MISSING', v['nargs'] if v else '', v['flag'] if v else ''))
