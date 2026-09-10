@@ -11,6 +11,10 @@
 #include "inspector.h"
 #include "tracer.h"
 #include "remote.h"
+#include "gamespeed.h"
+#include "loot.h"
+#include "rewrite.h"
+#include "savemigrate.h"
 #include "log.h"
 #include "paths.h"
 #include "symbols.h"
@@ -335,6 +339,9 @@ void DrawDebugTab() {
         if (ImGui::BeginTabItem("Tracer"))    { DrawTracerPanel();               ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Inspector")) { inspector::DrawInspectorTab();   ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Breakpoints")) { DrawBreakpointPanel();     ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Rewrite"))   { rewrite::DrawRewriteTab();   ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Symbols"))   { DrawSymbolsTab();            ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Status"))    { DrawStatusTab();             ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
 }
@@ -345,12 +352,17 @@ void DrawUI() {
 
     ImGui::Begin("Stoneshard Mod");
 
+    // Ordered by who wants them: the tabs you play with first, the tooling
+    // that dissects the game after. Symbols and Status moved under Debug -
+    // they are diagnostics, and having seven top-level tabs meant hunting for
+    // the two that get used every session.
     if (ImGui::BeginTabBar("##tabs")) {
-        if (ImGui::BeginTabItem("Cheats"))  { cheats::DrawCheatsTab();    ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Console")) { console::DrawConsoleTab();  ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Symbols")) { DrawSymbolsTab();           ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Debug"))   { DrawDebugTab();             ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Status"))  { DrawStatusTab();            ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Cheats"))  { cheats::DrawCheatsTab();      ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Loot"))    { loot::DrawLootTab();          ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Speed"))   { gamespeed::DrawSpeedTab();    ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Saves"))   { savemigrate::DrawSavesTab();  ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Console")) { console::DrawConsoleTab();    ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Debug"))   { DrawDebugTab();               ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
 
@@ -374,6 +386,9 @@ void OverlayRender(IDXGISwapChain* swapChain) {
     ++g_frameCount;
 
     tracer::Tick();
+    // Re-assert the chosen game speed if the engine has moved it back.
+    gamespeed::Tick();
+
     remote::Poll();
 
     // We are on the game's render thread here, which is where GML must be

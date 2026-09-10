@@ -10,8 +10,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Where the built version.dll gets deployed by the explicit `deploy` target.
-set(STONESHARD_DIR "D:/torrent/Stoneshard (Early Access)/Stoneshard"
-    CACHE PATH "Stoneshard install directory")
+# Override on the command line for your own install:
+#     cmake -B build -DSTONESHARD_DIR="C:/path/to/Stoneshard"
+# or set the STONESHARD_DIR environment variable before configuring.
+if(DEFINED ENV{STONESHARD_DIR})
+    set(_ss_default "$ENV{STONESHARD_DIR}")
+else()
+    set(_ss_default "C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
+endif()
+set(STONESHARD_DIR "${_ss_default}" CACHE PATH "Stoneshard install directory")
 
 # ---------------------------------------------------------------- dependencies
 include(FetchContent)
@@ -33,6 +40,20 @@ FetchContent_Declare(minhook
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(minhook)
+
+
+# zlib. Save files are zlib(<json><md5><NUL>), and the md5 is salted with the
+# save's own FOLDER PATH - so a save copied into a different character slot
+# fails its own checksum. Re-signing an imported save therefore means
+# decompressing it, recomputing the hash against the new path, and
+# recompressing. MD5 itself comes from bcrypt, which ships with Windows.
+FetchContent_Declare(zlib
+    GIT_REPOSITORY https://github.com/madler/zlib.git
+    GIT_TAG        v1.3.1
+    GIT_SHALLOW    TRUE
+)
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zlib)
 
 set(MINHOOK_SOURCES
     ${minhook_SOURCE_DIR}/src/buffer.c
@@ -65,6 +86,13 @@ add_library(stoneshard_mod SHARED
     src/console.cpp
     src/cheats.cpp
     src/assets.cpp
+    src/items.cpp
+    src/character.cpp
+    src/body.cpp
+    src/gamespeed.cpp
+    src/rewrite.cpp
+    src/loot.cpp
+    src/savemigrate.cpp
     src/tracer.cpp
     src/remote.cpp
     src/inspector.cpp
@@ -78,9 +106,11 @@ target_include_directories(stoneshard_mod PRIVATE
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
     ${minhook_SOURCE_DIR}/include
+    ${zlib_SOURCE_DIR}
+    ${zlib_BINARY_DIR}
 )
 
-target_link_libraries(stoneshard_mod PRIVATE d3d11 dxgi)
+target_link_libraries(stoneshard_mod PRIVATE d3d11 dxgi bcrypt ole32 shell32 zlibstatic)
 
 # Log + imgui.ini live here, NEVER in the game folder.
 target_compile_definitions(stoneshard_mod PRIVATE
@@ -111,5 +141,18 @@ add_custom_target(deploy
             "${STONESHARD_DIR}/version.dll"
     DEPENDS stoneshard_mod
     COMMENT "Deploying version.dll -> ${STONESHARD_DIR}"
+    VERBATIM
+)
+# `deploy` fails while the game is running: Windows will not overwrite a loaded
+# DLL. `deploy-live` goes through tools/deploy.ps1, which moves the live file
+# aside instead - allowed even when locked - so a build can be staged at any
+# time and picked up on the next launch.
+add_custom_target(deploy-live
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/deploy.ps1"
+            -Source "$<TARGET_FILE:stoneshard_mod>"
+            -GameDir "${STONESHARD_DIR}"
+    DEPENDS stoneshard_mod
+    COMMENT "Staging version.dll -> ${STONESHARD_DIR} (safe while the game runs)"
     VERBATIM
 )

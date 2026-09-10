@@ -80,6 +80,12 @@ void Print(Line kind, const char* fmt, ...) {
     g_output.push_back({kind, buf});
     if (g_output.size() > kMaxOutput) g_output.pop_front();
     g_scrollToBottom = true;
+
+    // Mirror to the log. The console is ImGui widgets drawn inside the game, so
+    // its transcript is otherwise unreachable from outside the process - which
+    // makes every `call` result invisible to anything driving the mod through
+    // debug-cmd.txt, and unquotable when reporting a problem.
+    Logf("console: %s", buf);
 }
 
 void Execute(const std::string& line) {

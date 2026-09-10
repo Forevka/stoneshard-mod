@@ -55,7 +55,7 @@ bool GetInstanceVar(void* instance, const char* name, gml::RValue* out);
 //     decoded.
 //
 // The handle carries whichever it has plus the CInstance* for `self`, so one
-// call site works for the player and, later, for a remote avatar.
+// call site works for the player and for any other instance.
 struct Handle {
     gml::RValue id{};            // set to real -1 by PlayerHandle when no ref resolved
     void*       self = nullptr;  // CInstance* passed as the TRoutine's `self`
@@ -79,9 +79,9 @@ bool SetVar(const Handle& h, const char* name, const gml::RValue& value);
 // never established.
 int VarNames(const Handle& h, std::vector<std::string>& out, int limit);
 
-// The gate from §7 Step 2 of the research, plus the reflection probes that
-// everything from M2 onward depends on. MUST run on the game thread. Runs once
-// per phase; safe to call every frame.
+// The ABI gate plus the reflection probes that everything reading or writing
+// instance fields depends on. MUST run on the game thread. Runs once per
+// phase; safe to call every frame.
 void        SelfTest();
 bool        SelfTestPassed();
 const char* SelfTestReport();

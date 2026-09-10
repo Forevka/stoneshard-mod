@@ -10,6 +10,11 @@
 #include "assets.h"
 #include "console.h"
 #include "gml.h"
+#include "body.h"
+#include "character.h"
+#include "items.h"
+
+#include <array>
 #include "symbols.h"
 
 #include <cctype>
@@ -179,56 +184,170 @@ void ItemsPanel() {
     const bool  haveSample = rec.valid && rec.raw.size() >= 4 && rec.self;
     const bool  ready      = havePlayer || haveSample;
 
+    // Rarity is argument 4 of scr_weapon_loot. Anything above Common makes the
+    // GAME roll the bonus stats itself - which is a truer enchanted item than
+    // typing stat keys in by hand, and it fills Curse/Suffix/Colour correctly.
+    static int rarity = items::kCommon;
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::BeginCombo("rarity", items::RarityName(rarity))) {
+        for (int r = items::kCommon; r <= items::kTreasure; ++r)
+            if (ImGui::Selectable(items::RarityName(r), rarity == r)) rarity = r;
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("the game rolls the bonus stats above Common");
+
     ImGui::BeginDisabled(!ready);
     if (ImGui::Button("Give weapon", ImVec2(220.0f, 0.0f))) {
-        static std::string held;              // must outlive the call
-        held = selected->display;
-
         for (int n = 0; n < count; ++n) {
-            std::vector<gml::RValue> args;
-            void* self  = nullptr;
-            void* other = nullptr;
-
-            if (havePlayer) {
-                args.assign(9, gml::RValue{});
-                gml::SetString(args[0], held.c_str());
-                gml::SetReal(args[1], px);
-                gml::SetReal(args[2], py);
-                gml::SetReal(args[3], 100.0);      // spawn chance -> certain
-                args[4].i64   = 1;                 // matches every observed call
-                args[4].flags = 0;
-                args[4].kind  = gml::kInt64;
-                for (std::size_t i = 5; i < args.size(); ++i) gml::SetUndefined(args[i]);
-                self = other = gml::PlayerInstance();
-            } else {
-                args = rec.raw;
-                gml::SetString(args[0], held.c_str());
-                gml::SetReal(args[3], 100.0);
-                self  = rec.self;
-                other = rec.other;
-            }
-
-            std::vector<gml::RValue*> argv(args.size());
-            for (std::size_t i = 0; i < args.size(); ++i) argv[i] = &args[i];
-
-            void* fn = sym::Find("gml_Script_scr_weapon_loot");
-            gml::RValue result{};
             console::Print(console::Line::Echo, "> spawn \"%s\" %s",
-                           held.c_str(), havePos ? "at the player" : "on the player tile");
-            if (fn && gml::CallAs(fn, &result, argv.data(),
-                                  static_cast<int>(args.size()), self, other))
+                           selected->display.c_str(),
+                           havePos ? "at the player" : "on the player tile");
+            if (items::SpawnGear(selected->display, 48.0, 0.0, rarity))
                 console::Print(console::Line::Result, "spawned on the ground");
             else
-                console::Print(console::Line::Error, "spawn failed%s%s",
-                               gml::LastError()[0] ? ": " : "", gml::LastError());
+                console::Print(console::Line::Error, "spawn failed: %s", items::LastError());
         }
     }
+
+    ImGui::SameLine();
+    if (ImGui::Button("To inventory", ImVec2(140.0f, 0.0f))) {
+        for (int i = 0; i < count; ++i) {
+            console::Print(console::Line::Echo, "> scr_inventory_add_weapon \"%s\" %s",
+                           selected->display.c_str(), items::RarityName(rarity));
+            if (!items::AddWeaponToInventory(selected->display, rarity))
+                console::Print(console::Line::Error, "failed: %s", items::LastError());
+        }
+    }
+
+    ImGui::SameLine();
+
+    // The experiment behind the planned stat editor: spawn one, then read back
+    // every instance variable the game put on it. Which carrier holds the
+    // rolled stats - and what the fields are called - is not yet established,
+    // and guessing it would be the wrong way to find out.
+    if (ImGui::Button("Probe stats", ImVec2(140.0f, 0.0f))) {
+        console::Print(console::Line::Echo, "> itemprobe \"%s\"", selected->display.c_str());
+        for (const std::string& l : items::Probe(selected->display, 0))
+            console::Print(console::Line::Result, "%s", l.c_str());
+    }
+
     ImGui::EndDisabled();
 
     ImGui::SameLine();
     if (havePos)         ImGui::TextDisabled("drops at your feet - walk over it");
     else if (havePlayer) ImGui::TextDisabled("drops on your tile (still calibrating exact position)");
     else                 ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "locating player...");
+
+    // ------------------------------------------------------------ constructor
+    //
+    // An item is one ds_map keyed by the CSV column names, carrying only the
+    // stats it actually has - so ADDING a key is what the game does to make a
+    // Unique, and it is what makes an enchantment here. The template comes from
+    // a real spawned item rather than from re-reading the CSV, so the field set
+    // and the base values are the game's own and cannot drift out of step.
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Constructor - pick the stats before spawning")) {
+        static std::vector<items::Field>       edit;
+        static std::vector<std::array<char, 96>> textBuf;
+        static std::string                     editFor;
+        static int                             addChoice = 0;
+
+        auto rebuildBuffers = [&] {
+            textBuf.assign(edit.size(), {});
+            for (std::size_t i = 0; i < edit.size(); ++i)
+                std::snprintf(textBuf[i].data(), textBuf[i].size(), "%s", edit[i].str.c_str());
+        };
+
+        ImGui::BeginDisabled(!ready);
+        if (ImGui::Button("Load template", ImVec2(160.0f, 0.0f))) {
+            if (items::LoadTemplate(selected->display, rarity)) {
+                edit    = items::Template();
+                editFor = selected->display;
+                rebuildBuffers();
+                console::Print(console::Line::Result, "template: %s, %zu editable field(s)",
+                               editFor.c_str(), edit.size());
+            } else {
+                editFor.clear();
+                edit.clear();
+                console::Print(console::Line::Error, "template failed: %s", items::LastError());
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("spawns one, reads it, removes it again");
+
+        if (editFor != selected->display || edit.empty()) {
+            ImGui::TextDisabled("Load a template for \"%s\" to edit its stats.",
+                                selected->display.c_str());
+        } else {
+            // Weapons and armor have different stat vocabularies; the item says
+            // which it is rather than us inferring it from the category text.
+            bool isArmor = false;
+            for (const auto& f : edit)
+                if (f.key == "Metatype" && f.isString) isArmor = (f.str == "Armor");
+            const auto& vocab = isArmor ? assets::ArmorStats() : assets::WeaponStats();
+
+            ImGui::Text("%s - %zu field(s)", editFor.c_str(), edit.size());
+
+            ImGui::BeginChild("##fields", ImVec2(0.0f, 240.0f), true);
+            for (std::size_t i = 0; i < edit.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::SetNextItemWidth(180.0f);
+                if (edit[i].isString) {
+                    if (ImGui::InputText(edit[i].key.c_str(), textBuf[i].data(), textBuf[i].size()))
+                        edit[i].str = textBuf[i].data();
+                } else {
+                    ImGui::InputDouble(edit[i].key.c_str(), &edit[i].num, 1.0, 10.0, "%.2f");
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+
+            // Only stats the item does NOT already carry: adding one of these
+            // is the enchantment.
+            std::vector<const std::string*> addable;
+            for (const std::string& stat : vocab) {
+                bool present = false;
+                for (const auto& f : edit) if (f.key == stat) { present = true; break; }
+                if (!present) addable.push_back(&stat);
+            }
+
+            if (!addable.empty()) {
+                if (addChoice >= static_cast<int>(addable.size())) addChoice = 0;
+                ImGui::SetNextItemWidth(220.0f);
+                if (ImGui::BeginCombo("##addstat", addable[addChoice]->c_str())) {
+                    for (std::size_t i = 0; i < addable.size(); ++i)
+                        if (ImGui::Selectable(addable[i]->c_str(), addChoice == static_cast<int>(i)))
+                            addChoice = static_cast<int>(i);
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Add stat")) {
+                    items::Field f;
+                    f.key = *addable[addChoice];
+                    edit.push_back(f);
+                    rebuildBuffers();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%zu more available", addable.size());
+            }
+
+            ImGui::Spacing();
+            ImGui::BeginDisabled(!ready);
+            if (ImGui::Button("Spawn configured", ImVec2(220.0f, 0.0f))) {
+                console::Print(console::Line::Echo, "> build \"%s\" with %zu field(s)",
+                               editFor.c_str(), edit.size());
+                if (items::SpawnConfigured(editFor, edit, rarity))
+                    console::Print(console::Line::Result, "built - it is on the ground at your feet");
+                else
+                    console::Print(console::Line::Error, "build failed: %s", items::LastError());
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Reset to base")) { edit = items::Template(); rebuildBuffers(); }
+        }
+    }
 
     if (!ready) {
         ImGui::TextWrapped(
@@ -238,47 +357,16 @@ void ItemsPanel() {
     }
 }
 
-void ConsoleCommandsNotice() {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1.0f));
-    ImGui::TextWrapped(
-        "CONFIRMED NOT WORKING. These call the game's built-in scr_console_* commands, "
-        "whose compiled bodies in this release build contain only a prologue and a return - "
-        "there is no implementation to run. In-game testing confirmed they do nothing.");
-    ImGui::PopStyleColor();
-    ImGui::TextWrapped(
-        "They are left here because they run harmlessly and because the real command "
-        "dispatcher (NeoConsole) may still reach the logic another way - that is the next "
-        "thing to chase. The working cheats live in the Stats and Items tabs.");
-    ImGui::Spacing();
-}
-
-void TogglesPanel() {
-    ConsoleCommandsNotice();
-
-    static const char* toggles[] = {
-        "scr_console_godmode", "scr_console_nodeathmode", "scr_console_nocd",
-        "scr_console_nopain",  "scr_console_allskills",   "scr_console_nomobs",
-    };
-    for (const char* t : toggles)
-        CallRow(t + std::strlen("scr_console_"), t, t);
-}
-
-void WorldPanel() {
-    static int hour = 12;
-
-    ConsoleCommandsNotice();
-
-    ImGui::SeparatorText("Time");
-    ImGui::SetNextItemWidth(160.0f);
-    ImGui::SliderInt("hour", &hour, 0, 23);
-    CallRow("Set time", Fmt("scr_console_time_change %d", hour), "scr_console_time_change");
-
-    ImGui::SeparatorText("World");
-    CallRow("Kill all", "scr_console_killall", "scr_console_killall");
-    CallRow("Reveal fog", "scr_console_FOG_visible 1", "scr_console_FOG_visible");
-    CallRow("Weather", "scr_console_weather_switch", "scr_console_weather_switch");
-    CallRow("Debug map", "scr_console_debugmap", "scr_console_debugmap");
-}
+// The scr_console_* panels lived here: godmode, nodeathmode, killall, time
+// change and the rest. They are GONE rather than merely disabled.
+//
+// Their compiled bodies in this release contain only a prologue and a return -
+// there is no implementation behind them - and in-game testing confirmed they
+// did nothing at all. They were kept for a while on the theory that the real
+// dispatcher might reach the logic another way. It never did, and meanwhile
+// the Character tab grew working equivalents through scr_atr_set and
+// scr_buff_change. Two tabs of buttons that provably do nothing are worse than
+// no tabs at all: they make the whole panel look unreliable.
 
 } // namespace
 
@@ -293,8 +381,8 @@ void DrawCheatsTab() {
     if (ImGui::BeginTabBar("##cheattabs")) {
         if (ImGui::BeginTabItem("Stats"))    { StatsPanel();   ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Items"))    { ItemsPanel();   ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Toggles"))  { TogglesPanel(); ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("World"))    { WorldPanel();   ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Character")){ character::DrawCharacterTab(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Body"))     { body::DrawBodyTab();           ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
 }

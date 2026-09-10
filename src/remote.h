@@ -24,6 +24,20 @@ namespace mod::remote {
 //   getvar <name>            read a player instance variable by name
 //   setvar <name> <value>    write one
 //   names [limit]            list the player's instance variables
+//   speed [mult|reset]       game speed, as a multiple of the game's own
+//   capture <symbol>         detour a script and record the game's own call
+//   capture                  show what was recorded
+//   weaponrec                show the recorded real scr_weapon_loot call
+//   spawnrare "<name>" <1-7> spawn gear at a rarity the GAME rolls stats for
+//   giveweapon "<name>" [r]  same, but straight into the inventory
+//   objvars <obj> [limit]    list one instance's variables and values
+//   objget <obj> <var>       read a variable on any object
+//   objset <obj> <var> <val> write one
+//   itemtemplate "<name>"    read a gear item's editable stat fields
+//   itembuild "<name>" K=V   build one with those stats set or ADDED
+//   itemscan [limit]         dump the `data` map of every carried item
+//   itemprobe <gear name>    spawn gear and dump the instance variables of
+//                            both carriers, to find where its stats live
 //   status                   write a state summary to the log
 void Poll();
 

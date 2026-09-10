@@ -80,8 +80,8 @@ struct AnchorResult {
 
 // One pass over .rdata for every anchor at once. Matches are NUL-delimited on
 // both sides, so "buffer_create" cannot match inside "buffer_create_from_...".
-// Every occurrence is kept: assuming the first one is the registration site is
-// only safe for the network names the research actually checked.
+// Every occurrence is kept: assuming the first one is the registration site
+// only holds for the handful of names that were checked by hand.
 void FindAnchorStrings(std::vector<AnchorResult>&               anchors,
                        std::unordered_map<std::uintptr_t, int>& stringToAnchor) {
     const auto rd = sym::RdataRange();
@@ -571,10 +571,10 @@ void PhaseB() {
 
     // 3) Prove variable_instance_set is a real mutator rather than a call that
     //    merely returns cleanly: nudge x by one, read it back, put it straight
-    //    back. One pixel, fully reversed, and it settles M2's gate early.
+    //    back. One pixel, fully reversed.
     //
-    //    Prefer the reference path: M2 has to drive an instance that is NOT the
-    //    running `self`, so proving that one matters more than the easy one.
+    //    Prefer the reference path: driving an instance that is NOT the running
+    //    `self` is the harder case, so proving that one matters more.
     const Handle* mut      = refOk ? &byRef : (selfOk ? &bySelf : nullptr);
     const char*   mutVia   = refOk ? "ref" : "self";
     const double  original = refOk ? vRef.real : (selfOk ? vSelf.real : 0.0);
@@ -611,7 +611,8 @@ void PhaseB() {
         Logf("builtins:   mutator test skipped - no working read path");
     }
 
-    // 4) Field count - the bandwidth estimate §5.5 of the research never made.
+    // 4) Field count, plus a sample of the names, so the log shows what
+    //    reflection actually sees on a live player.
     {
         const Handle& h = refOk ? byRef : bySelf;
         std::vector<std::string> names;

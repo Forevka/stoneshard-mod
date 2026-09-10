@@ -11,7 +11,9 @@
 
 #include "remote.h"
 #include "builtins.h"
+#include "items.h"
 #include "console.h"
+#include "gamespeed.h"
 #include "gml.h"
 #include "log.h"
 #include "paths.h"
@@ -236,6 +238,122 @@ void Execute(const std::string& line) {
         Reply(builtins::SetVar(h, tok[1].c_str(), v) ? "setvar %s = %s -> ok"
                                                      : "setvar %s = %s -> FAILED",
               tok[1].c_str(), tok[2].c_str());
+        return;
+    }
+
+    // The gear-stat experiment: which instance carries a weapon's rolled
+    // stats, and under what names. Everything an item constructor would do
+    // depends on the answer, so it is measured rather than assumed.
+    if (tok[0] == "itemprobe") {
+        if (tok.size() < 2) { Reply("usage: itemprobe <gear display name>"); return; }
+
+        // The name is a CSV display name and contains spaces ("Militia
+        // Falchion"), so rejoin everything the tokeniser split apart.
+        std::string name = tok[1];
+        for (std::size_t i = 2; i < tok.size(); ++i) { name += ' '; name += tok[i]; }
+
+        for (const std::string& l : items::Probe(name, 0)) Reply("%s", l.c_str());
+        return;
+    }
+
+    // What the GAME passes to scr_weapon_loot, recorded from a real call. Our
+    // own spawn fills only the first five, which is the leading theory for why
+    // everything it makes comes out Common and uncursed.
+    // Record what the GAME passes to a script, instead of guessing.
+    //
+    // scr_skill_open and scr_buff_param both FAULTED when called with a name
+    // string - the argument is something else entirely. Guessing further risks
+    // the player's session for no reason, and this is the technique that
+    // settled scr_weapon_loot: detour it, let the game make a real call, and
+    // read the exact self/other and argument values back.
+    // Movement animation is the main wall-clock cost in a turn-based game, so
+    // this is worth having outside the overlay too.
+    if (tok[0] == "speed") {
+        if (tok.size() < 2) {
+            Reply("speed: %.0f steps/sec (baseline %.0f, hold=%d)",
+                  gamespeed::Current(), gamespeed::Baseline(), gamespeed::Hold() ? 1 : 0);
+            return;
+        }
+        if (tok[1] == "reset") {
+            const double base = gamespeed::Baseline();
+            Reply(base > 0.0 && gamespeed::Set(base) ? "speed: reset to %.0f"
+                                                     : "speed: reset FAILED (%.0f)", base);
+            return;
+        }
+
+        // A bare number is a MULTIPLIER of the game's own baseline, not raw
+        // steps/sec - "speed 4" should mean four times faster regardless of
+        // what the game happens to run at.
+        const double mult = std::atof(tok[1].c_str());
+        const double base = gamespeed::Baseline() > 0.0 ? gamespeed::Baseline()
+                                                        : gamespeed::Current();
+        if (mult <= 0.0 || base <= 0.0) { Reply("usage: speed <multiplier>|reset"); return; }
+
+        Reply(gamespeed::Set(base * mult) ? "speed: %.2fx -> %.0f steps/sec"
+                                          : "speed: FAILED at %.2fx (%.0f)",
+              mult, base * mult);
+        return;
+    }
+
+    if (tok[0] == "capture") {
+        if (tok.size() > 1) {
+            Reply(gml::InstallCapture(tok[1]) ? "capture: armed on %s - now do the thing in-game"
+                                              : "capture: could NOT arm on %s",
+                  tok[1].c_str());
+            return;
+        }
+
+        const auto& c = gml::LastCapture();
+        if (!c.valid) { Reply("capture: nothing recorded yet"); return; }
+        Reply("capture: %s argc=%d hits=%u self=%p other=%p caller=%s",
+              c.symbol.c_str(), c.argc, c.hits, c.self, c.other, c.caller.c_str());
+        for (std::size_t i = 0; i < c.args.size(); ++i)
+            Reply("   arg[%zu] %s", i, c.args[i].c_str());
+        return;
+    }
+
+    if (tok[0] == "weaponrec") {
+        const auto& rec = gml::WeaponRecord();
+        if (!rec.valid) { Reply("weaponrec: nothing captured yet"); return; }
+        Reply("weaponrec: %s argc=%d hits=%u self=%p caller=%s",
+              rec.symbol.c_str(), rec.argc, rec.hits, rec.self, rec.caller.c_str());
+        for (std::size_t i = 0; i < rec.args.size(); ++i)
+            Reply("   arg[%zu] %s", i, rec.args[i].c_str());
+        return;
+    }
+
+    // spawnrare "<gear name>" <rarity 1-7>
+    // Rarity is argument 4 of scr_weapon_loot. Asking for 3 or 6 makes the
+    // GAME roll the bonus stats, which is a truer "enchanted item" than
+    // writing stat keys in by hand.
+    if (tok[0] == "spawnrare") {
+        if (tok.size() < 3) {
+            Reply("usage: spawnrare \"<gear name>\" <rarity 1-7>  (1 Common ... 6 Unique)");
+            return;
+        }
+        const int rarity = std::atoi(tok[2].c_str());
+        if (rarity < 1 || rarity > 7) { Reply("spawnrare: rarity must be 1-7"); return; }
+
+        Reply(items::SpawnGear(tok[1], 48.0, 0.0, rarity, nullptr)
+                  ? "spawnrare: %s as %s (%d)" : "spawnrare: FAILED %s as %s (%d)",
+              tok[1].c_str(), items::RarityName(rarity), rarity);
+        return;
+    }
+
+    // Straight into the inventory - no drop, no walking over it.
+    if (tok[0] == "giveweapon") {
+        if (tok.size() < 2) { Reply("usage: giveweapon \"<gear name>\" [rarity 1-7]"); return; }
+        const int rarity = tok.size() > 2 ? std::atoi(tok[2].c_str()) : 1;
+
+        Reply(items::AddWeaponToInventory(tok[1], rarity)
+                  ? "giveweapon: %s as %s" : "giveweapon: FAILED %s as %s",
+              tok[1].c_str(), items::RarityName(rarity));
+        return;
+    }
+
+    if (tok[0] == "itemscan") {
+        const int limit = tok.size() > 1 ? std::atoi(tok[1].c_str()) : 0;
+        for (const std::string& l : items::ScanInventory(limit)) Reply("%s", l.c_str());
         return;
     }
 
