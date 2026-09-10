@@ -1,6 +1,13 @@
+import os
 import struct, json, os, sys, bisect
-EXE = r"D:/torrent/Stoneshard (Early Access)/Stoneshard/StoneShard.exe"
-DATAWIN = r"D:/torrent/Stoneshard (Early Access)/Stoneshard/data.win"
+
+# Game install. Override with the STONESHARD_DIR environment variable;
+# the default is the usual Steam location.
+_SS = os.environ.get("STONESHARD_DIR",
+                     r"C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
+
+EXE = os.path.join(_SS, "StoneShard.exe")
+DATAWIN = os.path.join(_SS, "data.win")
 # cache/derived-data dir: alongside this file unless RELIB_CACHE overrides it
 SCR = os.environ.get('RELIB_CACHE') or os.path.dirname(os.path.abspath(__file__))
 # optional pre-built script_table.json from an earlier session; regenerated if absent

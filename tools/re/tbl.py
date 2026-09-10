@@ -1,5 +1,12 @@
+import os
 import struct
-d=open(r"D:/torrent/Stoneshard (Early Access)/Stoneshard/StoneShard.exe",'rb').read()
+
+# Game install. Override with the STONESHARD_DIR environment variable;
+# the default is the usual Steam location.
+_SS = os.environ.get("STONESHARD_DIR",
+                     r"C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
+
+d=open(os.path.join(_SS, "StoneShard.exe"),'rb').read()
 pe=struct.unpack('<I',d[0x3c:0x40])[0]; opt=pe+24
 base=struct.unpack('<Q',d[opt+24:opt+32])[0]
 nsec=struct.unpack('<H',d[pe+6:pe+8])[0]

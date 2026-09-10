@@ -1,7 +1,14 @@
+import os
 """data.win chunk reader that preserves asset INDEX alignment (no skipped slots)."""
 import struct, os, json, sys
 
-P = r"D:/torrent/Stoneshard (Early Access)/Stoneshard/data.win"
+# Game install. Override with the STONESHARD_DIR environment variable;
+# the default is the usual Steam location.
+_SS = os.environ.get("STONESHARD_DIR",
+                     r"C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
+
+
+P = os.path.join(_SS, "data.win")
 d = open(P, 'rb').read()
 
 CH = {}

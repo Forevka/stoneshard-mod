@@ -1,5 +1,12 @@
+import os
 import re, sys
-src = r"D:/torrent/Stoneshard (Early Access)/Stoneshard/StoneShard.exe"
+
+# Game install. Override with the STONESHARD_DIR environment variable;
+# the default is the usual Steam location.
+_SS = os.environ.get("STONESHARD_DIR",
+                     r"C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
+
+src = os.path.join(_SS, "StoneShard.exe")
 out = sys.argv[1]
 d = open(src, 'rb').read()
 pat = re.compile(rb'[\x20-\x7e]{4,200}')

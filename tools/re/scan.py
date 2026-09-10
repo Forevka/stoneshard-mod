@@ -1,5 +1,12 @@
+import os
 import struct
-d=open(r"D:/torrent/Stoneshard (Early Access)/Stoneshard/StoneShard.exe",'rb').read()
+
+# Game install. Override with the STONESHARD_DIR environment variable;
+# the default is the usual Steam location.
+_SS = os.environ.get("STONESHARD_DIR",
+                     r"C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
+
+d=open(os.path.join(_SS, "StoneShard.exe"),'rb').read()
 pe=struct.unpack('<I',d[0x3c:0x40])[0]; opt=pe+24
 base=struct.unpack('<Q',d[opt+24:opt+32])[0]
 nsec=struct.unpack('<H',d[pe+6:pe+8])[0]
@@ -62,4 +69,4 @@ for t in tests:
 cc=sum(1 for k in entries if 'scr_console_' in k)
 print(f'\nscr_console_* entries resolved: {cc}')
 import json
-json.dump({k:hex(v) for k,v in entries.items()}, open(r'C:/Users/forevkassh/AppData/Local/Temp/claude/D--torrent-Stoneshard--Early-Access--Stoneshard/34263b16-7ccc-4d28-8b58-74be3007940b/scratchpad/script_table.json','w'), indent=0)
+json.dump({k:hex(v) for k,v in entries.items()}, open('script_table.json','w'), indent=0)

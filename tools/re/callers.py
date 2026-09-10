@@ -1,6 +1,13 @@
+import os
 import struct,sys,json
 from capstone import *
-P=r"D:/torrent/Stoneshard (Early Access)/Stoneshard/StoneShard.exe"
+
+# Game install. Override with the STONESHARD_DIR environment variable;
+# the default is the usual Steam location.
+_SS = os.environ.get("STONESHARD_DIR",
+                     r"C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
+
+P=os.path.join(_SS, "StoneShard.exe")
 d=open(P,'rb').read()
 pe=struct.unpack('<I',d[0x3c:0x40])[0]; opt=pe+24
 base=struct.unpack('<Q',d[opt+24:opt+32])[0]
