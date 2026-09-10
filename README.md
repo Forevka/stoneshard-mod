@@ -48,3 +48,9 @@ Bundled at build time: [Dear ImGui](https://github.com/ocornut/imgui) (MIT),
 [zlib](https://github.com/madler/zlib) (zlib licence). Stoneshard is a game by
 [Ink Stains Games](https://store.steampowered.com/app/625960/Stoneshard/); this project is
 unaffiliated with them.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). The three bundled dependencies keep their own permissive licences,
+all of which are MIT-compatible; they are fetched at build time rather than vendored, so no
+third-party source is redistributed here.
