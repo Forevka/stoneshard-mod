@@ -31,6 +31,9 @@ namespace mod::assets {
 namespace {
 
 std::vector<Item>        g_items;
+std::vector<Condition>   g_conditions;
+std::vector<std::string> g_weaponStats;
+std::vector<std::string> g_armorStats;
 std::vector<std::string> g_categories;
 bool                     g_loaded = false;
 std::string              g_status = "not loaded";
@@ -156,6 +159,23 @@ std::size_t LoadObjects() {
         m.i32(rec + kParentFieldOffset, parents[i]);
     }
 
+    // Statuses, from the same table. Kept separate from items: they are not
+    // spawnable, they are applied by index through scr_buff_change.
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const bool debuff = names[i].rfind("o_db_", 0) == 0;
+        const bool buff   = names[i].rfind("o_b_", 0)  == 0;
+        if (!debuff && !buff) continue;
+        if (names[i].size() > 7 &&
+            names[i].compare(names[i].size() - 7, 7, "_parent") == 0) continue;
+
+        std::string display = names[i].substr(debuff ? 5 : 4);
+        for (char& c : display) if (c == '_') c = ' ';
+        g_conditions.push_back({names[i], Capitalise(display),
+                                static_cast<int>(i), buff});
+    }
+    std::sort(g_conditions.begin(), g_conditions.end(),
+              [](const Condition& a, const Condition& b) { return a.display < b.display; });
+
     std::size_t added = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         if (names[i].rfind("o_inv_", 0) != 0) continue;
@@ -219,6 +239,18 @@ std::size_t LoadCsvRows() {
         if (start[0] == '/') continue;             // "// CLEAVERS;;;;" comment rows
         if (!SplitRow(start, len, f)) continue;
 
+        // The header rows. Both gear tables start "name;Tier;id;Slot;", and
+        // the fourth column tells them apart: weapons carry "Subtype" there,
+        // armor "class". Blank columns are separators in the sheet and are
+        // dropped - only the named ones are real stats.
+        if (f[0] == "name" && f[1] == "Tier" && f[2] == "id" && f[3] == "Slot") {
+            auto& into = (f.size() > 4 && f[4] == "class") ? g_armorStats : g_weaponStats;
+            if (into.empty())
+                for (const std::string& c : f)
+                    if (!c.empty()) into.push_back(c);
+            continue;
+        }
+
         const std::string& name = f[0];
         const std::string& id   = f[2];
         const std::string& cat  = f[3];
@@ -250,6 +282,9 @@ std::size_t LoadCsvRows() {
 bool Load() {
     g_items.clear();
     g_categories.clear();
+    g_weaponStats.clear();
+    g_conditions.clear();
+    g_armorStats.clear();
     g_loaded = false;
 
     const DWORD t0 = GetTickCount();
@@ -281,6 +316,11 @@ bool Load() {
 
 bool        Loaded() { return g_loaded; }
 const char* Status() { return g_status.c_str(); }
+
+const std::vector<Condition>&   Conditions()  { return g_conditions; }
+
+const std::vector<std::string>& WeaponStats() { return g_weaponStats; }
+const std::vector<std::string>& ArmorStats()  { return g_armorStats; }
 
 const std::vector<Item>&        Items()      { return g_items; }
 const std::vector<std::string>& Categories() { return g_categories; }

@@ -29,6 +29,33 @@ bool Load();
 bool        Loaded();
 const char* Status();
 
+// The gear tables' column names, taken from the two header rows embedded
+// alongside the data ("name;Tier;id;Slot;Subtype;..." for weapons, 83 columns;
+// "name;Tier;id;Slot;class;..." for armor, 77).
+//
+// These are not just documentation: an item's live `data` ds_map is keyed by
+// these exact names, so the header doubles as the set of stats a constructed
+// item may legally carry. Read from the exe like everything else, so a patch
+// that adds a stat column adds it here too.
+// A status the game can put on a unit.
+//
+// scr_buff_change takes an ASSET INDEX - captured from the game applying
+// o_db_hunger0 (6028) after eating - so the catalogue is just the object table
+// filtered to the two families the game uses for statuses:
+//     o_db_*  debuffs  (stun, poison, bleeding, coma, pain, drunk, ...)
+//     o_b_*   buffs    (bless, adrenaline, carnage, stances, ...)
+struct Condition {
+    std::string name;      // o_db_stun
+    std::string display;   // Stun
+    int         index = -1;
+    bool        positive = false;
+};
+
+const std::vector<Condition>& Conditions();
+
+const std::vector<std::string>& WeaponStats();
+const std::vector<std::string>& ArmorStats();
+
 const std::vector<Item>&        Items();
 const std::vector<std::string>& Categories();   // sorted, no duplicates
 
