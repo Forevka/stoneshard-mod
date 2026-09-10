@@ -1,17 +1,55 @@
 # Stoneshard Mod
 
 A native debugging and cheat mod for [Stoneshard](https://store.steampowered.com/app/625960/Stoneshard/),
-loaded as a `version.dll` proxy and driven from a Dear ImGui overlay (**INSERT** toggles it). It gives you an
-item constructor that reads a real spawned item's stat map and lets you edit every field or add new
-ones before spawning it at any rarity; a character panel for hunger, thirst, intoxication, pain,
-fatigue, immunity, XP and the full psyche system, plus all 323 of the game's status effects; a body
-part panel showing each limb's condition with per-part heal buttons; a configurable loot multiplier
-(0.25x–7x) covering both enemy drops and containers; adjustable game speed so you aren't watching
-walk animations; a save importer that moves characters between machines and re-signs their
-checksums; and a developer layer with a script tracer, breakpoints, an instance inspector, a live
-console over all 34,167 game scripts, and argument-rewriting hooks. Nothing is hardcoded — every
-function, object and asset is resolved by name at runtime, so a game patch that moves addresses
-costs nothing.
+loaded as a `version.dll` proxy and driven from a Dear ImGui overlay (**INSERT** toggles it).
+Nothing is hardcoded — every function, object and asset is resolved by name at runtime against the
+34,167 compiled scripts and ~2,530 GameMaker builtins in the game, so a patch that moves addresses
+around costs nothing.
+
+## Features
+
+**Items**
+
+- Catalogue of 1,705 items across 94 categories, read from the game's own object table and the
+  weapon/armor tables embedded in the exe — no hand-maintained lists.
+- Spawn any weapon or armor at any rarity (Common through Treasure). Above Common the *game* rolls
+  the bonus stats, so you get genuinely enchanted gear rather than a renamed common one.
+- Drop at your feet or place straight into your inventory.
+- **Constructor** — load a real item as a template, then edit every stat it has or add any of the
+  83 weapon / 77 armor stats it doesn't. Negative values work, so drawbacks are available too.
+  Edits survive pickup, equipping and saving.
+
+**Character**
+
+- Hunger, thirst, intoxication, immunity, fatigue and pain as live sliders.
+- HP, MP, XP and level; XP can be granted through the game's real level-up path.
+- All **323 status effects** (169 debuffs, 154 buffs) applied by name — stun, bleeding, poison,
+  blessing, drunk, coma and the rest.
+- Psyche system: sanity, morale, panic, frenzy, paranoia, anxiety, catharsis and more.
+- **Body parts** — all six limbs with their own 0–100 condition, a heal button each, and a damage
+  button for testing. Active wounds are listed alongside (they're separate from condition).
+
+**World**
+
+- **Loot multiplier**, 0.25x to 7x, over both enemy drops and dungeon containers, with live counters
+  showing it actually firing.
+- **Game speed**, 0.25x to 8x, so crossing a map isn't spent watching walk animations. Re-applies
+  itself when the game resets it.
+- **Save importer** — pick a save folder from another machine, see which characters it holds, and
+  import them into free slots. Checksums are re-signed for their new paths, which plain copying
+  can't do.
+
+**Developer tools**
+
+- Console over all 34,167 game scripts, with symbol search.
+- Script tracer (~9,260 functions through a single hook), instance inspector, and breakpoints that
+  report arguments, instance context and a resolved call stack without halting the game.
+- **Argument-rewriting hooks** — intercept any script, watch the arguments real calls pass, then
+  change one or run the call more or fewer times. This is what the loot multiplier is built on.
+- Headless control: write a line to `debug-cmd.txt` and drive any of the above from a script.
+- Automatic save backup before the first cheat of each session.
+
+## Build and install
 
 **Build** requires CMake 3.21+, a C++17 MSVC toolchain and Git (ImGui, MinHook and zlib are fetched
 automatically). Point it at your install and build:
