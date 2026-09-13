@@ -19,6 +19,19 @@ around costs nothing.
   83 weapon / 77 armor stats it doesn't. Negative values work, so drawbacks are available too.
   Edits survive pickup, equipping and saving.
 
+**Potions**
+
+Potions are the one family the catalogue cannot list, because there is no "Potion of Healing"
+object in the game: there is a single potion object, and every potion is an instance of it
+carrying a list of effects, with the name assembled from them at display time.
+
+- All **34 effects** — Healing, Restoration, Stoneskin, Antivenom, Rage and the rest — read from
+  the game's own localisation table rather than typed out here.
+- **Constructor** — tick any combination of effects and get a potion carrying exactly those,
+  including combinations no roll table produces. The effect list is written directly and the
+  game's own `scr_potion_set_param` derives the name, colour and quality from it, so the result
+  is a potion the game built rather than an imitation of one.
+
 **Character**
 
 - Hunger, thirst, intoxication, immunity, fatigue and pain as live sliders.

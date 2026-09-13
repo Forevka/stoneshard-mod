@@ -13,6 +13,7 @@
 #include "body.h"
 #include "character.h"
 #include "items.h"
+#include "potions.h"
 
 #include <array>
 #include "symbols.h"
@@ -381,6 +382,9 @@ void DrawCheatsTab() {
     if (ImGui::BeginTabBar("##cheattabs")) {
         if (ImGui::BeginTabItem("Stats"))    { StatsPanel();   ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Items"))    { ItemsPanel();   ImGui::EndTabItem(); }
+        // Its own tab rather than a section of Items, because a potion is not
+        // an entry in that catalogue and never can be - see potions.h.
+        if (ImGui::BeginTabItem("Potions"))  { potions::DrawPotionsTab(); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Character")){ character::DrawCharacterTab(); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Body"))     { body::DrawBodyTab();           ImGui::EndTabItem(); }
         ImGui::EndTabBar();

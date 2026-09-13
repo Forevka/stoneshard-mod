@@ -4,6 +4,7 @@
 #include "gml.h"
 #include "hooks.h"
 #include "log.h"
+#include "potions.h"
 #include "tracer.h"
 #include "symbols.h"
 
@@ -50,6 +51,10 @@ DWORD WINAPI InitThread(LPVOID) {
     // weapon spawns is what lets the Items tab hand out gear at all.
     mod::gml::InstallWeaponRecorder();
     mod::gml::InstallPlayerTracker();
+
+    // Same idea for potions: the bottle's own alarm event is where the game
+    // hands over a real bottle instance, which is what rolling one needs.
+    mod::potions::InstallRecorder();
 
     // Resolves the shared prologue helper; the hook itself is only installed
     // while a recording is armed.

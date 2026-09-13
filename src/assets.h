@@ -53,6 +53,25 @@ struct Condition {
 
 const std::vector<Condition>& Conditions();
 
+// One thing a potion can do.
+//
+// Potions are the one item family with no object of its own. There is no
+// o_inv_potion_healing to spawn: every potion in the game is an o_inv_bottle
+// whose `data` map carries a rolled set of these effect tags, and the name you
+// see ("Potion of Healing") is assembled from the tags plus a quality tier.
+// That is why the item catalogue cannot list potions by name and never will.
+//
+// The tags come from the localisation rows embedded in the exe next to the gear
+// CSVs - the same .rdata the weapon and armor headers are read from - so a
+// patch that adds an effect adds it here too.
+struct PotionEffect {
+    std::string tag;       // good_pt_healing
+    std::string display;   // Healing
+    bool        positive = false;   // good_* rather than bad_*
+};
+
+const std::vector<PotionEffect>& PotionEffects();
+
 const std::vector<std::string>& WeaponStats();
 const std::vector<std::string>& ArmorStats();
 

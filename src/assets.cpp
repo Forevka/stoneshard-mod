@@ -32,6 +32,7 @@ namespace {
 
 std::vector<Item>        g_items;
 std::vector<Condition>   g_conditions;
+std::vector<PotionEffect> g_potionEffects;
 std::vector<std::string> g_weaponStats;
 std::vector<std::string> g_armorStats;
 std::vector<std::string> g_categories;
@@ -277,6 +278,80 @@ std::size_t LoadCsvRows() {
     return added;
 }
 
+// ------------------------------------------------------------ potion effects
+//
+// Potions have no objects, so the catalogue above can never list one. What a
+// potion IS lives in the localisation table embedded in .rdata beside the gear
+// CSVs, in rows shaped like
+//
+//     good_pt_healing;исцеления / Исцеляющее;of Healing / Healing;治伤;...
+//
+// field 0 the effect tag, field 2 English - per the table's own header row
+// (";Русский;English;中文;..."). Every tag appears three times, once per
+// section: the name fragment ("of Healing / Healing"), the effect name
+// ("Healing") and the description ("Restores Health."). Rather than track which
+// section the walk is in - which would pin this to the current link order - the
+// shortest non-sentence English field wins, and that is always the plain effect
+// name.
+//
+// Rows here are UTF-8, unlike the gear CSVs, so the walker accepts every byte
+// above the control range instead of only printable ASCII. The fields actually
+// read (tag and English) are ASCII regardless.
+std::size_t LoadPotionEffects() {
+    const auto rdata = sym::RdataRange();
+    if (!rdata.hi) return 0;
+
+    std::unordered_map<std::string, std::string> best;
+    std::vector<std::string> f;
+
+    const auto* end = reinterpret_cast<const char*>(rdata.hi);
+    const char* cur = reinterpret_cast<const char*>(rdata.lo);
+
+    while (cur < end) {
+        if (*cur == '\0') { ++cur; continue; }
+
+        const char* start = cur;
+        while (cur < end && *cur != '\0' && static_cast<unsigned char>(*cur) >= 0x20) {
+            ++cur;
+            if (static_cast<std::size_t>(cur - start) > 2000) break;
+        }
+        const std::size_t len = static_cast<std::size_t>(cur - start);
+        while (cur < end && *cur != '\0') ++cur;      // skip any tail
+
+        if (len < 16) continue;
+        if (std::strncmp(start, "good_pt_", 8) != 0 && std::strncmp(start, "bad_pt_", 7) != 0)
+            continue;
+        if (!SplitRow(start, len, f) || f.size() < 3) continue;
+
+        const std::string& tag = f[0];
+        const std::string& eng = f[2];
+        if (eng.empty() || eng == "//") continue;
+        if (!std::all_of(tag.begin(), tag.end(),
+                         [](unsigned char c) { return std::isalnum(c) || c == '_'; }))
+            continue;
+
+        auto it = best.find(tag);
+        if (it == best.end()) { best.emplace(tag, eng); continue; }
+
+        const bool wasSentence = it->second.back() == '.';
+        const bool isSentence  = eng.back() == '.';
+        if ((wasSentence && !isSentence) ||
+            (wasSentence == isSentence && eng.size() < it->second.size()))
+            it->second = eng;
+    }
+
+    for (const auto& kv : best)
+        g_potionEffects.push_back({kv.first, kv.second, kv.first.rfind("good_", 0) == 0});
+
+    // Beneficial first, then alphabetical - the order you pick one in.
+    std::sort(g_potionEffects.begin(), g_potionEffects.end(),
+              [](const PotionEffect& a, const PotionEffect& b) {
+                  if (a.positive != b.positive) return a.positive;
+                  return a.display < b.display;
+              });
+    return g_potionEffects.size();
+}
+
 } // namespace
 
 bool Load() {
@@ -284,12 +359,14 @@ bool Load() {
     g_categories.clear();
     g_weaponStats.clear();
     g_conditions.clear();
+    g_potionEffects.clear();
     g_armorStats.clear();
     g_loaded = false;
 
     const DWORD t0 = GetTickCount();
     const std::size_t objects = LoadObjects();
     const std::size_t csv     = LoadCsvRows();
+    const std::size_t potions = LoadPotionEffects();
     const DWORD elapsed = GetTickCount() - t0;
 
     // De-duplicate ids (a few rows repeat across tables).
@@ -307,8 +384,9 @@ bool Load() {
 
     char buf[192];
     std::snprintf(buf, sizeof(buf),
-                  "%zu items (%zu objects + %zu gear rows) in %zu categories",
-                  g_items.size(), objects, csv, g_categories.size());
+                  "%zu items (%zu objects + %zu gear rows) in %zu categories, "
+                  "%zu potion effects",
+                  g_items.size(), objects, csv, g_categories.size(), potions);
     g_status = buf;
     Logf("assets: %s, %lu ms", g_status.c_str(), elapsed);
     return g_loaded;
@@ -318,6 +396,8 @@ bool        Loaded() { return g_loaded; }
 const char* Status() { return g_status.c_str(); }
 
 const std::vector<Condition>&   Conditions()  { return g_conditions; }
+
+const std::vector<PotionEffect>& PotionEffects() { return g_potionEffects; }
 
 const std::vector<std::string>& WeaponStats() { return g_weaponStats; }
 const std::vector<std::string>& ArmorStats()  { return g_armorStats; }

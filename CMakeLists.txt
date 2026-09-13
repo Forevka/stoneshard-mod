@@ -87,6 +87,7 @@ add_library(stoneshard_mod SHARED
     src/cheats.cpp
     src/assets.cpp
     src/items.cpp
+    src/potions.cpp
     src/character.cpp
     src/body.cpp
     src/gamespeed.cpp
