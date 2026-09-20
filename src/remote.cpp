@@ -431,6 +431,35 @@ void Execute(const std::string& line) {
         return;
     }
 
+    // vars <hex instance pointer> [limit]
+    //
+    // `names` and `getvar` both go through PlayerHandle, so neither can look at
+    // anything but the player. A breakpoint hands back a raw CInstance* for
+    // whatever it caught - a freshly created buff, say - and the only way to
+    // learn how that object is parameterised is to read its variables by name.
+    // builtins::SelfHandle turns the pointer into a handle the reflection
+    // builtins accept, which is the same route the Enemies tab already uses.
+    if (tok[0] == "vars") {
+        if (tok.size() < 2) { Reply("usage: vars <hex instance ptr> [limit]"); return; }
+
+        void* inst = reinterpret_cast<void*>(
+            std::strtoull(tok[1].c_str(), nullptr, 16));
+        if (!inst) { Reply("vars: %s is not a usable pointer", tok[1].c_str()); return; }
+
+        int limit = tok.size() > 2 ? std::atoi(tok[2].c_str()) : 80;
+        if (limit <= 0) limit = 80;
+
+        int total = 0;
+        const auto lines = items::DumpVars(builtins::SelfHandle(inst), limit, &total);
+        if (lines.empty()) {
+            Reply("vars: nothing readable at %p - the instance may already be gone", inst);
+            return;
+        }
+        Reply("vars: %p has %d instance variables, listing %zu", inst, total, lines.size());
+        for (const std::string& l : lines) Reply("%s", l.c_str());
+        return;
+    }
+
     Reply("unknown command: %s", tok[0].c_str());
 }
 
