@@ -206,27 +206,6 @@ bool ListByEnumeration(std::vector<Enemy>* out) {
     return !out->empty();
 }
 
-// Runs a game script with one enemy as `self`, which is the whole point of
-// holding a CInstance*: scr_atr_set resolves its attribute against `self`, so
-// handing it the player - the only instance the console reliably has - would
-// set the PLAYER's HP to zero.
-bool CallAsEnemy(void* inst, const char* symbol, gml::RValue* result,
-                 gml::RValue* args, int argc) {
-    if (!inst) { Fail("%s needs an instance pointer", symbol); return false; }
-
-    void* fn = sym::Find(std::string("gml_Script_") + symbol);
-    if (!fn) { Fail("%s not found", symbol); return false; }
-
-    std::vector<gml::RValue*> argv(static_cast<std::size_t>(argc));
-    for (int i = 0; i < argc; ++i) argv[static_cast<std::size_t>(i)] = &args[i];
-
-    if (!gml::CallAs(fn, result, argv.data(), argc, inst, inst)) {
-        Fail("%s failed%s%s", symbol, gml::LastError()[0] ? ": " : "", gml::LastError());
-        return false;
-    }
-    return true;
-}
-
 } // namespace
 
 const char*               LastError() { return g_error.c_str(); }
@@ -338,36 +317,13 @@ bool Refresh() {
 }
 
 // ---------------------------------------------------------------- actions
-
-bool SetHP(const Enemy& e, double hp) {
-    backup::EnsureBackupOnce();
-
-    if (e.tracked) {
-        gml::RValue args[2]{};
-        if (!gml::SetString(args[0], Intern("HP"))) {
-            Fail("could not build the attribute name");
-            return false;
-        }
-        gml::SetReal(args[1], hp);
-
-        gml::RValue r{};
-        if (CallAsEnemy(e.inst, "scr_atr_set", &r, args, 2)) {
-            Logf("enemies: %s HP = %g via scr_atr_set", e.name.c_str(), hp);
-            return true;
-        }
-        // Fall through: a direct write still moves the number even when the
-        // game's own setter would not take the call.
-    }
-
-    gml::RValue v{};
-    gml::SetReal(v, hp);
-    if (!builtins::SetVar(e.handle, "HP", v)) {
-        Fail("could not write HP on %s", e.name.c_str());
-        return false;
-    }
-    Logf("enemies: %s HP = %g by direct write", e.name.c_str(), hp);
-    return true;
-}
+//
+// Only one, deliberately. Writing an enemy's HP - as a kill, or partway to
+// wound it - went through scr_atr_set run as that enemy, and it did not take:
+// nothing died and nothing was hurt. The direct-variable fallback moved the
+// number without the game reacting to it, which is a worse outcome than no
+// button, because the row then reads a lie. Both are gone until the damage path
+// is understood the way the buff path now is.
 
 bool Remove(const Enemy& e) {
     backup::EnsureBackupOnce();
@@ -418,7 +374,6 @@ int   g_selected     = -1;
 bool  g_autoRefresh  = true;
 int   g_refreshEvery = 15;                  // frames
 int   g_sinceRefresh = 0;
-float g_hpTarget     = 1.0f;
 char  g_filter[64]   = "";
 
 std::string Lower(std::string s) {
@@ -541,14 +496,6 @@ void DrawEnemiesTab() {
                                 e.type.empty() ? "?" : e.type.c_str(),
                                 e.tracked ? "tracked" : "listed");
 
-        ImGui::SetNextItemWidth(260.0f);
-        ImGui::SliderFloat("##sethp", &g_hpTarget, 1.0f,
-                           e.maxHp > 1.0 ? static_cast<float>(e.maxHp) : 200.0f,
-                           "set HP to %.0f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SameLine();
-        if (ImGui::Button("Apply")) { SetHP(e, static_cast<double>(g_hpTarget)); Refresh(); }
-        ImGui::SameLine();
-        ImGui::TextDisabled("wound it rather than clear it");
     }
 
     ImGui::Spacing();
@@ -558,10 +505,12 @@ void DrawEnemiesTab() {
         "variable to the log, which is how the field names above were settled and how they "
         "get re-checked after a patch.");
     ImGui::TextWrapped(
-        "There is deliberately no Kill. Setting HP to 0 through the game's own attribute "
-        "setter did not actually kill anything, and the kill-everything variants could not be "
-        "aimed - one misclick emptied the room. A wide destructive action that does not work "
-        "is worse than no button.");
+        "Those are the only two actions on purpose. Writing an enemy's HP - to kill it, or "
+        "partway to wound it - went through the game's own attribute setter run as that "
+        "enemy, and it did not take: nothing died and nothing was hurt. Writing the variable "
+        "directly moved the number without the game reacting, which is worse than no button, "
+        "because then the row reads a lie. The kill-everything variants could not be aimed "
+        "either, so one misclick emptied the room.");
 
     if (!Tracking())
         ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f),

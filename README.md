@@ -55,13 +55,15 @@ instances and needs no table of monster names to fall out of date.
   event, but nothing on the damage path does. Reaching an arbitrary instance at all is the point
   of hooking `o_enemy`'s Step event, which hands over the `CInstance*` the runtime itself passes
   as `self`.
-- **Set HP** per enemy, to wound rather than clear.
 - **Vars** dumps every instance variable on one enemy, which is how the field names above were
   settled and how they get re-checked after a patch.
 
-There is deliberately no *Kill*. Setting HP to 0 through the game's own attribute setter did not
-actually kill anything, and the kill-everything variants could not be aimed, so one misclick
-emptied the room. A wide destructive action that does not work is worse than no button.
+Those two are the only actions, on purpose. Writing an enemy's HP — as a kill, or partway to
+wound it — went through the game's own attribute setter run as that enemy, and it did not take:
+nothing died and nothing was hurt. Writing the variable directly moved the number without the
+game reacting to it, which is worse than no button, because then the row reads a lie. The
+kill-everything variants could not be aimed either, so one misclick emptied the room. All of it
+is gone until the damage path is understood the way the status-effect path now is.
 
 **World**
 

@@ -86,9 +86,6 @@ int Reported();
 // that does not work is worse than no button at all.
 bool Remove(const Enemy& e);
 
-// Weaken rather than remove.
-bool SetHP(const Enemy& e, double hp);
-
 // Every instance variable on one enemy, for finding out what a field is
 // actually called. The names read here were taken from a live player dump;
 // this is how they get checked against a live enemy.
