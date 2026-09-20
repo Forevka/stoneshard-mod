@@ -133,32 +133,135 @@ bool GrantXP(double amount) {
 
 // ------------------------------------------------------------------ conditions
 
-// DISABLED - this called the wrong script, as the wrong instance.
+// Applying a status is not a script call at all - it is creating an instance.
 //
-// scr_buff_change does not apply a status. Every one of its four call sites in
-// the exe is a buff object's own Alarm event (c_buff_Alarm_1 twice,
-// o_b_deflect_Alarm_1, o_b_residual_charge_Alarm_1), so it runs AS a live buff
-// instance and ticks that buff through scr_modifer_duration_change. Running it
-// as the player points buff-tick logic at a character.
+// The previous version called scr_buff_change(index) as the player and killed
+// the character outright. That script is a buff's own tick handler: all four of
+// its call sites in the exe are buff Alarm events, so it expects to run AS a
+// live buff, and it reads more argument slots than it was given. Neither fact
+// was knowable from the single capture the signature came from.
 //
-// It is also variadic: it converts argument_count at +0x1b7 (cvtsi2sd xmm0,
-// r9d), branches on it at +0x64e (cmp ebx, 2), and dereferences args[2], args[3]
-// and args[4] on some paths - past the end of the one-element array this passed.
+// Breakpointing gml_Object_c_buff_Create_0 while drinking a potion showed what
+// really happens: three instances appear, each running the inherited Create
+// chain (o_condition_debuff : o_debuff : c_buff). No applying script is on the
+// stack, because instance creation goes through a runtime builtin and the
+// engine dispatches Create itself.
 //
-// Either defect on its own corrupts the character, which is what reached us as
-// "every status effect instantly kills me, even the beneficial ones". Under
-// this failure which object you picked barely matters, which is exactly the
-// shape of that report.
+// Reading one of those live buffs back, then creating one by hand and diffing
+// the two, established the division of labour exactly: the Create chain fills
+// in everything structural on its own - type, stack, stage, LVL, source, and an
+// allocated (empty) data map - and leaves precisely three fields for whoever is
+// applying it.
 //
-// The applying path is scr_player_buff_buffer -> scr_buff_buffer_add (7 call
-// sites, all from the player/enemy buffer scripts). Its signature is NOT
-// established, and inferring one from a single observation is what produced
-// this bug in the first place - scr_weapon_loot and scr_buff_param went the
-// same way. So nothing is called until a real call has been recorded.
-bool ApplyCondition(int /*assetIndex*/) {
-    Fail("disabled: scr_buff_change ticks an existing buff, it does not apply "
-         "one - the real signature has not been captured yet");
-    return false;
+//     owner      the unit the buff belongs to, as an instance reference
+//     target     that unit's OBJECT index
+//     duration   ticks remaining; a buff created with 0 never retires
+//
+// Set those and the game takes it from there: scr_atr_calc runs every step and
+// every turn, and scr_player_buff_buffer recomputes the attribute buffer from
+// whatever buffs are live.
+//
+// KNOWN LIMIT: `data`, the ds_map of stat modifiers, is written by whoever
+// applies the buff - the potion code computes its own rolled values - and there
+// is no shared call that fills it (scr_buff_param only READS it, once per
+// attribute, during recalculation). Statuses whose effect lives in their own
+// events - stun, bleeding, poison, coma, most of o_db_* - do not need it.
+// Pure stat-modifier buffs will apply with no magnitude until the numbers come
+// from somewhere real. Inventing them here is how the last bug happened.
+bool ApplyCondition(int assetIndex, double duration) {
+    backup::EnsureBackupOnce();
+    g_error.clear();
+
+    void* self = Player();
+    if (!self) { Fail("no player instance yet"); return false; }
+
+    // A buff is an instance and has to be born somewhere; the player's own
+    // position keeps it with the character it belongs to.
+    double px = 0.0, py = 0.0;
+    if (!gml::PlayerPosition(px, py)) {
+        Fail("player position not known yet - take a step and try again");
+        return false;
+    }
+
+    gml::RValue create[4]{};
+    gml::SetReal(create[0], px);
+    gml::SetReal(create[1], py);
+    gml::SetReal(create[2], 0.0);                                  // depth
+    gml::SetReal(create[3], static_cast<double>(assetIndex));
+
+    gml::RValue inst{};
+    if (!builtins::Call("instance_create_depth", &inst, create, 4, self) ||
+        inst.kind == gml::kUndefined || inst.kind == gml::kUnset) {
+        Fail("instance_create_depth failed for asset index %d", assetIndex);
+        return false;
+    }
+
+    // Address the new buff by the reference the runtime just handed back; the
+    // CInstance* for `self` stays the player, which is only the call context.
+    builtins::Handle buff{};
+    buff.id      = inst;
+    buff.self    = self;
+    buff.haveRef = true;
+
+    const builtins::Handle player = builtins::PlayerHandle();
+    if (!player.haveRef) {
+        Fail("no instance reference for the player - cannot set the buff's owner");
+        return false;
+    }
+
+    // `target` is an object index. Resolve it by name rather than pinning the
+    // 5376 this happened to read, so a patch that renumbers objects costs
+    // nothing - the same rule the rest of the mod follows.
+    gml::RValue objIndex{};
+    {
+        static const char kPlayerObject[] = "o_player";            // must outlive the call
+        gml::RValue nameArg{};
+        if (!gml::SetString(nameArg, kPlayerObject) ||
+            !builtins::Call("asset_get_index", &objIndex, &nameArg, 1, self) ||
+            objIndex.kind != gml::kReal) {
+            Fail("asset_get_index(\"o_player\") failed");
+            return false;
+        }
+    }
+
+    if (duration < 1.0) duration = 1.0;
+    gml::RValue durValue{};
+    gml::SetReal(durValue, duration);
+
+    const bool ok = builtins::SetVar(buff, "owner", player.id) &&
+                    builtins::SetVar(buff, "target", objIndex) &&
+                    builtins::SetVar(buff, "duration", durValue);
+    if (!ok) {
+        Fail("created the buff but could not write owner/target/duration");
+        return false;
+    }
+
+    Logf("character: applied condition index %d for %g (owner=%p target=%.0f)",
+         assetIndex, duration, self, objIndex.real);
+    return true;
+}
+
+// Whether the player's own buffs list actually holds `count` entries now.
+//
+// Reported rather than assumed: the buff was created and pointed at the player,
+// but nothing has yet proved the player's `buffs` ds_list is what the game reads
+// back, or that a buff adds itself to it once it has an owner. Showing the count
+// next to the attempt is how the Enemies tab handles the same doubt - a
+// disagreement is information, not something to paper over.
+int ActiveConditionCount() {
+    gml::RValue list{};
+    if (!builtins::GetVar(builtins::PlayerHandle(), "buffs", &list) ||
+        list.kind != gml::kReal)
+        return -1;
+
+    gml::RValue arg{};
+    gml::SetReal(arg, list.real);
+
+    gml::RValue size{};
+    if (!builtins::Call("ds_list_size", &size, &arg, 1, Player()) ||
+        size.kind != gml::kReal)
+        return -1;
+    return static_cast<int>(size.real);
 }
 
 // ---------------------------------------------------------------------- psyche
@@ -316,19 +419,15 @@ void DrawCharacterTab() {
     if (conds.empty()) {
         ImGui::TextDisabled("No condition catalogue (object table unreadable).");
     } else {
-        // The catalogue is still worth showing - it is read from the object
-        // table and is correct. It is only applying one that is broken.
-        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f),
-                           "Applying a status is DISABLED - it corrupted the character.");
         ImGui::TextWrapped(
-            "scr_buff_change turned out to be the buff's own tick handler, not the call "
-            "that applies one: every site that calls it in the game is a buff object's "
-            "Alarm event, so it expects to run as a buff instance rather than as you. "
-            "It also reads argument_count and can index past the single argument this "
-            "passed it. That is why every effect killed the character, beneficial ones "
-            "included - the object you picked barely entered into it.");
-        ImGui::TextDisabled("%zu statuses listed, read from the object table.",
-                            conds.size());
+            "A status is an instance, not a script call. The status object is created and "
+            "given the three fields its own Create chain leaves blank - owner, target and "
+            "duration - and the game's recalculation, which runs every step and every "
+            "turn, picks it up from there.");
+        ImGui::TextDisabled(
+            "%zu statuses, read from the object table. Behavioural ones (stun, bleeding, "
+            "poison) work; pure stat buffs apply with no magnitude - see the note below.",
+            conds.size());
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::InputTextWithHint("##condfilter", "filter conditions...",
                                  condFilter, sizeof(condFilter));
@@ -357,11 +456,46 @@ void DrawCharacterTab() {
         }
         ImGui::EndChild();
 
-        ImGui::BeginDisabled(true);
-        ImGui::Button("Apply condition", ImVec2(200.0f, 0.0f));
+        static float condDuration = 200.0f;
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::SliderFloat("duration", &condDuration, 1.0f, 2000.0f, "%.0f ticks");
+        ImGui::SameLine();
+        ImGui::TextDisabled("a potion's buff read 199");
+
+        ImGui::BeginDisabled(condChoice < 0);
+        if (ImGui::Button("Apply condition", ImVec2(200.0f, 0.0f))) {
+            const auto& c = conds[static_cast<std::size_t>(condChoice)];
+
+            // Count before and after: the apply can report success because the
+            // instance was created and written, while the game still declines to
+            // take it up. Showing both numbers makes that visible instead of
+            // leaving a button that lies.
+            const int before = ActiveConditionCount();
+            const bool ok    = ApplyCondition(c.index, condDuration);
+            const int after  = ActiveConditionCount();
+
+            if (!ok) {
+                console::Print(console::Line::Error, "%s (%s) -> %s",
+                               c.name.c_str(), c.display.c_str(), LastError());
+            } else if (before >= 0 && after >= 0) {
+                console::Print(after > before ? console::Line::Result : console::Line::Error,
+                               "%s (%s) -> created; player's buffs list %d -> %d%s",
+                               c.name.c_str(), c.display.c_str(), before, after,
+                               after > before ? "" : "  (the game did not take it up)");
+            } else {
+                console::Print(console::Line::Result,
+                               "%s (%s) -> created; buffs list not readable",
+                               c.name.c_str(), c.display.c_str());
+            }
+        }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::TextDisabled("re-enabled once a real apply has been recorded");
+        ImGui::TextDisabled("creates the instance and points it at you");
+
+        ImGui::TextDisabled(
+            "Note: `data`, the stat-modifier map, is filled by whoever applies a buff and "
+            "there is no shared call that does it, so a pure stat buff lands with no "
+            "magnitude. Making numbers up here is what broke this last time.");
     }
 
     // ---- psyche -----------------------------------------------------------

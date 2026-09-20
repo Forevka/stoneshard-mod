@@ -54,10 +54,19 @@ bool GrantXP(double amount);
 
 // ------------------------------------------------------------------ conditions
 
-// Always fails, with an explanation in LastError(). Kept as a seam so the
-// catalogue and the UI stay wired up while the real applying call is pinned
-// down; see the comment on the definition for what went wrong.
-bool ApplyCondition(int assetIndex);
+// Applies assets::Conditions()[i].index by CREATING the status instance and
+// setting the three fields its Create chain leaves to the caller - owner,
+// target and duration. See the definition for how that division of labour was
+// established, and for the one thing it does not do (populate `data`, the stat
+// modifier map, which matters only for pure stat buffs).
+//
+// duration is in ticks; a buff created with 0 never retires, so it is clamped
+// to at least 1.
+bool ApplyCondition(int assetIndex, double duration);
+
+// Entries in the player's own buffs list, or -1 if it cannot be read. Shown
+// next to an apply so a status that did not take is visible rather than silent.
+int ActiveConditionCount();
 
 // ---------------------------------------------------------------------- psyche
 //
