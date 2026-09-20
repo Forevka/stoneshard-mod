@@ -22,10 +22,13 @@ namespace mod::character {
 //   scr_get_XP              grants XP with the real level-up handling. Asking
 //                           for 500 on a character whose max_xp was 250 landed
 //                           at 250 and levelled them up - it is not a setter.
-//   scr_buff_change(index)  applies a status. Captured from the game itself
-//                           applying o_db_hunger0 (asset index 6028) after the
-//                           player ate; the argument is an ASSET INDEX, and a
-//                           name string faults.
+//   scr_buff_change(index)  WRONG - does NOT apply a status, and is disabled.
+//                           The capture behind this line recorded an argument
+//                           value (o_db_hunger0, 6028) but not the arity and
+//                           not the `self`, and both of those were wrong: the
+//                           script is a buff's own tick handler, called only
+//                           from buff Alarm events, and it reads more argument
+//                           slots than it was given. See ApplyCondition.
 //
 // Everything runs with the player as `self`. The console's current-instance
 // global is whatever the game last ran, which is not reliably the player.
@@ -51,7 +54,9 @@ bool GrantXP(double amount);
 
 // ------------------------------------------------------------------ conditions
 
-// Applies assets::Conditions()[i].index through scr_buff_change.
+// Always fails, with an explanation in LastError(). Kept as a seam so the
+// catalogue and the UI stay wired up while the real applying call is pinned
+// down; see the comment on the definition for what went wrong.
 bool ApplyCondition(int assetIndex);
 
 // ---------------------------------------------------------------------- psyche

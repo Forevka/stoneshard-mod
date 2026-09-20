@@ -133,17 +133,32 @@ bool GrantXP(double amount) {
 
 // ------------------------------------------------------------------ conditions
 
-bool ApplyCondition(int assetIndex) {
-    backup::EnsureBackupOnce();
-
-    gml::RValue arg{};
-    gml::SetReal(arg, static_cast<double>(assetIndex));
-
-    gml::RValue r{};
-    if (!CallScript("scr_buff_change", &r, &arg, 1)) return false;
-
-    Logf("character: applied condition index %d", assetIndex);
-    return true;
+// DISABLED - this called the wrong script, as the wrong instance.
+//
+// scr_buff_change does not apply a status. Every one of its four call sites in
+// the exe is a buff object's own Alarm event (c_buff_Alarm_1 twice,
+// o_b_deflect_Alarm_1, o_b_residual_charge_Alarm_1), so it runs AS a live buff
+// instance and ticks that buff through scr_modifer_duration_change. Running it
+// as the player points buff-tick logic at a character.
+//
+// It is also variadic: it converts argument_count at +0x1b7 (cvtsi2sd xmm0,
+// r9d), branches on it at +0x64e (cmp ebx, 2), and dereferences args[2], args[3]
+// and args[4] on some paths - past the end of the one-element array this passed.
+//
+// Either defect on its own corrupts the character, which is what reached us as
+// "every status effect instantly kills me, even the beneficial ones". Under
+// this failure which object you picked barely matters, which is exactly the
+// shape of that report.
+//
+// The applying path is scr_player_buff_buffer -> scr_buff_buffer_add (7 call
+// sites, all from the player/enemy buffer scripts). Its signature is NOT
+// established, and inferring one from a single observation is what produced
+// this bug in the first place - scr_weapon_loot and scr_buff_param went the
+// same way. So nothing is called until a real call has been recorded.
+bool ApplyCondition(int /*assetIndex*/) {
+    Fail("disabled: scr_buff_change ticks an existing buff, it does not apply "
+         "one - the real signature has not been captured yet");
+    return false;
 }
 
 // ---------------------------------------------------------------------- psyche
@@ -301,7 +316,18 @@ void DrawCharacterTab() {
     if (conds.empty()) {
         ImGui::TextDisabled("No condition catalogue (object table unreadable).");
     } else {
-        ImGui::TextDisabled("%zu statuses, applied by asset index through scr_buff_change.",
+        // The catalogue is still worth showing - it is read from the object
+        // table and is correct. It is only applying one that is broken.
+        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f),
+                           "Applying a status is DISABLED - it corrupted the character.");
+        ImGui::TextWrapped(
+            "scr_buff_change turned out to be the buff's own tick handler, not the call "
+            "that applies one: every site that calls it in the game is a buff object's "
+            "Alarm event, so it expects to run as a buff instance rather than as you. "
+            "It also reads argument_count and can index past the single argument this "
+            "passed it. That is why every effect killed the character, beneficial ones "
+            "included - the object you picked barely entered into it.");
+        ImGui::TextDisabled("%zu statuses listed, read from the object table.",
                             conds.size());
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::InputTextWithHint("##condfilter", "filter conditions...",
@@ -331,15 +357,11 @@ void DrawCharacterTab() {
         }
         ImGui::EndChild();
 
-        ImGui::BeginDisabled(condChoice < 0);
-        if (ImGui::Button("Apply condition", ImVec2(200.0f, 0.0f))) {
-            const auto& c  = conds[static_cast<std::size_t>(condChoice)];
-            const bool  ok = ApplyCondition(c.index);
-            console::Print(ok ? console::Line::Result : console::Line::Error,
-                           "scr_buff_change %d (%s) -> %s",
-                           c.index, c.name.c_str(), ok ? "ok" : LastError());
-        }
+        ImGui::BeginDisabled(true);
+        ImGui::Button("Apply condition", ImVec2(200.0f, 0.0f));
         ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("re-enabled once a real apply has been recorded");
     }
 
     // ---- psyche -----------------------------------------------------------
