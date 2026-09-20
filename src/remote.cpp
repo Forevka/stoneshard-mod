@@ -353,7 +353,7 @@ void Execute(const std::string& line) {
     }
 
     // The overlay's Enemies tab, minus the overlay: list what is in the room,
-    // and kill one row or all of them by index.
+    // dump one row's variables, or destroy one by index.
     if (tok[0] == "enemies") {
         enemies::Refresh();
         const auto& rows = enemies::Roster();
@@ -372,16 +372,6 @@ void Execute(const std::string& line) {
             return;
         }
 
-        if (tok[1] == "killall") {
-            const bool ok = enemies::KillAllVanilla();
-            Reply("enemies: killall -> %s", ok ? "scr_console_killall ran"
-                                               : enemies::LastError());
-            return;
-        }
-        if (tok[1] == "killlisted") {
-            Reply("enemies: killed %d of %zu", enemies::KillAllListed(), rows.size());
-            return;
-        }
         if (tok[1] == "vars" && tok.size() > 2) {
             const int n = std::atoi(tok[2].c_str());
             if (n < 0 || n >= static_cast<int>(rows.size())) { Reply("enemies: no row %d", n); return; }
@@ -390,23 +380,20 @@ void Execute(const std::string& line) {
             return;
         }
 
-        // A bare index kills that row; "remove <n>" destroys it instead.
-        const bool  remove = (tok[1] == "remove");
-        std::string which;
-        if (remove) { if (tok.size() > 2) which = tok[2]; }
-        else        { which = tok[1]; }
-        if (which.empty()) {
-            Reply("usage: enemies [<n>|remove <n>|vars <n>|killall|killlisted]");
+        // Destroying a row has to be spelled out. A bare index used to kill it,
+        // which made a typo destructive; there is no kill path any more and the
+        // remaining one says what it does.
+        if (tok[1] != "remove" || tok.size() < 3) {
+            Reply("usage: enemies [remove <n>|vars <n>]");
             return;
         }
 
-        const int n = std::atoi(which.c_str());
+        const int n = std::atoi(tok[2].c_str());
         if (n < 0 || n >= static_cast<int>(rows.size())) { Reply("enemies: no row %d", n); return; }
 
         const auto& e = rows[static_cast<std::size_t>(n)];
-        const bool ok = remove ? enemies::Remove(e) : enemies::Kill(e);
-        Reply("enemies: %s [%d] %s -> %s", remove ? "remove" : "kill", n, e.name.c_str(),
-              ok ? "ok" : enemies::LastError());
+        Reply("enemies: remove [%d] %s -> %s", n, e.name.c_str(),
+              enemies::Remove(e) ? "ok" : enemies::LastError());
         return;
     }
 

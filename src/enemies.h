@@ -30,8 +30,8 @@ namespace mod::enemies {
 //
 // The tracker is preferred and the enumeration is the fallback, so the feature
 // still works if the Step hook cannot be installed. Which one a row came from is
-// shown in the tab rather than hidden, because it decides what the Kill button
-// is able to do.
+// shown in the tab rather than hidden, because it decides whether a row can be
+// used as a script's `self` at all.
 
 struct Enemy {
     void*            inst = nullptr;   // CInstance*, only when `tracked`
@@ -75,29 +75,19 @@ const std::vector<Enemy>& Roster();
 // hiding, because it means the tracker is missing instances.
 int Reported();
 
-// Sets HP to 0 through the game's own attribute setter, run as that enemy -
-// the same lever the game pulls when damage lands, so the death that follows is
-// the game's own, with whatever it normally awards.
-//
-// Falls back to writing the HP variable directly for a listed (untracked) row,
-// which sets the number but cannot run the game's reaction to it.
-bool Kill(const Enemy& e);
-
 // instance_destroy. Removes the enemy outright rather than defeating it: the
 // Destroy event still runs (which is where the drop comes from) but nothing
 // that normally happens on the damage path does.
+//
+// This is the only way the tab removes an enemy. Killing through the game's own
+// damage path was tried and dropped: setting HP to 0 through scr_atr_set did not
+// actually kill anything, and the kill-everything variants were worse - they
+// could not be aimed, so a misclick emptied the room. A wide destructive action
+// that does not work is worse than no button at all.
 bool Remove(const Enemy& e);
 
 // Weaken rather than remove.
 bool SetHP(const Enemy& e, double hp);
-
-// The game's own console command, scr_console_killall, called with no
-// arguments. It is a `with` loop over every enemy, so it cannot be aimed - but
-// it is the game's genuine kill-everything path.
-bool KillAllVanilla();
-
-// Kill() over every row currently listed. Reports how many succeeded.
-int KillAllListed();
 
 // Every instance variable on one enemy, for finding out what a field is
 // actually called. The names read here were taken from a live player dump;

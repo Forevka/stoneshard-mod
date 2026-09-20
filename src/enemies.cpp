@@ -369,8 +369,6 @@ bool SetHP(const Enemy& e, double hp) {
     return true;
 }
 
-bool Kill(const Enemy& e) { return SetHP(e, 0.0); }
-
 bool Remove(const Enemy& e) {
     backup::EnsureBackupOnce();
 
@@ -392,35 +390,6 @@ bool Remove(const Enemy& e) {
     if (e.inst) Forget(e.inst);
     Logf("enemies: removed %s", e.name.c_str());
     return true;
-}
-
-bool KillAllVanilla() {
-    backup::EnsureBackupOnce();
-
-    void* fn = sym::Find("gml_Script_scr_console_killall");
-    if (!fn) { Fail("scr_console_killall not found"); return false; }
-
-    void* self = Context();
-    if (!self) { Fail("no instance context yet - load a save"); return false; }
-
-    gml::RValue r{};
-    if (!gml::CallAs(fn, &r, nullptr, 0, self, self)) {
-        Fail("scr_console_killall failed%s%s",
-             gml::LastError()[0] ? ": " : "", gml::LastError());
-        return false;
-    }
-    Logf("enemies: scr_console_killall ran");
-    return true;
-}
-
-int KillAllListed() {
-    // Copied, because Kill() can end up rebuilding the roster underneath us.
-    const std::vector<Enemy> rows = g_roster;
-    int done = 0;
-    for (const Enemy& e : rows)
-        if (Kill(e)) ++done;
-    Logf("enemies: killed %d of %zu listed", done, rows.size());
-    return done;
 }
 
 std::vector<std::string> Probe(const Enemy& e, int limit) {
@@ -543,14 +512,12 @@ void DrawEnemiesTab() {
 
         // AllowOverlap matters: the row's buttons are drawn on top of this
         // Selectable, which spans the full width. Without it the Selectable wins
-        // the hit test and swallows every click meant for Kill, Remove or Vars -
-        // the row just highlights and nothing happens.
+        // the hit test and swallows every click meant for Remove or Vars - the
+        // row just highlights and nothing happens.
         if (ImGui::Selectable(label, g_selected == i, ImGuiSelectableFlags_AllowOverlap))
             g_selected = i;
 
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 156.0f);
-        if (ImGui::SmallButton("Kill"))   { Kill(e);   Refresh(); ImGui::PopID(); break; }
-        ImGui::SameLine();
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 118.0f);
         if (ImGui::SmallButton("Remove")) { Remove(e); Refresh(); ImGui::PopID(); break; }
         ImGui::SameLine();
         if (ImGui::SmallButton("Vars"))
@@ -585,34 +552,21 @@ void DrawEnemiesTab() {
     }
 
     ImGui::Spacing();
-    ImGui::SeparatorText("Everything at once");
-
-    if (ImGui::Button("Kill everything listed", ImVec2(210.0f, 0.0f))) {
-        KillAllListed();
-        Refresh();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("one Kill per row above");
-
-    if (ImGui::Button("Kill all (game's own)", ImVec2(210.0f, 0.0f))) {
-        KillAllVanilla();
-        Refresh();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("scr_console_killall, the game's own console command");
-
-    ImGui::Spacing();
     ImGui::TextWrapped(
-        "Kill sets HP to 0 through the game's own attribute setter, run as that enemy, and "
-        "lets the game do the dying - so a kill counts as a kill. Remove destroys the instance "
-        "instead: the drop still happens, because that lives in the Destroy event, but nothing "
-        "on the damage path does. Vars dumps every instance variable to the log, which is how "
-        "the field names above were settled and how they get re-checked after a patch.");
+        "Remove destroys the instance: the drop still happens, because that lives in the "
+        "Destroy event, but nothing on the damage path does. Vars dumps every instance "
+        "variable to the log, which is how the field names above were settled and how they "
+        "get re-checked after a patch.");
+    ImGui::TextWrapped(
+        "There is deliberately no Kill. Setting HP to 0 through the game's own attribute "
+        "setter did not actually kill anything, and the kill-everything variants could not be "
+        "aimed - one misclick emptied the room. A wide destructive action that does not work "
+        "is worse than no button.");
 
     if (!Tracking())
         ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f),
-                           "Step hook not installed - rows are listed, not tracked, so Kill can "
-                           "only write the number and not run the game's reaction to it.");
+                           "Step hook not installed - rows are listed, not tracked, so they "
+                           "cannot be used as a script's own instance.");
 
     if (LastError()[0])
         ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1.0f), "%s", LastError());

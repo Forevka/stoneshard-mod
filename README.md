@@ -51,14 +51,17 @@ instances and needs no table of monster names to fall out of date.
 - **Room roster** — everything hostile standing in the room, nearest first, with name, race, HP,
   level and distance read by reflection. The count the mod lists is shown next to the count the
   game reports, because the two disagreeing is information rather than something to hide.
-- **Kill** one enemy, or all of them. Kill sets HP to 0 through the game's own attribute setter
-  *run as that enemy*, so the game does the dying and a kill counts as a kill — reaching an
-  arbitrary instance that way is the point of hooking `o_enemy`'s Step event, which hands over the
-  `CInstance*` the runtime itself passes as `self`.
-- **Remove** destroys the instance instead. The drop still happens, because that lives in the
-  Destroy event, but nothing on the damage path does.
-- **Kill all** also offered as the game's own `scr_console_killall`, unmodified.
+- **Remove** destroys the instance. The drop still happens, because that lives in the Destroy
+  event, but nothing on the damage path does. Reaching an arbitrary instance at all is the point
+  of hooking `o_enemy`'s Step event, which hands over the `CInstance*` the runtime itself passes
+  as `self`.
 - **Set HP** per enemy, to wound rather than clear.
+- **Vars** dumps every instance variable on one enemy, which is how the field names above were
+  settled and how they get re-checked after a patch.
+
+There is deliberately no *Kill*. Setting HP to 0 through the game's own attribute setter did not
+actually kill anything, and the kill-everything variants could not be aimed, so one misclick
+emptied the room. A wide destructive action that does not work is worse than no button.
 
 **World**
 
