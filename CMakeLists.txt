@@ -93,6 +93,7 @@ add_library(stoneshard_mod SHARED
     src/gamespeed.cpp
     src/rewrite.cpp
     src/loot.cpp
+    src/enemies.cpp
     src/savemigrate.cpp
     src/tracer.cpp
     src/remote.cpp

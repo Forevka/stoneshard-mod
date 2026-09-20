@@ -13,6 +13,7 @@
 #include "builtins.h"
 #include "items.h"
 #include "console.h"
+#include "enemies.h"
 #include "gamespeed.h"
 #include "gml.h"
 #include "log.h"
@@ -348,6 +349,64 @@ void Execute(const std::string& line) {
         Reply(items::AddWeaponToInventory(tok[1], rarity)
                   ? "giveweapon: %s as %s" : "giveweapon: FAILED %s as %s",
               tok[1].c_str(), items::RarityName(rarity));
+        return;
+    }
+
+    // The overlay's Enemies tab, minus the overlay: list what is in the room,
+    // and kill one row or all of them by index.
+    if (tok[0] == "enemies") {
+        enemies::Refresh();
+        const auto& rows = enemies::Roster();
+
+        if (tok.size() == 1) {
+            Reply("enemies: %zu listed, the game reports %d (tracker %s)",
+                  rows.size(), enemies::Reported(),
+                  enemies::Tracking() ? "on" : "off");
+            for (std::size_t i = 0; i < rows.size(); ++i) {
+                const auto& e = rows[i];
+                Reply("   [%zu] %-24s hp=%.0f/%.0f lvl=%.0f dist=%.0f %s",
+                      i, e.name.c_str(), e.hp, e.maxHp, e.level, e.dist,
+                      e.tracked ? "tracked" : "listed");
+            }
+            if (rows.empty() && enemies::LastError()[0]) Reply("   %s", enemies::LastError());
+            return;
+        }
+
+        if (tok[1] == "killall") {
+            const bool ok = enemies::KillAllVanilla();
+            Reply("enemies: killall -> %s", ok ? "scr_console_killall ran"
+                                               : enemies::LastError());
+            return;
+        }
+        if (tok[1] == "killlisted") {
+            Reply("enemies: killed %d of %zu", enemies::KillAllListed(), rows.size());
+            return;
+        }
+        if (tok[1] == "vars" && tok.size() > 2) {
+            const int n = std::atoi(tok[2].c_str());
+            if (n < 0 || n >= static_cast<int>(rows.size())) { Reply("enemies: no row %d", n); return; }
+            for (const std::string& l : enemies::Probe(rows[static_cast<std::size_t>(n)], 0))
+                Reply("%s", l.c_str());
+            return;
+        }
+
+        // A bare index kills that row; "remove <n>" destroys it instead.
+        const bool  remove = (tok[1] == "remove");
+        std::string which;
+        if (remove) { if (tok.size() > 2) which = tok[2]; }
+        else        { which = tok[1]; }
+        if (which.empty()) {
+            Reply("usage: enemies [<n>|remove <n>|vars <n>|killall|killlisted]");
+            return;
+        }
+
+        const int n = std::atoi(which.c_str());
+        if (n < 0 || n >= static_cast<int>(rows.size())) { Reply("enemies: no row %d", n); return; }
+
+        const auto& e = rows[static_cast<std::size_t>(n)];
+        const bool ok = remove ? enemies::Remove(e) : enemies::Kill(e);
+        Reply("enemies: %s [%d] %s -> %s", remove ? "remove" : "kill", n, e.name.c_str(),
+              ok ? "ok" : enemies::LastError());
         return;
     }
 

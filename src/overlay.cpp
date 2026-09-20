@@ -13,6 +13,7 @@
 #include "remote.h"
 #include "gamespeed.h"
 #include "loot.h"
+#include "enemies.h"
 #include "rewrite.h"
 #include "savemigrate.h"
 #include "log.h"
@@ -358,6 +359,7 @@ void DrawUI() {
     // the two that get used every session.
     if (ImGui::BeginTabBar("##tabs")) {
         if (ImGui::BeginTabItem("Cheats"))  { cheats::DrawCheatsTab();      ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Enemies")) { enemies::DrawEnemiesTab();   ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Loot"))    { loot::DrawLootTab();          ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Speed"))   { gamespeed::DrawSpeedTab();    ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Saves"))   { savemigrate::DrawSavesTab();  ImGui::EndTabItem(); }
@@ -388,6 +390,8 @@ void OverlayRender(IDXGISwapChain* swapChain) {
     tracer::Tick();
     // Re-assert the chosen game speed if the engine has moved it back.
     gamespeed::Tick();
+    // Retires tracked enemy instances once their room stops stepping.
+    enemies::Tick();
 
     remote::Poll();
 

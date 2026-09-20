@@ -42,6 +42,24 @@ carrying a list of effects, with the name assembled from them at display time.
 - **Body parts** — all six limbs with their own 0–100 condition, a heal button each, and a damage
   button for testing. Active wounds are listed alongside (they're separate from condition).
 
+**Enemies**
+
+Every enemy in the game is an instance of one object, `o_enemy` — there is no `o_enemy_wolf`. What
+makes a wolf a wolf is the variables the instance carries, so the roster is a walk over live
+instances and needs no table of monster names to fall out of date.
+
+- **Room roster** — everything hostile standing in the room, nearest first, with name, race, HP,
+  level and distance read by reflection. The count the mod lists is shown next to the count the
+  game reports, because the two disagreeing is information rather than something to hide.
+- **Kill** one enemy, or all of them. Kill sets HP to 0 through the game's own attribute setter
+  *run as that enemy*, so the game does the dying and a kill counts as a kill — reaching an
+  arbitrary instance that way is the point of hooking `o_enemy`'s Step event, which hands over the
+  `CInstance*` the runtime itself passes as `self`.
+- **Remove** destroys the instance instead. The drop still happens, because that lives in the
+  Destroy event, but nothing on the damage path does.
+- **Kill all** also offered as the game's own `scr_console_killall`, unmodified.
+- **Set HP** per enemy, to wound rather than clear.
+
 **World**
 
 - **Loot multiplier**, 0.25x to 7x, over both enemy drops and dungeon containers, with live counters

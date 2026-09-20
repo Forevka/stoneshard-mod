@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include "assets.h"
+#include "enemies.h"
 #include "gml.h"
 #include "hooks.h"
 #include "log.h"
@@ -51,6 +52,11 @@ DWORD WINAPI InitThread(LPVOID) {
     // weapon spawns is what lets the Items tab hand out gear at all.
     mod::gml::InstallWeaponRecorder();
     mod::gml::InstallPlayerTracker();
+
+    // The same idea one object over: o_enemy's Step event runs once per enemy
+    // per frame, so watching it yields both the roster of who is in the room
+    // and the CInstance* needed to run the game's own scripts as one of them.
+    mod::enemies::InstallTracker();
 
     // Same idea for potions: the bottle's own alarm event is where the game
     // hands over a real bottle instance, which is what rolling one needs.
