@@ -236,18 +236,55 @@ bool ApplyCondition(int assetIndex, double duration) {
         return false;
     }
 
-    Logf("character: applied condition index %d for %g (owner=%p target=%.0f)",
-         assetIndex, duration, self, objIndex.real);
+    // A buff does not register itself. The whole Create chain - c_buff,
+    // o_buff/o_debuff and the family object above them - makes no script calls
+    // at all; it only initialises fields. So the unit's own buffs list is the
+    // registry, and whoever applies a status has to put it there.
+    //
+    // Confirmed rather than assumed: drinking a potion took the player's list
+    // from 0 to 3 entries, one instance reference per buff the potion created,
+    // which is also the number of c_buff Create events it fired.
+    gml::RValue list{};
+    if (!builtins::GetVar(player, "buffs", &list) || list.kind != gml::kReal) {
+        Fail("created the buff but the player's buffs list is not readable");
+        return false;
+    }
+
+    gml::RValue addArgs[2]{};
+    gml::SetReal(addArgs[0], list.real);
+    addArgs[1] = inst;                       // the reference, not a decoded id
+
+    gml::RValue ignored{};
+    if (!builtins::Call("ds_list_add", &ignored, addArgs, 2, self)) {
+        Fail("created the buff but could not add it to the player's buffs list");
+        return false;
+    }
+
+    // The unit's own dirty flag, raised when its buff set changes and cleared
+    // once the attributes have been recomputed. Setting it asks for that pass
+    // rather than waiting for something else to trigger one. Written as a real
+    // bool because that is the kind the game keeps there.
+    gml::RValue changed{};
+    gml::SetReal(changed, 1.0);
+    changed.kind = gml::kBool;
+    builtins::SetVar(player, "buffs_is_change", changed);
+
+    Logf("character: applied condition index %d for %g ticks "
+         "(owner=%p target=%.0f, buffs list %.0f)",
+         assetIndex, duration, self, objIndex.real, list.real);
     return true;
 }
 
-// Whether the player's own buffs list actually holds `count` entries now.
+// How many entries the player's `buffs` ds_list holds, or -1 if it cannot be
+// read at all. That list is the registry the game reads statuses back from:
+// drinking a potion takes it from 0 to 3, one instance reference per buff.
 //
-// Reported rather than assumed: the buff was created and pointed at the player,
-// but nothing has yet proved the player's `buffs` ds_list is what the game reads
-// back, or that a buff adds itself to it once it has an owner. Showing the count
-// next to the attempt is how the Enemies tab handles the same doubt - a
-// disagreement is information, not something to paper over.
+// Reported beside every apply because creating the instance, writing its
+// fields and adding it to the list can all succeed while the game still
+// declines to show the status - and a disagreement is information, the same
+// reason the Enemies tab prints its own count next to the game's. Note -1
+// ("not readable") is a different answer from 0 ("readable, and empty"); an
+// earlier version conflated them and made a bad apply look like a clean one.
 int ActiveConditionCount() {
     gml::RValue list{};
     if (!builtins::GetVar(builtins::PlayerHandle(), "buffs", &list) ||
@@ -477,15 +514,22 @@ void DrawCharacterTab() {
             if (!ok) {
                 console::Print(console::Line::Error, "%s (%s) -> %s",
                                c.name.c_str(), c.display.c_str(), LastError());
-            } else if (before >= 0 && after >= 0) {
-                console::Print(after > before ? console::Line::Result : console::Line::Error,
-                               "%s (%s) -> created; player's buffs list %d -> %d%s",
-                               c.name.c_str(), c.display.c_str(), before, after,
-                               after > before ? "" : "  (the game did not take it up)");
-            } else {
-                console::Print(console::Line::Result,
-                               "%s (%s) -> created; buffs list not readable",
+            } else if (before < 0 || after < 0) {
+                // Not the same as a count of zero, and saying so matters: it
+                // means the check itself failed, not that the status did.
+                console::Print(console::Line::Error,
+                               "%s (%s) -> applied, but the player's buffs list could "
+                               "not be read - unverified",
                                c.name.c_str(), c.display.c_str());
+            } else if (after > before) {
+                console::Print(console::Line::Result,
+                               "%s (%s) -> applied; player now carries %d status(es), was %d",
+                               c.name.c_str(), c.display.c_str(), after, before);
+            } else {
+                console::Print(console::Line::Error,
+                               "%s (%s) -> created and registered, but the list still "
+                               "reads %d - the game dropped it",
+                               c.name.c_str(), c.display.c_str(), after);
             }
         }
         ImGui::EndDisabled();
