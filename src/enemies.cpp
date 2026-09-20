@@ -541,7 +541,12 @@ void DrawEnemiesTab() {
         std::snprintf(label, sizeof(label), "%-22s %s%s%s%s",
                       e.name.c_str(), hp, lvl, dist, e.tracked ? "" : "  [listed]");
 
-        if (ImGui::Selectable(label, g_selected == i)) g_selected = i;
+        // AllowOverlap matters: the row's buttons are drawn on top of this
+        // Selectable, which spans the full width. Without it the Selectable wins
+        // the hit test and swallows every click meant for Kill, Remove or Vars -
+        // the row just highlights and nothing happens.
+        if (ImGui::Selectable(label, g_selected == i, ImGuiSelectableFlags_AllowOverlap))
+            g_selected = i;
 
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 156.0f);
         if (ImGui::SmallButton("Kill"))   { Kill(e);   Refresh(); ImGui::PopID(); break; }
