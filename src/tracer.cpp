@@ -300,8 +300,24 @@ void StopRecording() {
     if (g_worker.joinable()) g_worker.join();
 }
 
+// Retiring a breakpoint from inside its own detour crashes the game, so the hit
+// limit only raises this and Tick() does the removal between frames. Two
+// separate faults made that necessary: ClearBreakpoint nulls g_bpScriptOrig,
+// which the detour was about to return through, and MH_RemoveHook frees the
+// trampoline while outer frames of the same hooked function are still standing
+// on it. scr_buff_param recurses - twenty nested hits inside one millisecond -
+// so both fired the moment the limit tripped.
+std::atomic<bool> g_bpRetire{false};
+
 void Tick() {
     if (Recording() && GetTickCount() >= g_stopAt) StopRecording();
+
+    // Runs from the Present hook, so the game's GML call stack has already
+    // unwound for the frame - the only point where pulling the hook is safe.
+    if (g_bpRetire.exchange(false)) {
+        ClearBreakpoint();
+        Logf("breakpoint: retired");
+    }
 }
 
 void NotePlayerStep(double x, double y, bool havePos) {
@@ -378,25 +394,36 @@ void ReportHit(void* self, void* other, int argc, gml::RValue** args) {
     Logf("breakpoint: %s", report.c_str());
 
     if (g_bp.hitLimit > 0 && static_cast<int>(g_bp.hits) >= g_bp.hitLimit) {
-        Logf("breakpoint: hit limit reached, clearing %s", g_bp.symbol.c_str());
-        ClearBreakpoint();
+        // Only ask. Unhooking here would pull the trampoline out from under the
+        // frames still returning through it.
+        if (!g_bpRetire.exchange(true))
+            Logf("breakpoint: hit limit reached, retiring %s between frames",
+                 g_bp.symbol.c_str());
     }
 }
 
 gml::RValue* BpScriptDetour(void* self, void* other, gml::RValue* result,
                             int argc, gml::RValue** args) {
+    // Read the trampoline BEFORE reporting. Retirement is deferred now, but a
+    // breakpoint can also be cleared from the overlay on another frame, and
+    // returning through a pointer that teardown has since nulled is exactly the
+    // crash this used to produce.
+    const BpScriptFn orig = g_bpScriptOrig;
+
     ReportHit(self, other, argc, args);
-    if (g_bp.skipOriginal) {
+
+    if (g_bp.skipOriginal || !orig) {
         if (result) { result->ptr = nullptr; result->flags = 0; result->kind = gml::kUndefined; }
         return result;
     }
-    return g_bpScriptOrig(self, other, result, argc, args);
+    return orig(self, other, result, argc, args);
 }
 
 void BpEventDetour(void* self, void* other) {
+    const BpEventFn orig = g_bpEventOrig;
     ReportHit(self, other, 0, nullptr);
-    if (g_bp.skipOriginal) return;
-    g_bpEventOrig(self, other);
+    if (g_bp.skipOriginal || !orig) return;
+    orig(self, other);
 }
 
 } // namespace
