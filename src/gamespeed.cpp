@@ -34,11 +34,22 @@ bool ReadSpeed(double* out) {
     void* self = Context();
     if (!self) return false;
 
-    gml::RValue arg{};
-    gml::SetReal(arg, kGamespeedFps);
+    // Two arguments, not the one the GML manual documents: this runtime
+    // registers game_get_speed with nargs=2 and the registry's arity is what the
+    // dispatcher checks, so a single argument is refused outright -
+    //     [!] builtins: game_get_speed expects 2 args, got 1
+    // which is what made the tab report that it could not read the speed.
+    //
+    // Supplying a slot the function may not read is safe; it is the opposite of
+    // under-filling, which is what makes a callee read past the end of the array
+    // (see character.cpp for where that went). Only the type argument is
+    // meaningful, so the spare stays 0.
+    gml::RValue args[2]{};
+    gml::SetReal(args[0], kGamespeedFps);
+    gml::SetReal(args[1], 0.0);
 
     gml::RValue r{};
-    if (!builtins::Call("game_get_speed", &r, &arg, 1, self) || r.kind != gml::kReal)
+    if (!builtins::Call("game_get_speed", &r, args, 2, self) || r.kind != gml::kReal)
         return false;
     if (r.real < 1.0 || r.real > 10000.0) return false;      // implausible; ignore
 
