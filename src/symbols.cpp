@@ -35,16 +35,10 @@ std::vector<Entry>                          g_byAddress;
 bool        g_healthy = false;
 std::string g_health  = "not scanned";
 
-// Minimum plausible symbol count. The reference build resolves 34,167; anything
-// far below that means the table shape changed and we must not execute anything.
-constexpr std::size_t kMinEntries = 20000;
-
-const char* const kRequired[] = {
-    "gml_Script_ConsoleCommand",
-    "gml_Script_scr_console_sethp",
-    "gml_Script_scr_console_spawn",
-    "gml_Script_scr_console_godmode",
-};
+// Minimum plausible symbol count for ANY YYC game. Stoneshard resolves 34,167
+// and Dwarf Eats Mountain 4,968, so the floor only has to separate "the table
+// shape changed and nothing matched" from a real, if small, game.
+constexpr std::size_t kMinEntries = 50;
 
 bool SectionRanges(HMODULE mod) {
     auto base = reinterpret_cast<std::uintptr_t>(mod);
@@ -167,13 +161,6 @@ bool Scan() {
         g_health  = buf;
         Logf("[!] symbols: %s", g_health.c_str());
         return false;
-    }
-    for (const char* req : kRequired) {
-        if (!g_index.count(req)) {
-            g_health = std::string("missing required symbol: ") + req;
-            Logf("[!] symbols: %s", g_health.c_str());
-            return false;
-        }
     }
 
     g_healthy = true;

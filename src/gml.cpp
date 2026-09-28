@@ -824,10 +824,16 @@ void AbiSelfTest() {
     Logf("gml: --- ABI self-test (self=%p) ---", *g_pCurrentSelf);
 
     int passed = 0;
+    int ran    = 0;
+
+    // The two script probes are Stoneshard scripts. In another YYC game they
+    // simply do not exist, which is "not probed", not "failed" - the verdict
+    // is taken over the checks that could actually run.
 
     // 1) Zero-argument call. Only probes that do not need a loaded character,
     //    since at the main menu there is no player and game-state lookups fault.
-    {
+    if (sym::Find("gml_Script_scr_console_sethp_help")) {
+        ++ran;
         RValue result{};
         if (CallByName("gml_Script_scr_console_sethp_help", &result, nullptr, 0)) {
             Logf("gml:   no-arg call        -> kind=%d (%s)",
@@ -840,7 +846,8 @@ void AbiSelfTest() {
 
     // 2) Argument marshalling, using a pure numeric helper so nothing in the
     //    game's state is involved: approach(0, 10, 3) must return 3.
-    {
+    if (sym::Find("gml_Script_scr_approach")) {
+        ++ran;
         RValue a{}, b{}, c{};
         SetReal(a, 0.0);
         SetReal(b, 10.0);
@@ -859,6 +866,7 @@ void AbiSelfTest() {
 
     // 3) String construction round-trip through the game's own allocator.
     {
+        ++ran;
         static const char kProbe[] = "stoneshard-mod";   // must outlive the call
         RValue s{};
         if (SetString(s, kProbe)) {
@@ -870,9 +878,12 @@ void AbiSelfTest() {
         }
     }
 
-    g_abiProven = passed >= 2;
-    Logf("gml: --- ABI self-test %s (%d/3 checks) ---",
-         g_abiProven ? "PASSED" : "FAILED", passed);
+    // Stoneshard keeps its old bar (two of three); with only the string check
+    // available, that one has to pass.
+    g_abiProven = ran >= 3 ? passed >= 2 : passed == ran;
+    Logf("gml: --- ABI self-test %s (%d/%d checks%s) ---",
+         g_abiProven ? "PASSED" : "FAILED", passed, ran,
+         ran < 3 ? "; script probes absent in this game" : "");
 }
 
 } // namespace mod::gml
