@@ -10,7 +10,9 @@ namespace CoreLoader;
 /// Handlers run once per frame inside a Draw GUI event, so coordinates are GUI
 /// pixels (see <see cref="GuiWidth"/>). The loader borrows the Draw GUI event
 /// of some object that has a live instance, and moves to another when a room
-/// change removes it; handlers do not see which.
+/// change removes it; handlers do not see which. Colour, alpha, font,
+/// alignment and blend mode are restored after the handlers, so a handler may
+/// set them freely - but should not rely on what they are when it starts.
 /// </remarks>
 public static class GameDraw
 {
@@ -20,6 +22,10 @@ public static class GameDraw
     private static HookHandle? _carrier;
     private static string? _carrierSymbol;
     private static long _frame, _drawnFrame = -1, _lastFire = -1, _lastPick = -1000;
+    private static bool _carrierFired, _pausedWarned;
+
+    // Draw GUI events that failed or went quiet, and the frame they may be tried again.
+    private static readonly Dictionary<string, long> Skipped = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Runs <paramref name="draw"/> once a frame during the game's GUI pass.
@@ -51,7 +57,7 @@ public static class GameDraw
         _frame++;
         if (Handlers.Count == 0)
         {
-            DropCarrier();
+            DropCarrier(stale: false);
             return;
         }
         // Fired recently: fine. Otherwise the carrier's instances are gone (a
@@ -61,6 +67,7 @@ public static class GameDraw
         if (_carrier != null && _frame - _lastFire <= 30) return;
         if (_carrier == null && _frame - _lastPick < 30) return;
         _lastPick = _frame;
+        if (_carrier != null) DropCarrier(stale: true);
         PickCarrier();
     }
 
@@ -72,35 +79,74 @@ public static class GameDraw
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToList();
 
+        // Fewest instances first: the event runs once per instance, and each
+        // run is a trip into managed code. One instance is ideal.
+        string? best = null;
+        int bestCount = int.MaxValue;
         foreach (var symbol in _events)
         {
-            if (symbol == _carrierSymbol) continue;
-            string obj = symbol["gml_Object_".Length..^"_Draw_64".Length];
-            if (GmlObject.Find(obj) is not { } o || o.InstanceCount == 0) continue;
-            // Invisible instances skip their draw events entirely.
-            if (!o.Instance(0).Get("visible").AsBool) continue;
+            if (Skipped.TryGetValue(symbol, out long until) && _frame < until) continue;
+            try
+            {
+                string obj = symbol["gml_Object_".Length..^"_Draw_64".Length];
+                if (GmlObject.Find(obj) is not { } o) continue;
+                int n = o.InstanceCount;
+                if (n == 0 || n >= bestCount) continue;
+                // Invisible instances skip their draw events entirely.
+                if (!o.Instance(0).Get("visible").AsBool) continue;
+                best = symbol;
+                bestCount = n;
+                if (n == 1) break;
+            }
+            catch (Exception ex)
+            {
+                // One odd object must not stall the search for the rest.
+                Skipped[symbol] = _frame + 3600;
+                Log.Warning($"game drawing: skipping {symbol}: {ex.Message}");
+            }
+        }
 
-            DropCarrier();
-            var previous = ModManager.Current;
-            ModManager.Current = null;   // the loader's own hook, not the calling mod's
-            try { _carrier = Hooks.After(symbol, _ => Fire()); }
-            finally { ModManager.Current = previous; }
-            _carrierSymbol = symbol;
-            _lastFire = _frame;          // give it a few frames to prove itself
-            Log.Info($"game drawing rides on {symbol}");
+        if (best == null)
+        {
+            if (!_pausedWarned)
+            {
+                _pausedWarned = true;
+                Log.Warning("no object with a Draw GUI event is alive; mod drawing is paused");
+            }
             return;
         }
-        if (_carrier != null)
+
+        var previous = ModManager.Current;
+        ModManager.Current = null;   // the loader's own hook, not the calling mod's
+        try
         {
-            // The old carrier stopped firing and nothing else qualifies.
-            DropCarrier();
-            Log.Warning("no object with a Draw GUI event is alive; mod drawing is paused");
+            _carrier = Hooks.After(best, _ => Fire());
         }
+        catch (GmlException ex)
+        {
+            Skipped[best] = _frame + 3600;
+            Log.Warning($"game drawing: cannot hook {best}: {ex.Message}");
+            return;
+        }
+        finally
+        {
+            ModManager.Current = previous;
+        }
+        _carrierSymbol = best;
+        _carrierFired = false;
+        _lastFire = _frame;          // give it a few frames to prove itself
+        _pausedWarned = false;
+        Log.Info($"game drawing rides on {best}");
     }
 
-    private static void DropCarrier()
+    private static void DropCarrier(bool stale)
     {
-        _carrier?.Dispose();
+        if (_carrier == null) return;
+        // A carrier that went quiet sits out a while, so the search does not
+        // pick it straight back: much longer if it never drew at all (a child
+        // object overriding the event, say).
+        if (stale && _carrierSymbol != null) Skipped[_carrierSymbol] = _frame + (_carrierFired ? 300 : 3600);
+        _carrier.Dispose();
         _carrier = null;
         _carrierSymbol = null;
     }
@@ -108,21 +154,65 @@ public static class GameDraw
     private static void Fire()
     {
         _lastFire = _frame;
+        _carrierFired = true;
         // The event runs once per instance; handlers run once per frame.
         if (_drawnFrame == _frame) return;
         _drawnFrame = _frame;
 
-        foreach (var (draw, owner) in Handlers.ToArray())
+        // Handlers leave behind the carrier's own draw state: an alpha or
+        // colour a mod sets must not bleed into the rest of the game's GUI.
+        var saved = SaveDrawState();
+        try
         {
-            if (owner == null)
+            foreach (var (draw, owner) in Handlers.ToArray())
             {
-                try { draw(); }
-                catch (Exception ex) { Log.Error("a GUI draw handler threw", ex); }
+                if (owner == null)
+                {
+                    try { draw(); }
+                    catch (Exception ex) { Log.Error("a GUI draw handler threw", ex); }
+                }
+                else if (owner.State != ModState.Faulted)
+                {
+                    ModManager.Invoke(owner, "GameDraw.OnGui", _ => draw());
+                }
             }
-            else if (owner.State != ModState.Faulted)
-            {
-                ModManager.Invoke(owner, "GameDraw.OnGui", _ => draw());
-            }
+        }
+        finally
+        {
+            RestoreDrawState(saved);
+        }
+    }
+
+    private static readonly (string Get, string Set)[] StateCalls =
+    {
+        ("draw_get_colour", "draw_set_colour"), ("draw_get_alpha", "draw_set_alpha"),
+        ("draw_get_font", "draw_set_font"), ("draw_get_halign", "draw_set_halign"),
+        ("draw_get_valign", "draw_set_valign"), ("gpu_get_blendmode", "gpu_set_blendmode"),
+    };
+    private static (string Get, string Set)[]? _stateCalls;
+
+    private static RValue[] SaveDrawState()
+    {
+        // Only the pairs this runtime registers, with the argument counts expected.
+        _stateCalls ??= StateCalls
+            .Where(c => Game.BuiltinArity(c.Get) is 0 or -1 && Game.BuiltinArity(c.Set) is 1 or -1)
+            .ToArray();
+        var values = new RValue[_stateCalls.Length];
+        for (int i = 0; i < values.Length; i++)
+        {
+            try { values[i] = Game.CallBuiltin(_stateCalls[i].Get); }
+            catch (GmlException) { values[i] = RValue.Undefined; }
+        }
+        return values;
+    }
+
+    private static void RestoreDrawState(RValue[] values)
+    {
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (values[i].IsUndefined) continue;
+            try { Game.CallBuiltin(_stateCalls![i].Set, values[i]); }
+            catch (GmlException) { }
         }
     }
 
@@ -132,8 +222,11 @@ public static class GameDraw
 
         public void Dispose()
         {
-            _remove?.Invoke();
-            _remove = null;
+            var action = Interlocked.Exchange(ref _remove, null);
+            if (action == null) return;
+            // The handler list belongs to the game thread.
+            if (Loader.OnGameThread) action();
+            else Game.RunOnGameThread(action);
         }
     }
 }

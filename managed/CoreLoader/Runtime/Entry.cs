@@ -52,8 +52,8 @@ internal static unsafe class Entry
         }
     }
 
-    // Both Frame and Gui run on the game thread, and either can be the first
-    // call the runtime receives, so both go through here.
+    // Only from Frame: starting mods inside the overlay's GUI pass would run
+    // their OnInitialize in the middle of an ImGui tab bar.
     private static void EnsureModsInitialised()
     {
         Loader.MarkGameThread();
@@ -63,18 +63,22 @@ internal static unsafe class Entry
         // sprite added before that would take a slot the game is about to fill.
         // A game that never answers still gets its mods after ~30 s.
         _startWait ??= System.Diagnostics.Stopwatch.StartNew();
-        if (_startWait.Elapsed < TimeSpan.FromSeconds(30) && !(Game.BuiltinCount > 0 && Game.AssetsLoaded()))
+        // A check that cannot tell (it faulted) counts as "not yet" until the timeout.
+        if (_startWait.Elapsed < TimeSpan.FromSeconds(30) && !(Game.BuiltinCount > 0 && Game.AssetsLoaded(whenUnsure: false)))
         {
             if (!_announcedWait) { _announcedWait = true; Log.Info("waiting for the game's assets before starting mods"); }
             return;
         }
         _initialisedMods = true;
+        ModManager.Started = true;
         if (_announcedWait) Log.Info($"starting mods after {_startWait.Elapsed.TotalSeconds:0.0} s");
         // The native side proves the value helpers on the first frame (before
         // this runs); pick up the verdict before any mod gets to use values.
         Values.Probe();
         // Attribute hooks first, so OnInitialize can rely on them being live.
-        foreach (var m in ModManager.Mods.ToList()) ModManager.Initialize(m);
+        // Only mods still waiting: never a second start for one already running.
+        foreach (var m in ModManager.Mods.ToList())
+            if (m.State == ModState.Loaded) ModManager.Initialize(m);
     }
 
     [UnmanagedCallersOnly]
@@ -127,7 +131,7 @@ internal static unsafe class Entry
         UI.InGui = true;
         try
         {
-            EnsureModsInitialised();
+            Loader.MarkGameThread();
             if (!UI.BeginTabBar("##coreloader_mods")) return;
 
             if (UI.BeginTabItem("Loader"))
@@ -261,7 +265,7 @@ internal static unsafe class Entry
                     UI.Text($"{line} - running, {Hooks.SubscriptionCount(m)} hook(s)" +
                             (assets > 0 ? $", {assets} asset(s)" : ""));
                     break;
-                default: UI.TextDisabled($"{line} - waiting for first frame"); break;
+                default: UI.TextDisabled($"{line} - waiting for the game to load its assets"); break;
             }
             UI.PopId();
         }

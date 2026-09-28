@@ -126,12 +126,16 @@ The rules the loader enforces:
   their first frame.
 - Content belongs to the mod that added it. Unloading or hot reloading the mod deletes its sprites,
   closes its sounds and gives replaced sprites their original image back. If several mods replace
-  one sprite, unloading them in any order restores what was there before each one. Before a sprite
-  goes, point instances that still show it back at a game sprite (in `OnShutdown`).
+  one sprite, unloading them in any order restores what was there before each one. When a mod
+  hot-reloads, its reskin goes back on top of the stack. An added sprite is emptied rather than
+  deleted, so anything still showing it draws nothing instead of crashing, and its slot is reused.
+  Content files are not watched: reload the mod after changing one.
 - **Values are released automatically.** Every string, array or struct the game hands you (call
   results, variable reads, `RValue.FromString`) goes into a per-frame pool and is released at the
   end of the frame. Using it within the frame is always safe and never leaks, including formatting a
-  new string every frame. Only a value you keep in a field across frames needs `Values.Keep(v)`,
+  new string every frame. Structs are the exception: the runtime garbage-collects them rather than
+  counting references, so a struct only stays alive while GML itself holds it (in a global or an
+  instance variable, say). Only a value you keep in a field across frames needs `Values.Keep(v)`,
   and later `Values.Free(ref v)`.
 
 ## Mods in this repository

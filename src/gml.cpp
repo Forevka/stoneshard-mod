@@ -463,6 +463,7 @@ bool FreeValue(RValue& v) {
 
 bool CopyValue(RValue& dst, const RValue& src) {
     if (!g_lifetimeVerified || !g_copy) return false;
+    if (&dst == &src) return true;   // already its own copy; clearing dst would clear src
     // dst's previous contents are overwritten, never released: starting from
     // undefined keeps the full COPY_RValue from freeing whatever was there.
     if (g_copyIsPost) {
@@ -474,6 +475,8 @@ bool CopyValue(RValue& dst, const RValue& src) {
         g_copy(&dst, &src);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         Logf("[!] gml: fault copying a value of kind %d", src.kind);
+        // Never leave dst looking like a value that holds a reference it never took.
+        dst.i64 = 0; dst.flags = 0; dst.kind = kUndefined;
         return false;
     }
     return true;

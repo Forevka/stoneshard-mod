@@ -170,7 +170,8 @@ public static unsafe class Game
     /// Whether the game has loaded its assets (sprite or room 0 exists). Some
     /// games load them seconds after their first frame.
     /// </summary>
-    internal static bool AssetsLoaded()
+    /// <param name="whenUnsure">The answer when the check itself fails.</param>
+    internal static bool AssetsLoaded(bool whenUnsure = true)
     {
         try
         {
@@ -178,7 +179,7 @@ public static unsafe class Game
         }
         catch (GmlException)
         {
-            return true;   // cannot tell: do not hold anything back on it
+            return whenUnsure;
         }
     }
 

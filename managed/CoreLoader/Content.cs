@@ -9,12 +9,13 @@ namespace CoreLoader;
 /// reloads, and a replaced sprite gets its original image back.
 /// </summary>
 /// <remarks>
-/// Relative paths are looked up in the mod's folder: next to its dll, then in
-/// a folder named after the dll (Mods/MyMod.dll + Mods/MyMod/sprites/x.png).
-/// Game thread only; OnInitialize is the natural place to load.
-/// Before a mod's sprite is released, point anything still showing it back
-/// at a game sprite (in OnShutdown): drawing a deleted sprite is an error in
-/// GameMaker.
+/// Relative paths are looked up in the folder named after the mod's dll
+/// (Mods/MyMod.dll + Mods/MyMod/sprites/x.png), or next to the dll when the
+/// mod lives in that folder itself. Game thread only; OnInitialize is the
+/// natural place to load. A released added sprite is emptied, not deleted, so
+/// an instance still showing it draws nothing rather than crashing the game -
+/// but pointing such instances back at a game sprite in OnShutdown is tidier.
+/// Content files are not watched: after changing one, reload the mod.
 /// </remarks>
 public static class Content
 {
@@ -23,6 +24,14 @@ public static class Content
 
     // Replacements of one game sprite, oldest first; see Sprite.Release.
     private static readonly Dictionary<int, List<Sprite>> Replacements = new();
+
+    // Released added sprites are never deleted: an instance, a variable or the
+    // game's own code may still name them, and drawing a deleted sprite is a
+    // fatal GML error. They shrink to a transparent pixel and are reused by
+    // the next AddSprite, so hot reloading does not accumulate them.
+    private static readonly Stack<RValue> Retired = new();
+    private static readonly HashSet<int> RetiredIndices = new();
+    private static string? _placeholder;
 
     /// <summary>
     /// Adds a sprite from an image file. A horizontal strip is cut into
@@ -41,12 +50,26 @@ public static class Content
         ArgumentOutOfRangeException.ThrowIfLessThan(frames, 1);
         string path = ResolvePath(file, ".png", ".jpg", ".jpeg", ".gif");
 
-        var id = Game.CallBuiltin("sprite_add", path, frames, removeBackground, smooth, xOrigin, yOrigin);
+        RValue id;
+        if (Retired.TryPop(out var slot))
+        {
+            RetiredIndices.Remove(IndexOf(slot));
+            id = slot;
+            if (!TryLoadInto(id, path, frames, removeBackground, smooth, xOrigin, yOrigin))
+            {
+                Retire(id);
+                throw new GmlException($"{Game.Name} could not load {path} as a sprite");
+            }
+        }
+        else
+        {
+            id = Values.Keep(Game.CallBuiltin("sprite_add", path, frames, removeBackground, smooth, xOrigin, yOrigin));
+            if (IndexOf(id) < 0 || !Loaded(id))
+                throw new GmlException($"{Game.Name} could not load {path} as a sprite");
+        }
         int index = IndexOf(id);
-        if (index < 0 || !Game.CallBuiltin("sprite_exists", id).AsBool)
-            throw new GmlException($"{Game.Name} could not load {path} as a sprite");
 
-        var s = new Sprite(Values.Keep(id), index, path, ModManager.Current, replaces: null);
+        var s = new Sprite(id, index, path, ModManager.Current, replaces: null);
         Own(s);
         Log.Info($"{OwnerName(s.Owner)} added sprite {index} from {Path.GetFileName(path)} ({frames} frame(s))");
         return s;
@@ -71,10 +94,11 @@ public static class Content
         if (IndexOf(backup) < 0) throw new GmlException($"could not back up {spriteName} before replacing it");
         backup = Values.Keep(backup);
 
-        Game.CallBuiltin("sprite_replace", target, path, frames, removeBackground, smooth, xOrigin, yOrigin);
-        if (!Game.CallBuiltin("sprite_exists", target).AsBool)
+        if (!TryLoadInto(target, path, frames, removeBackground, smooth, xOrigin, yOrigin))
         {
-            Game.CallBuiltin("sprite_delete", backup);
+            // Whatever state the failed load left the sprite in, the original comes back.
+            try { Game.CallBuiltin("sprite_assign", target, backup); }
+            finally { Game.CallBuiltin("sprite_delete", backup); }
             throw new GmlException($"{Game.Name} could not load {path} over {spriteName}");
         }
 
@@ -116,9 +140,21 @@ public static class Content
 
         var owner = ModManager.Current;
         string baseDir = owner?.Instance.Directory ?? Game.Directory;
-        var candidates = new List<string> { Path.Combine(baseDir, file) };
+        var candidates = new List<string>();
         if (owner != null)
-            candidates.Add(Path.Combine(baseDir, Path.GetFileNameWithoutExtension(owner.Path), file));
+        {
+            // The mod's own folder first. Next to the dll only for a mod that has
+            // a folder to itself - never the Mods root every mod shares, where
+            // another mod's file of the same name could be picked up instead.
+            string name = Path.GetFileNameWithoutExtension(owner.Path);
+            candidates.Add(Path.Combine(baseDir, name, file));
+            bool ownFolder = string.Equals(Path.GetFileName(baseDir.TrimEnd('\\', '/')), name, StringComparison.OrdinalIgnoreCase);
+            if (ownFolder) candidates.Add(Path.Combine(baseDir, file));
+        }
+        else
+        {
+            candidates.Add(Path.Combine(baseDir, file));
+        }
 
         foreach (var c in candidates)
             if (File.Exists(c)) return Path.GetFullPath(c);
@@ -141,7 +177,51 @@ public static class Content
         if (IndexOf(id) < 0 || !Game.CallBuiltin("sprite_exists", id).AsBool ||
             Game.CallBuiltin("sprite_get_name", id).ToString() != name)
             throw new GmlException($"{Game.Name} has no sprite named '{name}'");
+        // Another mod's sprite (or a backup) can vanish under the replacement.
+        if (IsModSprite(IndexOf(id)))
+            throw new GmlException($"'{name}' was added by a mod; only the game's own sprites can be replaced");
         return id;
+    }
+
+    // sprite_add/sprite_replace answer a failed load with -1, an empty sprite,
+    // or nothing at all depending on the runtime: a sprite with no frames is a
+    // failure too.
+    private static bool Loaded(RValue id) =>
+        Game.CallBuiltin("sprite_exists", id).AsBool && Game.CallBuiltin("sprite_get_number", id).AsReal >= 1;
+
+    private static bool TryLoadInto(RValue id, string path, int frames, bool removeBackground, bool smooth, int xOrigin, int yOrigin)
+    {
+        try
+        {
+            Game.CallBuiltin("sprite_replace", id, path, frames, removeBackground, smooth, xOrigin, yOrigin);
+        }
+        catch (GmlException)
+        {
+            return false;
+        }
+        return Loaded(id);
+    }
+
+    /// <summary>Shrinks an added sprite to a transparent pixel and keeps its slot for reuse.</summary>
+    internal static void Retire(RValue id)
+    {
+        _placeholder ??= WritePlaceholder();
+        if (!TryLoadInto(id, _placeholder, 1, false, false, 0, 0))
+        {
+            // Could not empty it: keep the image rather than risk a deleted sprite.
+            Log.Warning($"sprite {IndexOf(id)} could not be emptied; it keeps its image");
+        }
+        Retired.Push(id);
+        RetiredIndices.Add(IndexOf(id));
+    }
+
+    private static string WritePlaceholder()
+    {
+        string path = Path.Combine(Game.LoaderDirectory, "empty-sprite.png");
+        if (!File.Exists(path))
+            File.WriteAllBytes(path, Convert.FromBase64String(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNgYGBgAAAABQABeqhXUAAAAABJRU5ErkJggg=="));
+        return path;
     }
 
     // Older runtimes answer with a plain index, 2024+ ones with a typed
@@ -163,29 +243,47 @@ public static class Content
         int i = stack.IndexOf(s);
         if (i < 0) return;
 
-        if (i == stack.Count - 1)
+        try
         {
-            // The newest: the image beneath it (the original, or an earlier
-            // mod's) comes back.
-            Game.CallBuiltin("sprite_assign", s.Id, s.Backup);
-            Game.CallBuiltin("sprite_delete", s.Backup);
+            if (i == stack.Count - 1)
+            {
+                // The newest: the image beneath it (the original, or an earlier
+                // mod's) comes back.
+                try { Game.CallBuiltin("sprite_assign", s.Id, s.Backup); }
+                finally { Game.CallBuiltin("sprite_delete", s.Backup); }
+            }
+            else
+            {
+                // A later mod's replacement stays on top; it inherits this backup,
+                // so unloading it later restores what was there before both.
+                var above = stack[i + 1];
+                var superseded = above.Backup;
+                above.Backup = s.Backup;
+                Game.CallBuiltin("sprite_delete", superseded);
+            }
         }
-        else
+        finally
         {
-            // A later mod's replacement stays on top; it inherits this backup,
-            // so unloading it later restores what was there before both.
-            var above = stack[i + 1];
-            Game.CallBuiltin("sprite_delete", above.Backup);
-            above.Backup = s.Backup;
+            stack.RemoveAt(i);
+            if (stack.Count == 0) Replacements.Remove(s.Index);
         }
-        stack.RemoveAt(i);
-        if (stack.Count == 0) Replacements.Remove(s.Index);
     }
 
     /// <summary>A sprite index that a mod created: an added sprite, or the hidden backup of a replaced one.</summary>
     internal static bool IsModSprite(int index) =>
+        RetiredIndices.Contains(index) ||
         Owned.OfType<Sprite>().Any(s => (s.Replaces == null && s.Index == index) ||
                                         (s.Replaces != null && IndexOf(s.Backup) == index));
+
+    /// <summary>Stops a mod's sounds (a faulted mod keeps its assets, but not its music).</summary>
+    internal static void StopSounds(LoadedMod owner)
+    {
+        foreach (var s in Owned.OfType<Sound>().Where(s => s.Owner == owner).ToList())
+        {
+            try { s.Stop(); }
+            catch (Exception ex) { Log.Warning($"stopping {s} of {OwnerName(owner)}: {ex.Message}"); }
+        }
+    }
 
     internal static bool IsModSound(int index) => Owned.OfType<Sound>().Any(s => s.Index == index);
 
@@ -269,15 +367,26 @@ public sealed class Sprite : IOwnedAsset
         Game.CallBuiltin("draw_sprite_ext", Id, frame, x, y, xScale, yScale, rotation, colour, alpha);
     }
 
-    /// <summary>Deletes the sprite, or restores the original of a replaced one.</summary>
+    /// <summary>
+    /// Releases the sprite: a replaced one gets its original image back; an
+    /// added one becomes an empty (transparent) sprite whose slot the next
+    /// AddSprite reuses, so anything still showing it draws nothing instead
+    /// of failing.
+    /// </summary>
     public void Dispose()
     {
         if (IsReleased) return;
         Loader.EnsureGameThread();
         IsReleased = true;
-        Content.Released(this);
-        if (Replaces != null) Content.ReleaseReplacement(this);
-        else Game.CallBuiltin("sprite_delete", Id);
+        try
+        {
+            if (Replaces != null) Content.ReleaseReplacement(this);
+            else Content.Retire(Id);
+        }
+        finally
+        {
+            Content.Released(this);
+        }
     }
 
     public override string ToString() => Replaces != null ? $"sprite {Replaces} (replaced)" : $"sprite {Index}";

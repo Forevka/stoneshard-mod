@@ -79,7 +79,9 @@ public sealed class ContentDemoMod : CoreMod
             _status = $"{name} now shows the coin";
             Config.Set("reskin", name);
         }
-        catch (GmlException ex)
+        // A missing file or a bad name is the user's typo, not a reason to
+        // disable the mod.
+        catch (Exception ex) when (ex is GmlException or IOException or ArgumentException)
         {
             _reskin = null;
             _status = ex.Message;

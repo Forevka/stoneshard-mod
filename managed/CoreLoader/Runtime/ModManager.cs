@@ -92,6 +92,9 @@ internal static class ModManager
 
     public static string ModsDirectory => System.IO.Path.Combine(Game.Directory, "Mods");
 
+    /// <summary>Set once mods have been started (after the game loaded its assets).</summary>
+    public static bool Started { get; internal set; }
+
     /// <summary>Whether changed mod files are reloaded automatically.</summary>
     public static bool HotReload { get; set; } = true;
 
@@ -234,7 +237,9 @@ internal static class ModManager
         if (TryLoad(path) is { } fresh)
         {
             ModList.Insert(Math.Clamp(index, 0, ModList.Count), fresh);
-            Initialize(fresh);
+            // Before mods have started (the game is still loading its assets)
+            // the fresh copy waits with the rest.
+            if (Started) Initialize(fresh);
             Log.Info($"reloaded {fresh.Instance.Info.Name} {fresh.Instance.Info.Version}");
         }
     }
@@ -377,9 +382,10 @@ internal static class ModManager
         m.State = ModState.Faulted;
         m.Fault = reason;
         Hooks.RemoveOwner(m);
-        // Its drawing stops; its sprites and sounds stay until it unloads, as
+        // Its drawing and sounds stop; its sprites stay until it unloads, as
         // instances may still be showing them.
         GameDraw.RemoveOwner(m);
+        Content.StopSounds(m);
         if (ex != null) m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded", ex);
         else m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded");
     }

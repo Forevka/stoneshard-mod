@@ -30,3 +30,6 @@ tools/re/builtin_table.json
 managed/bin/
 managed/**/obj/
 .vs/
+
+# local code index
+.codegraph/
