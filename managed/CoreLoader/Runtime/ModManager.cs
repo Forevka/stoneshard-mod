@@ -66,18 +66,28 @@ internal static class ModManager
     public static void DiscoverAndLoad()
     {
         var dir = ModsDirectory;
-        if (!Directory.Exists(dir))
+        List<string> candidates;
+        try
         {
-            Directory.CreateDirectory(dir);
-            Log.Info($"created {dir} - put mod dlls here");
-            return;
-        }
+            if (!Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+                Log.Info($"created {dir} - put mod dlls here");
+                return;
+            }
 
-        var candidates = Directory.GetFiles(dir, "*.dll", SearchOption.TopDirectoryOnly).ToList();
-        foreach (var sub in Directory.GetDirectories(dir))
+            candidates = Directory.GetFiles(dir, "*.dll", SearchOption.TopDirectoryOnly).ToList();
+            foreach (var sub in Directory.GetDirectories(dir))
+            {
+                var main = System.IO.Path.Combine(sub, System.IO.Path.GetFileName(sub) + ".dll");
+                if (File.Exists(main)) candidates.Add(main);
+            }
+        }
+        catch (Exception ex)
         {
-            var main = System.IO.Path.Combine(sub, System.IO.Path.GetFileName(sub) + ".dll");
-            if (File.Exists(main)) candidates.Add(main);
+            // A read-only or locked install must not take the loader down with it.
+            Log.Error($"could not read the mods folder {dir}", ex);
+            return;
         }
 
         foreach (var path in candidates.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
@@ -96,6 +106,12 @@ internal static class ModManager
             var ctx = new ModLoadContext(path);
             var asm = ctx.LoadFromAssemblyPath(path);
             var info = asm.GetCustomAttribute<CoreModInfoAttribute>()!;
+            if (info.ModType == null || string.IsNullOrWhiteSpace(info.Name) ||
+                string.IsNullOrWhiteSpace(info.Version) || string.IsNullOrWhiteSpace(info.Author))
+            {
+                Log.Error($"{file}: [CoreModInfo] needs a mod type, name, version and author");
+                return;
+            }
 
             var games = asm.GetCustomAttribute<CoreModGameAttribute>();
             if (games != null && !games.Games.Any(g => string.Equals(g, Game.Name, StringComparison.OrdinalIgnoreCase)))
@@ -168,5 +184,12 @@ internal static class ModManager
             m.Fault = $"{callback}: {ex.GetType().Name}: {ex.Message}";
             m.Instance.Log.Error($"{callback} threw - the mod is disabled for this session", ex);
         }
+    }
+
+    public static void Fault(LoadedMod m, string reason)
+    {
+        m.State = ModState.Faulted;
+        m.Fault = reason;
+        m.Instance.Log.Error($"{reason} - the mod is disabled for this session");
     }
 }

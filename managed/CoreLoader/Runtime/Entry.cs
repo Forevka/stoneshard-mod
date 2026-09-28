@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using CoreLoader.Native;
 
@@ -20,11 +19,11 @@ internal static unsafe class Entry
         try
         {
             if (api == null || exports == null) return 0;
-            if (api->Version != CoreApi.ExpectedVersion || api->Size < sizeof(CoreApi))
-            {
-                // Can't use Log yet if the table is the wrong shape.
-                return 0;
-            }
+            // Refuse a host built against a different table shape: writing past
+            // a smaller ManagedExports, or calling through a missing CoreApi
+            // field, would corrupt the game instead of failing.
+            if (api->Version != CoreApi.ExpectedVersion || api->Size < sizeof(CoreApi)) return 0;
+            if (exports->Size < sizeof(ManagedExports)) return 0;
             Loader.Api = api;
 
             Log.Info($"CoreLoader {typeof(Entry).Assembly.GetName().Version} on .NET {Environment.Version}, " +
@@ -44,24 +43,27 @@ internal static unsafe class Entry
         }
     }
 
+    // Both Frame and Gui run on the game thread, and either can be the first
+    // call the runtime receives, so both go through here.
+    private static void EnsureModsInitialised()
+    {
+        Loader.MarkGameThread();
+        if (_initialisedMods) return;
+        _initialisedMods = true;
+        foreach (var m in ModManager.Mods)
+        {
+            ModManager.Invoke(m, nameof(CoreMod.OnInitialize), mod => mod.OnInitialize());
+            if (m.State != ModState.Faulted) m.State = ModState.Running;
+        }
+    }
+
     [UnmanagedCallersOnly]
     private static void Frame()
     {
         try
         {
-            Loader.MarkGameThread();
+            EnsureModsInitialised();
             Game.DrainPending(Log);
-
-            if (!_initialisedMods)
-            {
-                _initialisedMods = true;
-                foreach (var m in ModManager.Mods)
-                {
-                    ModManager.Invoke(m, nameof(CoreMod.OnInitialize), mod => mod.OnInitialize());
-                    if (m.State != ModState.Faulted) m.State = ModState.Running;
-                }
-            }
-
             ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate());
         }
         catch (Exception ex)
@@ -73,40 +75,76 @@ internal static unsafe class Entry
     [UnmanagedCallersOnly]
     private static void Gui()
     {
+        int baseMark = UI.Mark;
+        UI.InGui = true;
         try
         {
+            EnsureModsInitialised();
             if (!UI.BeginTabBar("##coreloader_mods")) return;
-            try
-            {
-                if (UI.BeginTabItem("Loader"))
-                {
-                    try { DrawLoaderTab(); }
-                    finally { UI.EndTabItem(); }
-                }
 
-                foreach (var m in ModManager.Mods)
-                {
-                    UI.PushId(m.Path);
-                    try
-                    {
-                        if (!UI.BeginTabItem(m.Instance.Info.Name)) continue;
-                        try
-                        {
-                            if (m.State == ModState.Faulted)
-                                UI.TextColored(1f, 0.45f, 0.45f, $"Disabled - {m.Fault}");
-                            else
-                                ModManager.Invoke(m, nameof(CoreMod.OnGUI), mod => mod.OnGUI());
-                        }
-                        finally { UI.EndTabItem(); }
-                    }
-                    finally { UI.PopId(); }
-                }
+            if (UI.BeginTabItem("Loader"))
+            {
+                try { DrawLoaderTab(); }
+                catch (Exception ex) { Log.Error("loader tab failed", ex); }
+                UI.EndTabItem();
             }
-            finally { UI.EndTabBar(); }
+
+            foreach (var m in ModManager.Mods)
+                DrawModTab(m);
+
+            UI.EndTabBar();
         }
         catch (Exception ex)
         {
             Log.Error("GUI dispatch failed", ex);
+        }
+        finally
+        {
+            // Whatever is still open - ours after an exception, or anything that
+            // slipped past a mod's own unwind - is closed before ImGui sees End().
+            UI.UnwindTo(baseMark);
+            UI.InGui = false;
+        }
+    }
+
+    private static void DrawModTab(LoadedMod m)
+    {
+        int outer = UI.Mark;
+        try
+        {
+            UI.PushId(m.Path);
+            if (!UI.BeginTabItem(m.Instance.Info.Name)) return;
+
+            if (m.State == ModState.Faulted)
+            {
+                UI.TextColored(1f, 0.45f, 0.45f, $"Disabled - {m.Fault}");
+                return;
+            }
+
+            // The mod may only close what it opens; anything it leaves behind is
+            // closed here and counts as a fault, since it would otherwise corrupt
+            // every tab drawn after it.
+            int mark = UI.Mark;
+            int oldFloor = UI.SetFloor(mark);
+            try
+            {
+                ModManager.Invoke(m, nameof(CoreMod.OnGUI), mod => mod.OnGUI());
+            }
+            finally
+            {
+                UI.SetFloor(oldFloor);
+                int leaked = UI.UnwindTo(mark);
+                if (leaked > 0 && m.State != ModState.Faulted)
+                    ModManager.Fault(m, $"OnGUI left {leaked} UI scope(s) open (missing End/Pop)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"drawing the tab of {m.Instance.Info.Name} failed", ex);
+        }
+        finally
+        {
+            UI.UnwindTo(outer);
         }
     }
 

@@ -11,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "imgui.h"
@@ -139,14 +140,23 @@ std::int32_t ApiToString(const CoreRValue* value, char* buffer, std::int32_t cap
     return static_cast<std::int32_t>(s.size());
 }
 
+// The variable name reaches the runtime as a GML string, and the runtime keeps
+// a POINTER to its characters - a newly created variable may hold on to it for
+// good. The caller's buffer only lives for the call, so names are interned here
+// for the life of the process. There are only ever as many as a game's mods use.
+const char* InternName(const char* name) {
+    static std::unordered_set<std::string> names;
+    return names.emplace(name).first->c_str();
+}
+
 std::int32_t ApiVarGet(void* instance, const char* name, CoreRValue* out) {
     if (!instance || !name || !out) return 0;
-    return builtins::GetVar(builtins::SelfHandle(instance), name, Gml(out)) ? 1 : 0;
+    return builtins::GetVar(builtins::SelfHandle(instance), InternName(name), Gml(out)) ? 1 : 0;
 }
 
 std::int32_t ApiVarSet(void* instance, const char* name, const CoreRValue* value) {
     if (!instance || !name || !value) return 0;
-    return builtins::SetVar(builtins::SelfHandle(instance), name, *Gml(value)) ? 1 : 0;
+    return builtins::SetVar(builtins::SelfHandle(instance), InternName(name), *Gml(value)) ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------- UI

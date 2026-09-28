@@ -41,7 +41,9 @@ public struct RValue
 
     /// <summary>
     /// Builds a GML string through the runtime's own constructor. The text is
-    /// interned for the life of the process, because the game keeps a pointer to it.
+    /// interned for the life of the process, because the game keeps a pointer to it:
+    /// every DISTINCT string passed here stays allocated until the game exits. Fine
+    /// for names, labels and keys; do not feed it a fresh formatted string per frame.
     /// Must be called on the game thread.
     /// </summary>
     public static unsafe RValue FromString(string text)

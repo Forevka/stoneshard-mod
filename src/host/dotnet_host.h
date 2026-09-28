@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace mod::host {
 
 // Starts .NET inside the game and hands the CoreApi table to CoreLoader.dll,
@@ -20,6 +22,6 @@ void DrawModsTab();
 void Shutdown();
 
 bool        Running();
-const char* Status();
+std::string Status();   // a copy: the status is written from the init thread
 
 } // namespace mod::host

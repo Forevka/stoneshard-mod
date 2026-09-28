@@ -13,7 +13,9 @@
 
 #include <windows.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -64,9 +66,24 @@ using ManagedInitFn = std::int32_t(__stdcall*)(const CoreApi*, ManagedExports*);
 
 // -----------------------------------------------------------------------------
 
-ManagedExports g_exports{};
-bool           g_running = false;
-std::string    g_status  = "not started";
+// Start() runs on the init thread while Present is already firing on the game
+// thread, so publication is explicit: g_exports is filled first, then g_running
+// is released; readers acquire g_running before touching g_exports.
+ManagedExports    g_exports{};
+std::atomic<bool> g_running{false};
+
+std::mutex  g_statusLock;
+std::string g_status = "not started";
+
+void SetStatus(std::string s) {
+    std::lock_guard<std::mutex> lock(g_statusLock);
+    g_status = std::move(s);
+}
+
+std::string GetStatus() {
+    std::lock_guard<std::mutex> lock(g_statusLock);
+    return g_status;
+}
 
 std::string Narrow(const std::wstring& w) {
     if (w.empty()) return {};
@@ -86,7 +103,7 @@ fs::path Widen(const char* utf8) {
 }
 
 void Fail(const std::string& why) {
-    g_status = why;
+    SetStatus(why);
     Logf("[!] host: %s", why.c_str());
 }
 
@@ -139,33 +156,31 @@ fs::path RegistryDotnetRoot() {
     return {};
 }
 
+// Empty when unset. Sized from the first call: a value longer than any fixed
+// buffer is reported by length only, with the buffer left unwritten.
+fs::path EnvPath(const wchar_t* name) {
+    const DWORD need = GetEnvironmentVariableW(name, nullptr, 0);
+    if (need == 0) return {};
+    std::wstring value(need, L'\0');
+    const DWORD got = GetEnvironmentVariableW(name, value.data(), need);
+    if (got == 0 || got >= need) return {};
+    value.resize(got);
+    return fs::path(value);
+}
+
 // Returns the hostfxr to load and, for an app-local runtime, the root to pass.
 bool LocateHostfxr(const fs::path& loaderDir, fs::path& fxr, fs::path& appLocalRoot) {
     const fs::path local = loaderDir / L"dotnet";
     if (fxr = NewestFxr(local); !fxr.empty()) { appLocalRoot = local; return true; }
 
     std::vector<fs::path> roots;
-    wchar_t env[MAX_PATH];
-    if (GetEnvironmentVariableW(L"DOTNET_ROOT", env, MAX_PATH)) roots.emplace_back(env);
+    if (auto r = EnvPath(L"DOTNET_ROOT"); !r.empty()) roots.push_back(r);
     if (auto r = RegistryDotnetRoot(); !r.empty()) roots.push_back(r);
-    if (GetEnvironmentVariableW(L"ProgramFiles", env, MAX_PATH)) roots.push_back(fs::path(env) / L"dotnet");
+    if (auto r = EnvPath(L"ProgramFiles"); !r.empty()) roots.push_back(r / L"dotnet");
 
     for (const auto& root : roots)
         if (fxr = NewestFxr(root); !fxr.empty()) return true;
     return false;
-}
-
-void CallManaged(void (*fn)(), const char* what) {
-    // The managed side catches everything a mod throws; this only guards
-    // against the runtime itself faulting, so a broken mod cannot kill the game.
-    __try {
-        fn();
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        Logf("[!] host: native fault inside managed %s (0x%08lX) - mods stopped",
-             what, GetExceptionCode());
-        g_running = false;
-        g_status  = "stopped after a fault in managed code";
-    }
 }
 
 } // namespace
@@ -247,32 +262,37 @@ bool Start() {
         return false;
     }
 
-    g_running = true;
-    g_status  = "running";
+    SetStatus("running");
+    g_running.store(true, std::memory_order_release);
     Logf("host: managed runtime ready");
     return true;
 }
 
+// No SEH around these calls on purpose. Every managed entry point catches all
+// exceptions itself, and GML calls are guarded natively where they happen;
+// unwinding managed frames behind the CLR's back from out here would corrupt
+// the thread's runtime state rather than contain anything.
+
 void Frame() {
-    if (g_running) CallManaged(g_exports.frame, "frame");
+    if (g_running.load(std::memory_order_acquire)) g_exports.frame();
 }
 
 void DrawModsTab() {
-    if (!g_running) {
+    if (!g_running.load(std::memory_order_acquire)) {
         ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "C# mods are not running.");
-        ImGui::TextWrapped("%s", g_status.c_str());
+        const std::string status = GetStatus();
+        ImGui::TextWrapped("%s", status.c_str());
         return;
     }
-    CallManaged(g_exports.gui, "gui");
+    g_exports.gui();
 }
 
 void Shutdown() {
-    if (!g_running) return;
-    CallManaged(g_exports.shutdown, "shutdown");
-    g_running = false;
+    if (!g_running.exchange(false, std::memory_order_acq_rel)) return;
+    g_exports.shutdown();
 }
 
-bool        Running() { return g_running; }
-const char* Status()  { return g_status.c_str(); }
+bool        Running() { return g_running.load(std::memory_order_acquire); }
+std::string Status()  { return GetStatus(); }
 
 } // namespace mod::host
