@@ -7,7 +7,7 @@ namespace CoreLoader.Native;
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct CoreApi
 {
-    public const int ExpectedVersion = 5;
+    public const int ExpectedVersion = 6;
 
     public int Size;
     public int Version;
@@ -64,6 +64,9 @@ internal unsafe struct CoreApi
     public delegate* unmanaged<byte*, int> BuiltinArity;
     public delegate* unmanaged<CoreHookCall*, RValue*, int> HookCallOriginal;
     public delegate* unmanaged<int, byte*> BuiltinName;
+    public delegate* unmanaged<RValue*, int> ValueFree;
+    public delegate* unmanaged<RValue*, RValue*, int> ValueCopy;
+    public delegate* unmanaged<int, int, int> HookEnable;
 }
 
 // Mirror of `struct ManagedExports`.

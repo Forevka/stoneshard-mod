@@ -1,6 +1,7 @@
 #include "rewrite.h"
 
 #include "gml.h"
+#include "hookengine.h"
 #include "log.h"
 #include "symbols.h"
 
@@ -12,24 +13,22 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <vector>
 
-#include "MinHook.h"
 #include "imgui.h"
 
 namespace mod::rewrite {
 namespace {
 
-using ScriptFn = gml::RValue* (*)(void*, void*, gml::RValue*, int, gml::RValue**);
-
-// One distinct detour function is needed per hooked target, and MinHook has no
-// way to pass context into a detour. Generating thunks at runtime would mean
-// emitting executable code; instantiating a template N times gets the same
-// result at compile time, at the cost of a fixed capacity.
-constexpr std::size_t kSlots = 12;
+// Rules run as native handlers on the shared hook engine, which carries each
+// slot's context itself - so the old fixed set of template detours (and their
+// 12-hook limit, and their clash with mods hooking the same script) is gone.
+// The slot array only bounds how many rules the tab manages at once.
+constexpr std::size_t kSlots = 64;
 
 struct Slot {
     void*             target = nullptr;
-    ScriptFn          original = nullptr;
+    int               hookId = -1;
     std::string       symbol;
 
     // Read from the game thread inside the detour, written from the UI (also
@@ -185,51 +184,47 @@ int RepeatCount(double repeat) {
     return n;
 }
 
-gml::RValue* Dispatch(std::size_t slot, void* self, void* other, gml::RValue* result,
-                      int argc, gml::RValue** args) {
-    Slot& s = g_slots[slot];
-    if (!s.live.load(std::memory_order_acquire) || !s.original) {
-        // Torn down between entry and here: nothing sane to call.
-        if (result) { result->ptr = nullptr; result->flags = 0; result->kind = gml::kUndefined; }
-        return result;
-    }
+// Extra runs decided in Before, carried out in After. Hooked calls nest
+// strictly (inner calls finish before the outer After runs), so a per-thread
+// stack pairs each After with its own Before.
+thread_local std::vector<int> g_extraRuns;
 
-    Apply(s, argc, args);
+void RuleBefore(hk::Call* c, void* ctx) {
+    Slot& s = *static_cast<Slot*>(ctx);
+    if (!s.live.load(std::memory_order_acquire)) { g_extraRuns.push_back(0); return; }
+
+    Apply(s, c->argc, c->args);
 
     // Repeat only applies when armed; observing must never change how many
     // times the game's own call actually happens.
     const double repeat = s.enabled.load(std::memory_order_relaxed)
                               ? s.repeat.load(std::memory_order_relaxed) : 1.0;
-
-    if (repeat == 1.0) return s.original(self, other, result, argc, args);
+    if (repeat == 1.0) { g_extraRuns.push_back(0); return; }
 
     const int times = RepeatCount(repeat);
     if (times == 0) {
         // Suppressed this time round - hand back a well-formed "nothing".
-        if (result) { result->ptr = nullptr; result->flags = 0; result->kind = gml::kUndefined; }
+        c->skip = 1;
+        if (c->result) { c->result->ptr = nullptr; c->result->flags = 0; c->result->kind = gml::kUndefined; }
         s.suppressed.fetch_add(1, std::memory_order_relaxed);
-        return result;
+        g_extraRuns.push_back(0);
+        return;
     }
-
-    gml::RValue* last = nullptr;
-    for (int i = 0; i < times; ++i)
-        last = s.original(self, other, result, argc, args);
-
-    if (times > 1) s.repeated.fetch_add(1, std::memory_order_relaxed);
-    return last;
+    g_extraRuns.push_back(times - 1);
 }
 
-template <std::size_t N>
-gml::RValue* Thunk(void* self, void* other, gml::RValue* result,
-                   int argc, gml::RValue** args) {
-    return Dispatch(N, self, other, result, argc, args);
-}
+void RuleAfter(hk::Call* c, void* ctx) {
+    Slot& s = *static_cast<Slot*>(ctx);
+    if (g_extraRuns.empty()) return;
+    const int extra = g_extraRuns.back();
+    g_extraRuns.pop_back();
+    if (extra <= 0 || c->skip) return;
 
-template <std::size_t... Is>
-constexpr std::array<ScriptFn, sizeof...(Is)> MakeThunks(std::index_sequence<Is...>) {
-    return { &Thunk<Is>... };
+    // The unhooked original, so the repeats neither re-enter this rule nor
+    // any other subscriber of the same script.
+    for (int i = 0; i < extra; ++i) hk::CallOriginal(c, c->result);
+    s.repeated.fetch_add(1, std::memory_order_relaxed);
 }
-const std::array<ScriptFn, kSlots> kThunks = MakeThunks(std::make_index_sequence<kSlots>{});
 
 int FindByTarget(void* target) {
     for (std::size_t i = 0; i < kSlots; ++i)
@@ -307,29 +302,21 @@ bool Install(const Rule& rule) {
     if (slot < 0) { Fail("all %zu hook slots are in use", kSlots); return false; }
 
     Slot& s = g_slots[static_cast<std::size_t>(slot)];
-    void* orig = nullptr;
-    if (MH_CreateHook(fn, reinterpret_cast<void*>(kThunks[static_cast<std::size_t>(slot)]),
-                      &orig) != MH_OK) {
-        Fail("could not hook %s", symbol.c_str());
-        return false;
-    }
-
-    s.target   = fn;
-    s.original = reinterpret_cast<ScriptFn>(orig);
-    s.symbol   = symbol;
+    s.target = fn;
+    s.symbol = symbol;
     s.hits.store(0);
     s.changed.store(0);
     ApplyRuleTo(s, rule);
 
-    // Only publish the slot once it is fully built, so a call arriving mid-
-    // install cannot see a half-initialised original pointer.
+    // Publish the slot before the handlers can run, so the first call already
+    // sees a complete rule.
     s.live.store(true, std::memory_order_release);
 
-    if (MH_EnableHook(fn) != MH_OK) {
+    s.hookId = hk::AddNative(fn, hk::Kind::Script, &RuleBefore, &RuleAfter, &s);
+    if (s.hookId < 0) {
         s.live.store(false, std::memory_order_release);
-        MH_RemoveHook(fn);
         s.target = nullptr;
-        Fail("could not enable the hook on %s", symbol.c_str());
+        Fail("could not hook %s", symbol.c_str());
         return false;
     }
 
@@ -345,11 +332,10 @@ void Remove(const std::string& symbol) {
     s.enabled.store(false);
     s.live.store(false, std::memory_order_release);
 
-    MH_DisableHook(s.target);
-    MH_RemoveHook(s.target);
+    hk::RemoveNative(s.hookId, &RuleBefore, &RuleAfter, &s);
 
-    s.target   = nullptr;
-    s.original = nullptr;
+    s.target = nullptr;
+    s.hookId = -1;
     Logf("rewrite: removed %s", symbol.c_str());
     s.symbol.clear();
 }

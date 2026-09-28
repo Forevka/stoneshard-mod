@@ -66,4 +66,21 @@ bool CallOriginal(const Call* call, gml::RValue* result);
 // watch a spread of Step events so a live instance is always known.
 void InstallSelfObservers(int maxEvents);
 
+// ---------------------------------------------------------------- native users
+//
+// C++ subscribers, for the loader's own tools. They share the one detour per
+// target with managed mods, so a mod can hook a function the loader also
+// watches. `before` may set call->skip; `after` always runs (even when the
+// original was skipped). Up to kMaxNative per hook.
+using NativeHandler = void (*)(Call* call, void* ctx);
+constexpr int kMaxNative = 4;
+
+// Hooks `target` if needed and adds the handlers. Returns the hook id or -1.
+int  AddNative(void* target, Kind kind, NativeHandler before, NativeHandler after, void* ctx);
+void RemoveNative(int id, NativeHandler before, NativeHandler after, void* ctx);
+
+// Inside a handler: the game code that made the hooked call (its return
+// address), for "who called this" diagnostics.
+const void* CurrentCaller();
+
 } // namespace mod::hk

@@ -26,8 +26,15 @@ internal static unsafe class Entry
             if (exports->Size < sizeof(ManagedExports)) return 0;
             Loader.Api = api;
 
+            // Freeing or copying an undefined value is a no-op for the runtime
+            // but still reports whether its helper was found.
+            RValue probe = RValue.Undefined, probe2 = RValue.Undefined;
+            Values.CanFree = api->ValueFree(&probe) != 0;
+            Values.CanCopy = api->ValueCopy(&probe2, &probe) != 0;
+
             Log.Info($"CoreLoader {typeof(Entry).Assembly.GetName().Version} on .NET {Environment.Version}, " +
-                     $"game '{Game.Name}', {api->SymbolCount()} GML functions");
+                     $"game '{Game.Name}', {api->SymbolCount()} GML functions, " +
+                     $"value free {(Values.CanFree ? "yes" : "no")} / copy {(Values.CanCopy ? "yes" : "no")}");
 
             ModManager.DiscoverAndLoad();
 
@@ -51,14 +58,8 @@ internal static unsafe class Entry
         Loader.MarkGameThread();
         if (_initialisedMods) return;
         _initialisedMods = true;
-        foreach (var m in ModManager.Mods)
-        {
-            // Attribute hooks first, so OnInitialize can rely on them being live.
-            ModManager.Invoke(m, "hook attributes", _ => Hooks.AttachAttributes(m));
-            if (m.State != ModState.Faulted)
-                ModManager.Invoke(m, nameof(CoreMod.OnInitialize), mod => mod.OnInitialize());
-            if (m.State != ModState.Faulted) m.State = ModState.Running;
-        }
+        // Attribute hooks first, so OnInitialize can rely on them being live.
+        foreach (var m in ModManager.Mods.ToList()) ModManager.Initialize(m);
     }
 
     [UnmanagedCallersOnly]
@@ -80,10 +81,14 @@ internal static unsafe class Entry
         try
         {
             EnsureModsInitialised();
+            // Rebuilt mod dlls are swapped in here, between frames, where no
+            // mod code is on the stack.
+            ModManager.PollChanges();
             Game.DrainPending(Log);
             InteropGenerator.Tick();
             ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate());
             ModConfig.FlushSettled();
+            Values.Drain();
         }
         catch (Exception ex)
         {
@@ -123,6 +128,7 @@ internal static unsafe class Entry
             // slipped past a mod's own unwind - is closed before ImGui sees End().
             UI.UnwindTo(baseMark);
             UI.InGui = false;
+            Values.Drain();
         }
     }
 
@@ -188,10 +194,18 @@ internal static unsafe class Entry
         UI.Text($"GML functions: {Game.Symbols.Count:N0}   builtins: {Game.BuiltinCount:N0}");
         UI.Text($"GML bridge: {(Game.IsGmlReady ? "ready" : "unavailable")}   " +
                 $"ABI self-test: {(Game.IsAbiProven ? "passed" : "not passed")}");
-        UI.Text($"Hooked functions: {Hooks.NativeHookCount}");
+        UI.Text($"Hooked functions: {Hooks.NativeHookCount}   value lifetime: " +
+                $"{(Values.CanFree ? "free" : "no free")}/{(Values.CanCopy ? "copy" : "no copy")}");
         UI.TextDisabled($"Interop: {InteropGenerator.Status}");
         UI.TextDisabled($".NET {Environment.Version}   mods folder: {ModManager.ModsDirectory}");
         UI.Separator();
+
+        bool hot = ModManager.HotReload;
+        if (UI.Checkbox("Hot reload (rebuilt mods reload automatically)", ref hot)) ModManager.HotReload = hot;
+        UI.SameLine();
+        // Deferred to the next frame: reloading from inside the GUI pass would
+        // unload the code that is drawing right now.
+        if (UI.Button("Reload all")) Game.RunOnGameThread(ModManager.ReloadAll);
 
         if (ModManager.Mods.Count == 0)
         {
@@ -203,12 +217,16 @@ internal static unsafe class Entry
         {
             var i = m.Instance.Info;
             var line = $"{i.Name} {i.Version} by {i.Author}";
+            UI.PushId(m.Path);
+            if (UI.Button("Reload")) { var target = m; Game.RunOnGameThread(() => ModManager.Reload(target)); }
+            UI.SameLine();
             switch (m.State)
             {
                 case ModState.Faulted: UI.TextColored(1f, 0.45f, 0.45f, $"{line} - disabled: {m.Fault}"); break;
                 case ModState.Running: UI.Text($"{line} - running, {Hooks.SubscriptionCount(m)} hook(s)"); break;
                 default: UI.TextDisabled($"{line} - waiting for first frame"); break;
             }
+            UI.PopId();
         }
     }
 }

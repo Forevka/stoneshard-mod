@@ -57,7 +57,7 @@ public readonly unsafe struct HookCall
     public void SetArg(int index, RValue value)
     {
         CheckArg(index);
-        *_p->Args[index] = value;
+        Values.StoreInto(_p->Args[index], value);
     }
 
     /// <summary>
@@ -71,7 +71,7 @@ public readonly unsafe struct HookCall
         set
         {
             if (_p->Result == null) throw new InvalidOperationException("object events have no result");
-            *_p->Result = value;
+            Values.StoreInto(_p->Result, value);
         }
     }
 
@@ -87,7 +87,7 @@ public readonly unsafe struct HookCall
         RValue r = RValue.Undefined;
         if (Loader.Api->HookCallOriginal(_p, &r) == 0)
             throw new GmlException($"re-running {_symbol} failed (see the loader log)");
-        return r;
+        return Values.Track(r);
     }
 
     /// <summary>Stops the original from running. Before handlers only.</summary>
@@ -167,15 +167,23 @@ public static unsafe class Hooks
             Names[id] = full;
         }
         list.Add(sub);
-        if (list.Count == 1) Loader.Api->HookSetManaged(id, 1);
+        if (list.Count == 1) { Loader.Api->HookEnable(id, 1); Loader.Api->HookSetManaged(id, 1); }
         return new HookHandle(id, sub);
+    }
+
+    // Last subscriber gone: stop the managed transition and detach the detour,
+    // so the function runs at full speed (the loader keeps its own users attached).
+    private static void Release(int id)
+    {
+        Loader.Api->HookSetManaged(id, 0);
+        Loader.Api->HookEnable(id, 0);
     }
 
     internal static void Remove(HookHandle h)
     {
         if (!ById.TryGetValue(h.HookId, out var list)) return;
         list.Remove(h.Sub);
-        if (list.Count == 0) Loader.Api->HookSetManaged(h.HookId, 0);
+        if (list.Count == 0) Release(h.HookId);
     }
 
     /// <summary>Drops every subscription a faulted mod made.</summary>
@@ -184,7 +192,7 @@ public static unsafe class Hooks
         foreach (var (id, list) in ById)
         {
             if (list.RemoveAll(s => s.Owner == owner) > 0 && list.Count == 0)
-                Loader.Api->HookSetManaged(id, 0);
+                Release(id);
         }
     }
 

@@ -55,6 +55,15 @@ const char* Status();
 // than faulting. Empty if nothing was recovered.
 const char* LastError();
 
+// Value lifetime, through the runtime's own helpers (located at Init). A
+// string, array or struct value holds a reference; FreeValue drops it and
+// leaves v undefined, CopyValue makes dst an additional owner of src's value.
+// Both return false when the helper could not be found in this runtime.
+bool        FreeValue(RValue& v);
+bool        CopyValue(RValue& dst, const RValue& src);
+bool        CanFreeValues();
+bool        CanCopyValues();
+
 void        SetReal(RValue& v, double value);
 void        SetUndefined(RValue& v);
 bool        SetString(RValue& v, const char* text);

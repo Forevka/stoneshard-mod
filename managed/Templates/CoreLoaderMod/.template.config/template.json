@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "CoreLoader",
+  "classifications": [ "Game", "Mod", "GameMaker" ],
+  "identity": "CoreLoader.Mod.Template",
+  "name": "CoreLoader mod",
+  "shortName": "coreloader-mod",
+  "description": "A C# mod for a YYC GameMaker game running CoreLoader. Builds straight into the game's Mods folder; with hot reload on, the running game picks it up.",
+  "sourceName": "MyMod",
+  "preferNameDirectory": true,
+  "tags": { "language": "C#", "type": "project" },
+  "symbols": {
+    "gameDir": {
+      "type": "parameter",
+      "datatype": "text",
+      "description": "The game's folder (the one holding the exe, version.dll and CoreLoader\\).",
+      "replaces": "GAME_DIR_PLACEHOLDER",
+      "defaultValue": "C:\\Path\\To\\Game"
+    },
+    "gameName": {
+      "type": "parameter",
+      "datatype": "text",
+      "description": "The game's exe name without extension, e.g. StoneShard. Restricts the mod to that game; leave empty for a mod that runs in any game.",
+      "replaces": "GAME_NAME_PLACEHOLDER",
+      "defaultValue": ""
+    },
+    "interop": {
+      "type": "parameter",
+      "datatype": "text",
+      "description": "The generated interop's namespace (CoreLoader\\Interop\\<interop>.Interop), e.g. StoneShard or Dwarf_Eats_Mountain. Leave empty to write the mod without it.",
+      "replaces": "INTEROP_PLACEHOLDER",
+      "defaultValue": ""
+    },
+    "modAuthor": {
+      "type": "parameter",
+      "datatype": "text",
+      "replaces": "AUTHOR_PLACEHOLDER",
+      "defaultValue": "Me"
+    },
+    "hasInterop": {
+      "type": "computed",
+      "value": "(interop != \"\")"
+    },
+    "hasGame": {
+      "type": "computed",
+      "value": "(gameName != \"\")"
+    }
+  }
+}

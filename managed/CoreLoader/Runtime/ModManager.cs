@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.Loader;
 
@@ -14,14 +15,20 @@ internal sealed class LoadedMod
 {
     public required CoreMod Instance { get; init; }
     public required string Path { get; init; }
+    public required ModLoadContext Context { get; init; }
     public ModState State { get; set; } = ModState.Loaded;
     public string? Fault { get; set; }
+    public int Generation { get; init; }
 }
 
 /// <summary>
 /// Each mod gets its own load context so two mods can ship different versions
-/// of the same dependency. CoreLoader itself always resolves to the one copy
-/// already running, or a mod's CoreMod would be a different type from ours.
+/// of the same dependency, and so a mod can be unloaded and loaded again (hot
+/// reload). CoreLoader itself always resolves to the one copy already running,
+/// or a mod's CoreMod would be a different type from ours.
+///
+/// Assemblies are loaded from memory, never by path: the files stay unlocked,
+/// so a build can overwrite a mod while the game runs.
 /// </summary>
 internal sealed class ModLoadContext : AssemblyLoadContext
 {
@@ -30,10 +37,23 @@ internal sealed class ModLoadContext : AssemblyLoadContext
     private readonly string _directory;
 
     public ModLoadContext(string mainAssemblyPath)
-        : base(System.IO.Path.GetFileNameWithoutExtension(mainAssemblyPath), isCollectible: false)
+        : base(System.IO.Path.GetFileNameWithoutExtension(mainAssemblyPath), isCollectible: true)
     {
         _resolver = new AssemblyDependencyResolver(mainAssemblyPath);
         _directory = System.IO.Path.GetDirectoryName(mainAssemblyPath)!;
+    }
+
+    public Assembly LoadUnlocked(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        var pdb = System.IO.Path.ChangeExtension(path, ".pdb");
+        using var asm = new MemoryStream(bytes);
+        if (File.Exists(pdb))
+        {
+            using var sym = new MemoryStream(File.ReadAllBytes(pdb));
+            return LoadFromStream(asm, sym);
+        }
+        return LoadFromStream(asm);
     }
 
     protected override Assembly? Load(AssemblyName name)
@@ -41,13 +61,13 @@ internal sealed class ModLoadContext : AssemblyLoadContext
         if (string.Equals(name.Name, Self.GetName().Name, StringComparison.OrdinalIgnoreCase))
             return Self;
         var path = _resolver.ResolveAssemblyToPath(name);
-        if (path != null) return LoadFromAssemblyPath(path);
+        if (path != null) return LoadUnlocked(path);
 
         // Mods are often deployed as bare dlls without their deps.json; a
         // dependency (such as a generated <Game>.Interop.dll) next to the mod
         // is still the right one.
         var local = System.IO.Path.Combine(_directory, name.Name + ".dll");
-        return File.Exists(local) ? LoadFromAssemblyPath(local) : null;
+        return File.Exists(local) ? LoadUnlocked(local) : null;
     }
 
     protected override nint LoadUnmanagedDll(string unmanagedDllName)
@@ -61,10 +81,19 @@ internal static class ModManager
 {
     private static readonly Logger Log = new("CoreLoader");
     private static readonly List<LoadedMod> ModList = new();
+    private static FileSystemWatcher? _watcher;
+    private static readonly ConcurrentDictionary<string, long> Changed = new(StringComparer.OrdinalIgnoreCase);
+    private static int _generation;
+
+    // Writes arrive in bursts (dll, then pdb, then the dll again); wait for quiet.
+    private const long SettleMs = 700;
 
     public static IReadOnlyList<LoadedMod> Mods => ModList;
 
     public static string ModsDirectory => System.IO.Path.Combine(Game.Directory, "Mods");
+
+    /// <summary>Whether changed mod files are reloaded automatically.</summary>
+    public static bool HotReload { get; set; } = true;
 
     /// <summary>
     /// Finds Mods/*.dll and Mods/&lt;Name&gt;/&lt;Name&gt;.dll. Only assemblies that carry
@@ -81,15 +110,8 @@ internal static class ModManager
             {
                 Directory.CreateDirectory(dir);
                 Log.Info($"created {dir} - put mod dlls here");
-                return;
             }
-
-            candidates = Directory.GetFiles(dir, "*.dll", SearchOption.TopDirectoryOnly).ToList();
-            foreach (var sub in Directory.GetDirectories(dir))
-            {
-                var main = System.IO.Path.Combine(sub, System.IO.Path.GetFileName(sub) + ".dll");
-                if (File.Exists(main)) candidates.Add(main);
-            }
+            candidates = Candidates(dir);
         }
         catch (Exception ex)
         {
@@ -98,40 +120,55 @@ internal static class ModManager
             return;
         }
 
-        foreach (var path in candidates.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
-            TryLoad(path);
+        foreach (var path in candidates)
+            if (TryLoad(path) is { } m) ModList.Add(m);
 
         Log.Info($"{ModList.Count} mod(s) loaded from {dir}");
+        StartWatching(dir);
     }
 
-    private static void TryLoad(string path)
+    private static List<string> Candidates(string dir)
+    {
+        var list = Directory.GetFiles(dir, "*.dll", SearchOption.TopDirectoryOnly).ToList();
+        foreach (var sub in Directory.GetDirectories(dir))
+        {
+            var main = System.IO.Path.Combine(sub, System.IO.Path.GetFileName(sub) + ".dll");
+            if (File.Exists(main)) list.Add(main);
+        }
+        return list.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static LoadedMod? TryLoad(string path)
     {
         string file = System.IO.Path.GetFileName(path);
         try
         {
-            if (!HasModInfo(path)) return;
+            if (!HasModInfo(path)) return null;
 
             var ctx = new ModLoadContext(path);
-            var asm = ctx.LoadFromAssemblyPath(path);
+            var asm = ctx.LoadUnlocked(path);
             var info = asm.GetCustomAttribute<CoreModInfoAttribute>()!;
             if (info.ModType == null || string.IsNullOrWhiteSpace(info.Name) ||
                 string.IsNullOrWhiteSpace(info.Version) || string.IsNullOrWhiteSpace(info.Author))
             {
                 Log.Error($"{file}: [CoreModInfo] needs a mod type, name, version and author");
-                return;
+                ctx.Unload();
+                return null;
             }
 
             var games = asm.GetCustomAttribute<CoreModGameAttribute>();
             if (games != null && !games.Games.Any(g => string.Equals(g, Game.Name, StringComparison.OrdinalIgnoreCase)))
             {
                 Log.Info($"skipping {info.Name}: it targets {string.Join(", ", games.Games)}, not {Game.Name}");
-                return;
+                ctx.Unload();
+                return null;
             }
 
             if (!typeof(CoreMod).IsAssignableFrom(info.ModType) || info.ModType.IsAbstract)
             {
                 Log.Error($"{file}: {info.ModType.FullName} must be a non-abstract subclass of CoreMod");
-                return;
+                ctx.Unload();
+                return null;
             }
 
             var mod = (CoreMod)Activator.CreateInstance(info.ModType)!;
@@ -142,20 +179,122 @@ internal static class ModManager
                 System.IO.Path.Combine(mod.Directory, System.IO.Path.GetFileNameWithoutExtension(path) + ".json"),
                 mod.Log);
 
-            ModList.Add(new LoadedMod { Instance = mod, Path = path });
             Log.Info($"loaded {info.Name} {info.Version} by {info.Author} ({file})");
+            return new LoadedMod { Instance = mod, Path = path, Context = ctx, Generation = ++_generation };
         }
         catch (Exception ex)
         {
             Log.Error($"failed to load {file}", ex);
+            return null;
         }
+    }
+
+    /// <summary>Hooks from attributes, then OnInitialize. Game thread.</summary>
+    public static void Initialize(LoadedMod m)
+    {
+        Invoke(m, "hook attributes", _ => Hooks.AttachAttributes(m));
+        if (m.State != ModState.Faulted) Invoke(m, nameof(CoreMod.OnInitialize), mod => mod.OnInitialize());
+        if (m.State != ModState.Faulted) m.State = ModState.Running;
+    }
+
+    /// <summary>OnShutdown, then everything the mod registered goes, then its context. Game thread.</summary>
+    private static void Unload(LoadedMod m)
+    {
+        if (m.State != ModState.Faulted) Invoke(m, nameof(CoreMod.OnShutdown), mod => mod.OnShutdown());
+        Hooks.RemoveOwner(m);
+        m.Instance.Config.Save();
+        ModConfig.Unregister(m.Instance.Config);
+        ModList.Remove(m);
+        m.Context.Unload();
+        Log.Info($"unloaded {m.Instance.Info.Name}");
+    }
+
+    /// <summary>Reloads one mod from its file, keeping its place in the list. Game thread.</summary>
+    public static void Reload(LoadedMod m)
+    {
+        int index = ModList.IndexOf(m);
+        var path = m.Path;
+        Unload(m);
+        if (!File.Exists(path)) return;
+        if (TryLoad(path) is { } fresh)
+        {
+            ModList.Insert(Math.Clamp(index, 0, ModList.Count), fresh);
+            Initialize(fresh);
+            Log.Info($"reloaded {fresh.Instance.Info.Name} {fresh.Instance.Info.Version}");
+        }
+    }
+
+    public static void ReloadAll()
+    {
+        foreach (var m in ModList.ToList()) Reload(m);
+        // Mods added to the folder since startup.
+        foreach (var path in Candidates(ModsDirectory))
+        {
+            if (ModList.Any(x => string.Equals(x.Path, path, StringComparison.OrdinalIgnoreCase))) continue;
+            if (TryLoad(path) is { } m) { ModList.Add(m); Initialize(m); }
+        }
+    }
+
+    private static void StartWatching(string dir)
+    {
+        try
+        {
+            _watcher = new FileSystemWatcher(dir, "*.dll")
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+            };
+            FileSystemEventHandler note = (_, e) => Changed[e.FullPath] = Environment.TickCount64;
+            _watcher.Changed += note;
+            _watcher.Created += note;
+            _watcher.Deleted += note;
+            _watcher.Renamed += (_, e) => Changed[e.FullPath] = Environment.TickCount64;
+            _watcher.EnableRaisingEvents = true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"hot reload unavailable (cannot watch {dir}): {ex.Message}");
+        }
+    }
+
+    /// <summary>Called every frame on the game thread: applies file changes that have settled.</summary>
+    public static void PollChanges()
+    {
+        if (!HotReload || Changed.IsEmpty) return;
+        long now = Environment.TickCount64;
+        var ready = Changed.Where(kv => now - kv.Value >= SettleMs).Select(kv => kv.Key).ToList();
+        if (ready.Count == 0) return;
+        foreach (var p in ready) Changed.TryRemove(p, out _);
+
+        var reload = new HashSet<LoadedMod>();
+        var added = new List<string>();
+        foreach (var path in ready)
+        {
+            var mod = ModList.FirstOrDefault(m => string.Equals(m.Path, path, StringComparison.OrdinalIgnoreCase));
+            if (mod != null) { reload.Add(mod); continue; }
+            bool isMod;
+            try { isMod = File.Exists(path) && HasModInfo(path); }
+            catch (IOException) { Changed[path] = now; continue; }   // still being written
+            if (isMod) { added.Add(path); continue; }
+
+            // A dependency changed (e.g. a rebuilt <Game>.Interop.dll): reload the
+            // mods that actually loaded an assembly by that name.
+            var depName = System.IO.Path.GetFileNameWithoutExtension(path);
+            foreach (var m in ModList.Where(m => m.Context.Assemblies.Any(a =>
+                         string.Equals(a.GetName().Name, depName, StringComparison.OrdinalIgnoreCase))))
+                reload.Add(m);
+        }
+
+        foreach (var m in reload) Reload(m);
+        foreach (var path in added)
+            if (TryLoad(path) is { } m) { ModList.Add(m); Initialize(m); }
     }
 
     // Checks for the attribute through metadata only, so a dependency dll in the
     // Mods folder is never loaded (and never locked into a context) by accident.
     private static bool HasModInfo(string path)
     {
-        using var stream = File.OpenRead(path);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
         if (!pe.HasMetadata) return false;
         var md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
@@ -176,7 +315,7 @@ internal static class ModManager
     /// <summary>Runs one callback for every healthy mod; a throw faults only that mod.</summary>
     public static void ForEach(string callback, Action<CoreMod> action)
     {
-        foreach (var m in ModList)
+        foreach (var m in ModList.ToList())
         {
             if (m.State == ModState.Faulted) continue;
             Invoke(m, callback, action);
@@ -185,7 +324,7 @@ internal static class ModManager
 
     /// <summary>
     /// The mod whose callback is running, so whatever it registers (hooks)
-    /// is attributed to it and torn down with it if it faults.
+    /// is attributed to it and torn down with it if it faults or reloads.
     /// </summary>
     public static LoadedMod? Current { get; internal set; }
 
@@ -213,7 +352,7 @@ internal static class ModManager
         m.State = ModState.Faulted;
         m.Fault = reason;
         Hooks.RemoveOwner(m);
-        if (ex != null) m.Instance.Log.Error($"{reason} - the mod is disabled for this session", ex);
-        else m.Instance.Log.Error($"{reason} - the mod is disabled for this session");
+        if (ex != null) m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded", ex);
+        else m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded");
     }
 }

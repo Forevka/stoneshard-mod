@@ -39,7 +39,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 5;   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name
+constexpr std::int32_t kCoreApiVersion = 6;   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -122,6 +122,17 @@ struct CoreApi {
 
     // Builtins by index, sorted by name; 0..builtin_count()-1. Lives for the process.
     const char*  (*builtin_name)(std::int32_t index);
+
+    // Value lifetime through the runtime's own helpers. value_free drops the
+    // reference a string/array/struct holds and leaves the value undefined;
+    // value_copy makes dst an additional owner of src (dst must hold nothing).
+    // Both return 0 when this runtime's helper was not found.
+    std::int32_t (*value_free)(CoreRValue* value);
+    std::int32_t (*value_copy)(CoreRValue* dst, const CoreRValue* src);
+
+    // Detaches (0) or re-attaches (1) a hook's detour. A hook nobody listens
+    // to is detached so the function runs at full speed again.
+    std::int32_t (*hook_enable)(std::int32_t id, std::int32_t enabled);
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

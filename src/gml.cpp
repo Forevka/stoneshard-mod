@@ -17,6 +17,7 @@
 //       which matters because some scripts dereference `self`.
 
 #include "gml.h"
+#include "hookengine.h"
 #include "log.h"
 #include "symbols.h"
 #include "builtins.h"
@@ -45,19 +46,25 @@ using EventFn     = void (*)(void* self, void* other);
 void CalibrateFromKnown(const void* inst, double x, double y);
 
 SetStringFn g_setString    = nullptr;
+
+// Value lifetime: FREE_RValue(v) drops the reference a string/array/struct
+// value holds; COPY_RValue(dst, src) makes dst a second owner of src's value.
+using FreeFn = void (*)(RValue*);
+using CopyFn = void (*)(RValue*, const RValue*);
+FreeFn      g_free = nullptr;
+CopyFn      g_copy = nullptr;
 void**      g_pCurrentSelf = nullptr;
 
 // Recorded from a genuine call by the game; see InstallCapture below.
 Capture     g_capture;
 bool        g_useCaptured     = true;
-ScriptFn    g_captureOriginal = nullptr;
-EventFn     g_captureEventOrig = nullptr;
+int         g_captureHook     = -1;      // hook-engine id of the capture target
 void*       g_capturedFn      = nullptr;
 
 // Always-on recorder for the weapon spawner, kept separate from the
 // user-driven capture so the two never contend for one hook slot.
 Capture     g_weaponRec;
-ScriptFn    g_weaponRecOrig = nullptr;
+bool        g_weaponRecording = false;
 bool        g_capturedIsEvent = false;
 
 bool        g_ready  = false;
@@ -145,6 +152,63 @@ void TallyStaticStringInits(std::unordered_map<std::uintptr_t, int>& votes) {
     }
 }
 
+// Every direct call a script makes. The runtime's value helpers (free, copy)
+// are among the most-called targets in any YYC game, which is what makes them
+// findable without a name: votes rank them, the structural checks below decide.
+void TallyCalls(std::uintptr_t fn, std::unordered_map<std::uintptr_t, int>& votes) {
+    for (std::size_t i = 0; i + 5 < kScanWindow; ++i) {
+        const std::uintptr_t at = fn + i;
+        if (!Readable(at, 5)) return;
+        const auto* b = reinterpret_cast<const unsigned char*>(at);
+        if (b[0] != 0xE8) continue;
+        std::int32_t rel;
+        std::memcpy(&rel, b + 1, 4);
+        const std::uintptr_t target = at + 5 + static_cast<std::intptr_t>(rel);
+        if (sym::TextRange().contains(target)) ++votes[target];
+    }
+}
+
+bool Contains(std::uintptr_t fn, std::size_t window, const unsigned char* pat, std::size_t n) {
+    for (std::size_t i = 0; i + n <= window; ++i) {
+        if (!Readable(fn + i, n)) return false;
+        if (std::memcmp(reinterpret_cast<const void*>(fn + i), pat, n) == 0) return true;
+    }
+    return false;
+}
+
+// Both runtimes mask RValue.kind with 0xFFFFFF before switching on it, as
+// `and eax,0FFFFFFh` (25 FF FF FF 00) or `mov eax,0FFFFFFh` (B8 FF FF FF 00).
+bool HasKindMask(std::uintptr_t fn) {
+    static const unsigned char andMask[] = {0x25, 0xFF, 0xFF, 0xFF, 0x00};
+    static const unsigned char movMask[] = {0xB8, 0xFF, 0xFF, 0xFF, 0x00};
+    return Contains(fn, 0x30, andMask, sizeof(andMask)) || Contains(fn, 0x30, movMask, sizeof(movMask));
+}
+
+// FREE_RValue(RValue*): reads the kind of its FIRST argument, [rcx+0Ch], and
+// tests the reference flag bit (flags & 8 at +8) of a pointer-kind value -
+// `test byte [reg+8],8` = F6 4x 08 08.
+bool LooksLikeFree(std::uintptr_t fn) {
+    if (!HasKindMask(fn)) return false;
+    static const unsigned char kindRcx1[] = {0x8B, 0x41, 0x0C};   // mov eax,[rcx+0C]
+    static const unsigned char kindRcx2[] = {0x23, 0x41, 0x0C};   // and eax,[rcx+0C]
+    if (!Contains(fn, 0x20, kindRcx1, 3) && !Contains(fn, 0x20, kindRcx2, 3)) return false;
+    for (std::size_t i = 0; i + 4 <= 0x40; ++i) {
+        if (!Readable(fn + i, 4)) return false;
+        const auto* b = reinterpret_cast<const unsigned char*>(fn + i);
+        if (b[0] == 0xF6 && (b[1] & 0xF8) == 0x40 && b[2] == 0x08 && b[3] == 0x08) return true;
+    }
+    return false;
+}
+
+// COPY_RValue(dst, src): reads the kind of its SECOND argument - [rdx+0Ch]
+// directly, or after copying the whole source (movups xmm0,[rdx]).
+bool LooksLikeCopy(std::uintptr_t fn) {
+    if (!HasKindMask(fn)) return false;
+    static const unsigned char kindRdx[] = {0x8B, 0x42, 0x0C};    // mov eax,[rdx+0C]
+    static const unsigned char loadRdx[] = {0x0F, 0x10, 0x02};    // movups xmm0,[rdx]
+    return Contains(fn, 0x20, kindRdx, 3) || Contains(fn, 0x20, loadRdx, 3);
+}
+
 // Tally `mov [rip+d32], rcx` (48 89 0D d32) in function prologues.
 void TallyCurrentSelf(std::uintptr_t fn, std::unordered_map<std::uintptr_t, int>& votes) {
     for (std::size_t i = 0; i + 7 < 0x100; ++i) {
@@ -219,6 +283,25 @@ std::uintptr_t BestValidated(const std::unordered_map<std::uintptr_t, int>& vote
     return 0;
 }
 
+// Like BestValidated, but ranks only the most-called candidates and logs just
+// the outcome: the call tally has thousands of entries.
+std::uintptr_t BestValidatedQuiet(const std::unordered_map<std::uintptr_t, int>& votes,
+                                  bool (*validate)(std::uintptr_t), const char* what) {
+    std::vector<std::pair<int, std::uintptr_t>> ranked;
+    ranked.reserve(votes.size());
+    for (const auto& [addr, n] : votes) ranked.emplace_back(n, addr);
+    std::sort(ranked.rbegin(), ranked.rend());
+    for (std::size_t i = 0; i < ranked.size() && i < 64; ++i) {
+        if (!validate(ranked[i].second)) continue;
+        Logf("gml: %s -> %p (rank %zu, %d calls)", what,
+             reinterpret_cast<void*>(ranked[i].second), i + 1, ranked[i].first);
+        return ranked[i].second;
+    }
+    Logf("gml: %s not found; value %s unavailable", what,
+         std::strstr(what, "FREE") ? "freeing" : "copying");
+    return 0;
+}
+
 } // namespace
 
 bool Init() {
@@ -229,7 +312,7 @@ bool Init() {
         return false;
     }
 
-    std::unordered_map<std::uintptr_t, int> strVotes, selfVotes;
+    std::unordered_map<std::uintptr_t, int> strVotes, selfVotes, callVotes;
 
     std::size_t sampled = 0;
     for (const sym::Entry& e : sym::All()) {
@@ -240,7 +323,13 @@ bool Init() {
         const auto fn = reinterpret_cast<std::uintptr_t>(e.func);
         TallySetString(fn, strVotes);
         TallyCurrentSelf(fn, selfVotes);
+        TallyCalls(fn, callVotes);
     }
+
+    // Value lifetime helpers. Not required for the bridge to work, so a miss
+    // is logged and the API reports "unavailable" instead of failing Init.
+    g_free = reinterpret_cast<FreeFn>(BestValidatedQuiet(callVotes, &LooksLikeFree, "FREE_RValue"));
+    g_copy = reinterpret_cast<CopyFn>(BestValidatedQuiet(callVotes, &LooksLikeCopy, "COPY_RValue"));
     Logf("gml: sampled %zu functions", sampled);
 
     // Votes narrow the field; the structural check picks the winner, so a thin
@@ -275,6 +364,32 @@ bool Init() {
 
 bool        Ready()  { return g_ready; }
 const char* Status() { return g_status.c_str(); }
+
+bool CanFreeValues() { return g_free != nullptr; }
+bool CanCopyValues() { return g_copy != nullptr; }
+
+bool FreeValue(RValue& v) {
+    if (!g_free) return false;
+    __try {
+        g_free(&v);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Logf("[!] gml: fault freeing a value of kind %d", v.kind);
+        return false;
+    }
+    v.i64 = 0; v.flags = 0; v.kind = kUndefined;
+    return true;
+}
+
+bool CopyValue(RValue& dst, const RValue& src) {
+    if (!g_copy) return false;
+    __try {
+        g_copy(&dst, &src);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Logf("[!] gml: fault copying a value of kind %d", src.kind);
+        return false;
+    }
+    return true;
+}
 
 void SetReal(RValue& v, double value) {
     v.real  = value;
@@ -436,12 +551,16 @@ bool CallByName(const std::string& symbol, RValue* result, RValue** args, int ar
 
 namespace {
 
-RValue* STDMETHODCALLTYPE CaptureDetour(void* self, void* other, RValue* result,
-                                        int argc, RValue** args) {
+// Scripts and events share one handler through the hook engine: an event is
+// simply a call without arguments.
+void CaptureBefore(hk::Call* c, void*) {
+    void* self = c->self;
+    void* other = c->other;
+    const int argc = c->argc;
+    RValue** args = c->args;
     // Who invoked us matters as much as the arguments: it names the routine that
     // actually builds the thing we are trying to reproduce.
-    const void* retAddr = _ReturnAddress();
-    const char* caller  = sym::OwnerOf(retAddr);
+    const char* caller  = sym::OwnerOf(hk::CurrentCaller());
     g_capture.self  = self;
     g_capture.other = other;
     g_capture.argc  = argc;
@@ -475,36 +594,15 @@ RValue* STDMETHODCALLTYPE CaptureDetour(void* self, void* other, RValue* result,
         for (std::size_t i = 0; i < g_capture.args.size(); ++i)
             Logf("capture:    arg[%zu] %s", i, g_capture.args[i].c_str());
     }
-
-    return g_captureOriginal(self, other, result, argc, args);
-}
-
-// Events carry no arguments, so there is nothing to record beyond the pair of
-// instances - which is exactly what we need to run the event ourselves later.
-void STDMETHODCALLTYPE CaptureEventDetour(void* self, void* other) {
-    const void* retAddr = _ReturnAddress();
-    const char* caller  = sym::OwnerOf(retAddr);
-
-    g_capture.self   = self;
-    g_capture.other  = other;
-    g_capture.argc   = 0;
-    g_capture.args.clear();
-    g_capture.raw.clear();
-    g_capture.valid  = true;
-    g_capture.caller = caller ? caller : "<unknown>";
-    ++g_capture.hits;
-
-    if (g_capture.hits <= 5) {
-        Logf("capture: %s (event) - self=%p other=%p", g_capture.symbol.c_str(), self, other);
-        Logf("capture:    <- called from %s", caller ? caller : "<unknown>");
-    }
-    g_captureEventOrig(self, other);
 }
 
 // Records every scr_weapon_loot the game makes, so a replay is always available
 // without the player having to run a capture by hand.
-RValue* STDMETHODCALLTYPE WeaponRecDetour(void* self, void* other, RValue* result,
-                                          int argc, RValue** args) {
+void WeaponRecBefore(hk::Call* c, void*) {
+    void* self = c->self;
+    void* other = c->other;
+    const int argc = c->argc;
+    RValue** args = c->args;
     if (args && argc > 0) {
         const int n = argc > 16 ? 16 : argc;
         g_weaponRec.raw.assign(static_cast<std::size_t>(n), RValue{});
@@ -523,7 +621,6 @@ RValue* STDMETHODCALLTYPE WeaponRecDetour(void* self, void* other, RValue* resul
             CalibrateFromKnown(self, args[1]->real, args[2]->real);
         ++g_weaponRec.hits;
     }
-    return g_weaponRecOrig(self, other, result, argc, args);
 }
 
 bool g_abiTested = false;
@@ -547,29 +644,19 @@ bool InstallCapture(const std::string& symbol) {
             g_capture.symbol = keep;
             return true;
         }
-        MH_DisableHook(g_capturedFn);
-        MH_RemoveHook(g_capturedFn);
+        hk::RemoveNative(g_captureHook, &CaptureBefore, nullptr, nullptr);
         Logf("capture: stopped watching %s", g_capture.symbol.c_str());
-        g_capturedFn       = nullptr;
-        g_captureOriginal  = nullptr;
-        g_captureEventOrig = nullptr;
+        g_capturedFn  = nullptr;
+        g_captureHook = -1;
     }
 
     const bool isEvent = IsEventSymbol(symbol);
-    void* detour = isEvent ? reinterpret_cast<void*>(&CaptureEventDetour)
-                           : reinterpret_cast<void*>(&CaptureDetour);
-    void** orig  = isEvent ? reinterpret_cast<void**>(&g_captureEventOrig)
-                           : reinterpret_cast<void**>(&g_captureOriginal);
-
-    if (MH_CreateHook(fn, detour, orig) != MH_OK) {
-        Logf("[!] capture: MH_CreateHook failed for %s", symbol.c_str());
-        return false;
-    }
-    if (MH_EnableHook(fn) != MH_OK) {
-        Logf("[!] capture: MH_EnableHook failed for %s", symbol.c_str());
-        MH_RemoveHook(fn);
-        g_captureOriginal  = nullptr;
-        g_captureEventOrig = nullptr;
+    // Through the shared hook engine, so capturing never fights a mod's hook
+    // on the same function.
+    g_captureHook = hk::AddNative(fn, isEvent ? hk::Kind::Event : hk::Kind::Script,
+                                  &CaptureBefore, nullptr, nullptr);
+    if (g_captureHook < 0) {
+        Logf("[!] capture: could not hook %s", symbol.c_str());
         return false;
     }
 
@@ -626,7 +713,7 @@ const Capture& WeaponRecord() { return g_weaponRec; }
 namespace {
 
 void*    g_playerInst       = nullptr;
-EventFn  g_playerStepOrig   = nullptr;
+bool     g_playerTracking   = false;
 int      g_posOffset        = -1;    // byte offset of x inside the CInstance
 bool     g_posExact         = false; // true once derived from a known-answer sample
 bool     g_posFromReflection = false;
@@ -756,7 +843,8 @@ void CalibratePosition(const void* inst) {
          best, vx, vy, bestHits, secondHits);
 }
 
-void STDMETHODCALLTYPE PlayerStepDetour(void* self, void* other) {
+void PlayerStepBefore(hk::Call* c, void*) {
+    void* self = c->self;
     if (self) {
         if (!g_playerInst) Logf("player tracker: player instance %p", self);
         g_playerInst = self;
@@ -768,7 +856,6 @@ void STDMETHODCALLTYPE PlayerStepDetour(void* self, void* other) {
         const bool havePos = PlayerPosition(px, py);
         tracer::NotePlayerStep(px, py, havePos);
     }
-    g_playerStepOrig(self, other);
 }
 
 } // namespace
@@ -832,33 +919,30 @@ bool PlayerPosition(double& x, double& y) {
 }
 
 bool InstallPlayerTracker() {
-    if (g_playerStepOrig) return true;
+    if (g_playerTracking) return true;
     void* fn = sym::Find("gml_Object_o_player_Step_0");
     if (!fn) { Logf("[!] player tracker: o_player Step not found"); return false; }
 
-    if (MH_CreateHook(fn, reinterpret_cast<void*>(&PlayerStepDetour),
-                      reinterpret_cast<void**>(&g_playerStepOrig)) != MH_OK ||
-        MH_EnableHook(fn) != MH_OK) {
+    // Shared hook engine: C# mods can hook o_player's Step alongside this.
+    if (hk::AddNative(fn, hk::Kind::Event, &PlayerStepBefore, nullptr, nullptr) < 0) {
         Logf("[!] player tracker: hook failed");
-        g_playerStepOrig = nullptr;
         return false;
     }
+    g_playerTracking = true;
     Logf("player tracker: watching o_player Step");
     return true;
 }
 
 bool InstallWeaponRecorder() {
-    if (g_weaponRecOrig) return true;
+    if (g_weaponRecording) return true;
     void* fn = sym::Find("gml_Script_scr_weapon_loot");
     if (!fn) { Logf("[!] weapon recorder: scr_weapon_loot not found"); return false; }
 
-    if (MH_CreateHook(fn, reinterpret_cast<void*>(&WeaponRecDetour),
-                      reinterpret_cast<void**>(&g_weaponRecOrig)) != MH_OK ||
-        MH_EnableHook(fn) != MH_OK) {
+    if (hk::AddNative(fn, hk::Kind::Script, &WeaponRecBefore, nullptr, nullptr) < 0) {
         Logf("[!] weapon recorder: hook failed");
-        g_weaponRecOrig = nullptr;
         return false;
     }
+    g_weaponRecording = true;
     g_weaponRec.symbol = "scr_weapon_loot";
     Logf("weapon recorder: watching scr_weapon_loot");
     return true;

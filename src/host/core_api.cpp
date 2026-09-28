@@ -182,6 +182,18 @@ std::int32_t ApiHookCallOriginal(const CoreHookCall* call, CoreRValue* result) {
     return hk::CallOriginal(reinterpret_cast<const hk::Call*>(call), Gml(result)) ? 1 : 0;
 }
 
+std::int32_t ApiHookEnable(std::int32_t id, std::int32_t enabled) {
+    return (enabled ? hk::Enable(id) : hk::Disable(id)) ? 1 : 0;
+}
+
+std::int32_t ApiValueFree(CoreRValue* value) {
+    return value && gml::FreeValue(*Gml(value)) ? 1 : 0;
+}
+
+std::int32_t ApiValueCopy(CoreRValue* dst, const CoreRValue* src) {
+    return dst && src && gml::CopyValue(*Gml(dst), *Gml(src)) ? 1 : 0;
+}
+
 const char* ApiBuiltinName(std::int32_t index) {
     const auto& names = builtins::Names();
     return (index >= 0 && static_cast<std::size_t>(index) < names.size()) ? names[index] : nullptr;
@@ -278,6 +290,9 @@ CoreApi Build() {
     a.builtin_arity    = &ApiBuiltinArity;
     a.hook_call_original = &ApiHookCallOriginal;
     a.builtin_name       = &ApiBuiltinName;
+    a.value_free         = &ApiValueFree;
+    a.value_copy         = &ApiValueCopy;
+    a.hook_enable        = &ApiHookEnable;
     return a;
 }
 

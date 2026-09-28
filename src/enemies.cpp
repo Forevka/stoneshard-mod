@@ -16,6 +16,7 @@
 
 #include "builtins.h"
 #include "gml.h"
+#include "hookengine.h"
 #include "items.h"
 #include "log.h"
 #include "savebackup.h"
@@ -78,7 +79,7 @@ void* Context() {
 
 // ---------------------------------------------------------------- tracker
 
-EventFn            g_stepOrig = nullptr;
+bool               g_tracking = false;   // hooked through the shared engine
 std::vector<void*> g_pending;          // this step cycle, still filling
 std::vector<void*> g_live;             // the last complete cycle
 unsigned           g_quietFrames = 0;
@@ -107,7 +108,8 @@ void Forget(void* inst) {
 // instance we already have means the pass wrapped around, which is the only
 // reliable "the room has been fully walked" signal available from in here -
 // counting render frames would be a guess, since a frame is not a step.
-void STDMETHODCALLTYPE StepDetour(void* self, void* other) {
+void StepBefore(hk::Call* c, void*) {
+    void* self = c->self;
     if (self) {
         ++g_stepHits;
         if (Contains(g_pending, self)) {
@@ -117,7 +119,6 @@ void STDMETHODCALLTYPE StepDetour(void* self, void* other) {
         if (g_pending.size() < kMaxTracked) g_pending.push_back(self);
         g_quietFrames = 0;
     }
-    g_stepOrig(self, other);
 }
 
 // ---------------------------------------------------------------- reading
@@ -211,30 +212,29 @@ bool ListByEnumeration(std::vector<Enemy>* out) {
 const char*               LastError() { return g_error.c_str(); }
 const std::vector<Enemy>& Roster()    { return g_roster; }
 int                       Reported()  { return g_reported; }
-bool                      Tracking()  { return g_stepOrig != nullptr; }
+bool                      Tracking()  { return g_tracking; }
 unsigned long long        StepsSeen() { return g_stepHits; }
 
 // ---------------------------------------------------------------- lifecycle
 
 bool InstallTracker() {
-    if (g_stepOrig) return true;
+    if (g_tracking) return true;
 
     void* fn = sym::Find(kStepEvent);
     if (!fn) { Logf("[!] enemy tracker: %s not found", kStepEvent); return false; }
 
-    if (MH_CreateHook(fn, reinterpret_cast<void*>(&StepDetour),
-                      reinterpret_cast<void**>(&g_stepOrig)) != MH_OK ||
-        MH_EnableHook(fn) != MH_OK) {
+    // Through the shared hook engine, so C# mods can hook o_enemy's Step too.
+    if (hk::AddNative(fn, hk::Kind::Event, &StepBefore, nullptr, nullptr) < 0) {
         Logf("[!] enemy tracker: hook failed");
-        g_stepOrig = nullptr;
         return false;
     }
+    g_tracking = true;
     Logf("enemy tracker: watching %s", kStepEvent);
     return true;
 }
 
 void Tick() {
-    if (!g_stepOrig) return;
+    if (!g_tracking) return;
 
     // No step events for a while means no enemies are running - a cleared room,
     // a town, or a menu. Without this the last room's occupants stay listed and

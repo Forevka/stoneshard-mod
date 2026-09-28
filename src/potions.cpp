@@ -12,6 +12,7 @@
 #include "builtins.h"
 #include "console.h"
 #include "gml.h"
+#include "hookengine.h"
 #include "log.h"
 #include "savebackup.h"
 #include "symbols.h"
@@ -56,7 +57,7 @@ std::string Line(const char* fmt, ...) {
 
 using EventFn = void(STDMETHODCALLTYPE*)(void* self, void* other);
 
-EventFn g_alarmOrig = nullptr;
+bool    g_recording = false;   // hooked through the shared engine
 void*   g_bottle    = nullptr;
 
 // The armed request, and the outcome of the last one.
@@ -147,11 +148,11 @@ void BuildInContext(void* self, void* other) {
     Finish(true, "built it, but the result could not be read back");
 }
 
-void STDMETHODCALLTYPE BottleAlarmDetour(void* self, void* other) {
-    // The game's own roll, untouched and always first. It is what makes the
-    // bottle a valid potion in the first place; the build only rewrites it.
-    g_alarmOrig(self, other);
-
+// After the game's own roll, which is untouched and always first: it is what
+// makes the bottle a valid potion in the first place; the build only rewrites it.
+void BottleAlarmAfter(hk::Call* c, void*) {
+    void* self  = c->self;
+    void* other = c->other;
     if (!self) return;
     g_bottle = self;
     if (!g_armed) return;
@@ -232,7 +233,7 @@ bool BottleMap(void* bottle, double* mapId) {
 const char* LastError() { return g_error.c_str(); }
 
 bool InstallRecorder() {
-    if (g_alarmOrig) return true;
+    if (g_recording) return true;
 
     // The whole event body is one call to scr_roll_potion, so this fires once
     // per potion the game creates - not on every step.
@@ -242,18 +243,16 @@ bool InstallRecorder() {
         return false;
     }
 
-    if (MH_CreateHook(fn, reinterpret_cast<void*>(&BottleAlarmDetour),
-                      reinterpret_cast<void**>(&g_alarmOrig)) != MH_OK ||
-        MH_EnableHook(fn) != MH_OK) {
+    if (hk::AddNative(fn, hk::Kind::Event, nullptr, &BottleAlarmAfter, nullptr) < 0) {
         Fail("bottle recorder hook failed");
-        g_alarmOrig = nullptr;
         return false;
     }
+    g_recording = true;
     Logf("potions: watching o_inv_bottle Alarm 0");
     return true;
 }
 
-bool RecorderReady() { return g_alarmOrig != nullptr; }
+bool RecorderReady() { return g_recording; }
 
 // --------------------------------------------------------------------- giving
 
@@ -289,7 +288,7 @@ bool BuildPotion(const std::vector<std::string>& tags) {
     g_error.clear();
 
     if (tags.empty())  { Fail("no effects chosen"); return false; }
-    if (!g_alarmOrig)  { Fail("the bottle recorder is not installed"); return false; }
+    if (!g_recording)  { Fail("the bottle recorder is not installed"); return false; }
 
     // Arm first, take the bottle second: the alarm fires on the next step, and
     // the detour does the building then - inside the event frame, the only

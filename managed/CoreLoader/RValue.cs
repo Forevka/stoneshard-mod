@@ -39,20 +39,68 @@ public struct RValue
 
     public static RValue FromBool(bool v) => new() { Real = v ? 1 : 0, Kind = RValueKind.Real };
 
+    // null = not probed yet; whether string_copy can make runtime-owned strings here.
+    private static bool? _canCopyStrings;
+
     /// <summary>
-    /// Builds a GML string through the runtime's own constructor. The text is
-    /// interned for the life of the process, because the game keeps a pointer to it:
-    /// every DISTINCT string passed here stays allocated until the game exits. Fine
-    /// for names, labels and keys; do not feed it a fresh formatted string per frame.
-    /// Must be called on the game thread.
+    /// A GML string holding <paramref name="text"/>, owned by the runtime and
+    /// released with the frame's autorelease pool like any other value - so
+    /// formatting a new string every frame is fine. Game thread only.
     /// </summary>
+    /// <remarks>
+    /// The runtime's string constructor keeps a pointer to the caller's
+    /// characters, so the text is first wrapped around a temporary buffer and
+    /// then copied by the game's own string_copy, which allocates its own. Only
+    /// if a game lacks string_copy does the text fall back to being interned for
+    /// the life of the process.
+    /// </remarks>
     public static unsafe RValue FromString(string text)
     {
         Loader.EnsureGameThread();
+        text ??= "";
+
+        if (_canCopyStrings != false && Values.CanFree)
+        {
+            var bytes = Utf8.Encode(text);
+            byte* buf = (byte*)System.Runtime.InteropServices.NativeMemory.Alloc((nuint)bytes.Length);
+            try
+            {
+                bytes.AsSpan().CopyTo(new Span<byte>(buf, bytes.Length));
+                RValue tmp = default;
+                if (Loader.Api->SetString(&tmp, buf) != 0)
+                {
+                    RValue owned = RValue.Undefined;
+                    // string_copy(s, 1, huge) is a full copy in every runtime seen:
+                    // the count is clamped to the string's length.
+                    RValue* args = stackalloc RValue[3];
+                    args[0] = tmp;
+                    args[1] = FromReal(1);
+                    args[2] = FromReal(int.MaxValue);
+                    int ok;
+                    fixed (byte* name = Utf8.Get("string_copy"))
+                        ok = Loader.Api->CallBuiltin(name, &owned, args, 3, 0, 0);
+                    Loader.Api->ValueFree(&tmp);   // the wrapper around our buffer
+
+                    if (ok != 0 && owned.Kind == RValueKind.String)
+                    {
+                        _canCopyStrings = true;
+                        return Values.Track(owned);
+                    }
+                    if (_canCopyStrings == null)
+                        Loader.Log(LogLevel.Warning, "CoreLoader", "string_copy unusable; strings from mods are interned instead");
+                    _canCopyStrings = false;
+                }
+            }
+            finally
+            {
+                System.Runtime.InteropServices.NativeMemory.Free(buf);
+            }
+        }
+
         RValue v = default;
         if (Loader.Api->SetString(&v, Utf8.Permanent(text)) == 0)
             throw new GmlException("the runtime's string constructor is unavailable in this game");
-        return v;
+        return Values.Track(v);
     }
 
     public static implicit operator RValue(double v) => FromReal(v);

@@ -4,6 +4,7 @@
 #include "symbols.h"
 
 #include <windows.h>
+#include <intrin.h>
 #include <atomic>
 #include <cstring>
 #include <deque>
@@ -18,7 +19,15 @@ namespace {
 using ScriptFn = gml::RValue* (*)(void*, void*, gml::RValue*, int, gml::RValue**);
 using EventFn  = void (*)(void*, void*);
 
+struct NativeSub {
+    std::atomic<NativeHandler> before{nullptr};
+    std::atomic<NativeHandler> after{nullptr};
+    std::atomic<void*>         ctx{nullptr};
+};
+
 struct Hook {
+    NativeSub          natives[kMaxNative];
+    std::atomic<int>   nativeCount{0};
     int                id       = -1;
     Kind               kind     = Kind::Script;
     void*              target   = nullptr;
@@ -26,6 +35,7 @@ struct Hook {
     void*              thunk    = nullptr;
     std::atomic<bool>  managed{false};
     bool               enabled  = false;
+    int                nativeUsers = 0;   // loader-internal users (self observers)
 };
 
 // ---- thunk arena -------------------------------------------------------------
@@ -90,40 +100,69 @@ bool EnsureArena() {
 
 // ---- dispatch ----------------------------------------------------------------
 
+// The game code that made the call currently being dispatched (per thread, and
+// saved/restored around each dispatch because hooked calls nest).
+thread_local const void* g_caller = nullptr;
+
+void RunNatives(Hook* h, Call* c, bool after) {
+    const int n = h->nativeCount.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i) {
+        NativeSub& s = h->natives[i];
+        NativeHandler fn = (after ? s.after : s.before).load(std::memory_order_acquire);
+        if (fn) fn(c, s.ctx.load(std::memory_order_relaxed));
+    }
+}
+
+// Natives run before managed handlers on the way in and after them on the way
+// out, so the loader's own bookkeeping always sees the game's view.
+void Phase(Hook* h, Call* c, ManagedDispatch managed, bool after) {
+    if (!after) RunNatives(h, c, false);
+    if (managed) managed(c);
+    if (after) RunNatives(h, c, true);
+}
+
 gml::RValue* ScriptDispatch(void* self, void* other, gml::RValue* result, int argc,
                             gml::RValue** args, Hook* h) {
     // No NoteSelf here: a script's self can be a struct (a bound method, a
     // `with` over a struct), which is not a CInstance. Only object events,
     // whose self always is one, feed CurrentSelf().
+    //
+    // The thunk called us from inside its 0x38-byte frame, so the game's own
+    // return address sits just above ours plus that frame.
+    const void* prevCaller = g_caller;
+    g_caller = *reinterpret_cast<void* const*>(
+        static_cast<const char*>(_AddressOfReturnAddress()) + 8 + 0x38);
+
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
     Call c{self, other, result, args, argc, kBefore, 0, h->id};
-    if (managed) managed(&c);
+    Phase(h, &c, managed, false);
 
     gml::RValue* ret = result;
     if (!c.skip) ret = reinterpret_cast<ScriptFn>(h->original)(self, other, result, argc, args);
 
-    if (managed) {
-        c.phase = kAfter;
-        managed(&c);
-    }
+    c.phase = kAfter;
+    Phase(h, &c, managed, true);
+    g_caller = prevCaller;
     return ret;
 }
 
 void EventDispatch(void* self, void* other, Hook* h) {
     gml::NoteSelf(self);
+    // The event thunk tail-jumped here, so our return address is the game's.
+    const void* prevCaller = g_caller;
+    g_caller = *static_cast<void* const*>(_AddressOfReturnAddress());
 
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
     Call c{self, other, nullptr, nullptr, 0, kBefore, 0, h->id};
-    if (managed) managed(&c);
+    Phase(h, &c, managed, false);
 
     if (!c.skip) reinterpret_cast<EventFn>(h->original)(self, other);
 
-    if (managed) {
-        c.phase = kAfter;
-        managed(&c);
-    }
+    c.phase = kAfter;
+    Phase(h, &c, managed, true);
+    g_caller = prevCaller;
 }
 
 void* EmitThunk(Hook* h) {
@@ -229,6 +268,9 @@ bool Disable(int id) {
     std::lock_guard<std::mutex> lock(g_lock);
     Hook* h = ById(id);
     if (!h || !h->enabled) return h != nullptr;
+    // Still needed by the loader itself (it supplies CurrentSelf): stay attached,
+    // only managed dispatch was switched off by the caller.
+    if (h->nativeUsers > 0) return true;
     if (MH_DisableHook(h->target) != MH_OK) return false;
     h->enabled = false;
     return true;
@@ -247,6 +289,59 @@ int Count() {
     std::lock_guard<std::mutex> lock(g_lock);
     return static_cast<int>(g_hooks.size());
 }
+
+int AddNative(void* target, Kind kind, NativeHandler before, NativeHandler after, void* ctx) {
+    const int id = Install(target, kind);
+    if (id < 0) return -1;
+    std::lock_guard<std::mutex> lock(g_lock);
+    Hook& h = g_hooks[id];
+    const int n = h.nativeCount.load(std::memory_order_relaxed);
+    // Reuse a slot freed by RemoveNative before growing.
+    for (int i = 0; i < n; ++i) {
+        NativeSub& s = h.natives[i];
+        if (!s.before.load() && !s.after.load()) {
+            s.ctx.store(ctx);
+            s.before.store(before, std::memory_order_release);
+            s.after.store(after, std::memory_order_release);
+            ++h.nativeUsers;
+            return id;
+        }
+    }
+    if (n >= kMaxNative) {
+        Logf("[!] hooks: #%d already has %d native users", id, kMaxNative);
+        return -1;
+    }
+    NativeSub& s = h.natives[n];
+    s.ctx.store(ctx);
+    s.before.store(before);
+    s.after.store(after);
+    h.nativeCount.store(n + 1, std::memory_order_release);   // publish last
+    ++h.nativeUsers;
+    if (!h.enabled && MH_EnableHook(h.target) == MH_OK) h.enabled = true;
+    return id;
+}
+
+void RemoveNative(int id, NativeHandler before, NativeHandler after, void* ctx) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    Hook* h = ById(id);
+    if (!h) return;
+    const int n = h->nativeCount.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; ++i) {
+        NativeSub& s = h->natives[i];
+        if (s.before.load() == before && s.after.load() == after && s.ctx.load() == ctx) {
+            s.before.store(nullptr, std::memory_order_release);
+            s.after.store(nullptr, std::memory_order_release);
+            // Nobody left - no loader tool and no mod: let the function run
+            // untouched again.
+            if (--h->nativeUsers == 0 && !h->managed.load() && h->enabled &&
+                MH_DisableHook(h->target) == MH_OK)
+                h->enabled = false;
+            return;
+        }
+    }
+}
+
+const void* CurrentCaller() { return g_caller; }
 
 bool CallOriginal(const Call* call, gml::RValue* result) {
     if (!call || !result) return false;
@@ -273,8 +368,15 @@ void InstallSelfObservers(int maxEvents) {
         if (std::strncmp(e.name, "gml_Object_", 11) != 0) continue;
         const bool isStep = std::strstr(e.name, "_Step_") != nullptr;
         const bool isDraw = !isStep && std::strstr(e.name, "_Draw_") != nullptr;
-        if (isStep && steps < maxEvents && Install(e.func, Kind::Event) >= 0) ++steps;
-        if (isDraw && draws < maxEvents && Install(e.func, Kind::Event) >= 0) ++draws;
+        if (!isStep && !isDraw) continue;
+        if ((isStep && steps >= maxEvents) || (isDraw && draws >= maxEvents)) continue;
+        const int id = Install(e.func, Kind::Event);
+        if (id < 0) continue;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            ++g_hooks[id].nativeUsers;
+        }
+        if (isStep) ++steps; else ++draws;
     }
     Logf("hooks: watching %d Step and %d Draw events for a live instance", steps, draws);
 }

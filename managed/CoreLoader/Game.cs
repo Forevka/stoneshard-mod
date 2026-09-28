@@ -77,7 +77,7 @@ public static unsafe class Game
             if (Loader.Api->CallScript(fn, self.Pointer, other.Pointer, &result, a, args.Length) == 0)
                 throw new GmlException($"call to {name} failed (see the loader log)");
         }
-        return result;
+        return Values.Track(result);
     }
 
     /// <summary>Runs an object event (e.g. "gml_Object_o_x_Step_0") as <paramref name="self"/>.</summary>
@@ -118,7 +118,7 @@ public static unsafe class Game
             if (Loader.Api->CallBuiltin(n, &result, a, args.Length, self.Pointer, 0) == 0)
                 throw new GmlException($"builtin {name} failed (see the loader log)");
         }
-        return result;
+        return Values.Track(result);
     }
 
     // ---------------------------------------------------------- game thread
@@ -166,7 +166,7 @@ public readonly unsafe struct Instance : IEquatable<Instance>
             if (Loader.Api->VarGet(Pointer, n, &v) == 0)
                 throw new GmlException($"could not read '{variable}'");
         }
-        return v;
+        return Values.Track(v);
     }
 
     /// <summary>Writes an instance variable by name.</summary>

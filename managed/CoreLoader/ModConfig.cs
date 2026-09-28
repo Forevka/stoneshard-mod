@@ -76,6 +76,12 @@ public sealed class ModConfig
         if (_dirtySince < 0) _dirtySince = Environment.TickCount64;
     }
 
+    /// <summary>A reloaded mod gets a fresh config; the old one must stop being flushed.</summary>
+    internal static void Unregister(ModConfig c)
+    {
+        lock (All) All.Remove(c);
+    }
+
     /// <summary>Called by the loader every frame; saves configs that settled.</summary>
     internal static void FlushSettled()
     {

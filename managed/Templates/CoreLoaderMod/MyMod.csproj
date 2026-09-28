@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MyMod</AssemblyName>
+    <RootNamespace>MyMod</RootNamespace>
+
+    <!-- The game this mod is developed against. CoreLoader.dll is referenced
+         from its CoreLoader folder, and every build is copied into its Mods
+         folder (turn off with -p:DeployOnBuild=false). -->
+    <GameDir>GAME_DIR_PLACEHOLDER</GameDir>
+    <CoreLoaderDir>$(GameDir)\CoreLoader</CoreLoaderDir>
+    <DeployOnBuild Condition="'$(DeployOnBuild)' == ''">true</DeployOnBuild>
+
+    <!-- CoreLoader is supplied by the loader at runtime; never ship a copy. -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="CoreLoader">
+      <HintPath>$(CoreLoaderDir)\CoreLoader.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+<!--#if (hasInterop) -->
+  <!-- The typed code map CoreLoader generated for this game on its first run. -->
+  <ItemGroup>
+    <ProjectReference Include="$(CoreLoaderDir)\Interop\INTEROP_PLACEHOLDER.Interop\INTEROP_PLACEHOLDER.Interop.csproj" />
+  </ItemGroup>
+<!--#endif -->
+
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(DeployOnBuild)' == 'true' And Exists('$(GameDir)')">
+    <ItemGroup>
+      <ModFiles Include="$(TargetDir)$(TargetName).dll;$(TargetDir)$(TargetName).pdb" />
+      <!-- Dependencies built next to the mod (the interop dll, NuGet packages). -->
+      <ModFiles Include="$(TargetDir)*.dll" Exclude="$(TargetDir)CoreLoader.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModFiles)" DestinationFolder="$(GameDir)\Mods" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="MyMod -> $(GameDir)\Mods (hot reload picks it up in a running game)" />
+  </Target>
+
+</Project>
