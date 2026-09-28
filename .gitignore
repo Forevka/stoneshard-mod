@@ -25,3 +25,8 @@ tools/re/*.npy
 tools/re/script_table.json
 tools/re/objt_indexed.json
 tools/re/builtin_table.json
+
+# .NET build output (managed/bin mirrors the game folder layout)
+managed/bin/
+managed/**/obj/
+.vs/

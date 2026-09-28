@@ -4,6 +4,7 @@
 #include "enemies.h"
 #include "gml.h"
 #include "hooks.h"
+#include "host/dotnet_host.h"
 #include "log.h"
 #include "potions.h"
 #include "tracer.h"
@@ -65,6 +66,10 @@ DWORD WINAPI InitThread(LPVOID) {
     // Resolves the shared prologue helper; the hook itself is only installed
     // while a recording is armed.
     mod::tracer::Init();
+
+    // Last, so the symbol table and runtime helpers the C# side asks for are
+    // already resolved. Mods' OnInitialize runs later, on the game thread.
+    mod::host::Start();
 
     return 0;
 }

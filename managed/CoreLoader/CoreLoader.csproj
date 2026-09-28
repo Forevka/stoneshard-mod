@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>CoreLoader</AssemblyName>
+    <RootNamespace>CoreLoader</RootNamespace>
+    <!-- A class library that a native host boots: this is what makes the SDK
+         emit CoreLoader.runtimeconfig.json next to the dll. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!-- Run on the newest installed major if .NET 10 itself is absent. -->
+    <RollForward>Major</RollForward>
+    <OutputPath>$(ManagedOutRoot)CoreLoader\</OutputPath>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+</Project>

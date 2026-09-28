@@ -19,6 +19,7 @@
 #include "log.h"
 #include "paths.h"
 #include "symbols.h"
+#include "host/dotnet_host.h"
 
 #include <windows.h>
 #include <d3d11.h>
@@ -54,6 +55,10 @@ UINT g_height = 0;
 LRESULT CALLBACK HookedWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     // The trace lines up keystrokes with what the game ran in response.
     if (msg == WM_KEYDOWN) tracer::NoteKey(static_cast<int>(wParam));
+
+    // The last point where mods can still run on the game thread; DllMain's
+    // detach is under the loader lock, where calling into .NET is unsafe.
+    if (msg == WM_DESTROY) host::Shutdown();
 
     if (msg == WM_KEYDOWN && wParam == VK_INSERT) {
         g_visible = !g_visible;
@@ -358,6 +363,7 @@ void DrawUI() {
     // they are diagnostics, and having seven top-level tabs meant hunting for
     // the two that get used every session.
     if (ImGui::BeginTabBar("##tabs")) {
+        if (ImGui::BeginTabItem("Mods"))    { host::DrawModsTab();          ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Cheats"))  { cheats::DrawCheatsTab();      ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Enemies")) { enemies::DrawEnemiesTab();   ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Loot"))    { loot::DrawLootTab();          ImGui::EndTabItem(); }
@@ -404,6 +410,9 @@ void OverlayRender(IDXGISwapChain* swapChain) {
         // character, so this keeps being called until one is loaded.
         builtins::SelfTest();
     }
+
+    // C# mods: initialised on their first frame, then ticked every frame.
+    host::Frame();
 
     // The game hides the OS cursor, so ImGui has to draw its own while visible.
     ImGui::GetIO().MouseDrawCursor = g_visible;
