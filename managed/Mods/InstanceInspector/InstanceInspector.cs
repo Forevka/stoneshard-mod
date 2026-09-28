@@ -137,7 +137,9 @@ public sealed class InstanceInspectorMod : CoreMod
             return;
         }
 
-        string key = $"{o.Index}:{_instanceIndex}:{name}";
+        // Keyed by the instance itself, not its position in the list: rows
+        // shift as instances are created and destroyed.
+        string key = $"{inst.Id.Int64}:{name}";
         if (!_edits.TryGetValue(key, out var text)) text = v.AsReal.ToString("R");
         UI.Text($"{name} = {v.AsReal:G10}");
         UI.SameLine();

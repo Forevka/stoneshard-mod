@@ -53,6 +53,9 @@ if ($CleanMods) {
     Get-ChildItem -LiteralPath $modsDir -Filter *.pdb | Remove-Item -Force
 }
 
+# `powershell -File ... -Mods A,B` hands over "A,B" as ONE string; split it.
+$Mods = @($Mods | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
 foreach ($m in $Mods) {
     $found = $null
     foreach ($sub in "Mods", "TestMods") {

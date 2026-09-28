@@ -71,16 +71,23 @@ public readonly record struct GmlObject(int Index, string Name)
         return list;
     }
 
-    private static readonly Dictionary<string, GmlObject?> Cache = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, GmlObject> Cache = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, long> Misses = new(StringComparer.Ordinal);
 
     /// <summary>Looks an object up by name, e.g. "o_player". Cached per name.</summary>
     public static GmlObject? Find(string name)
     {
         if (Cache.TryGetValue(name, out var hit)) return hit;
+
+        // A miss costs a full object scan, so it is remembered briefly: a mod
+        // polling a name every frame stays cheap, and an object that only
+        // appears once the game has finished loading is still found soon after.
+        long now = Environment.TickCount64;
+        if (Misses.TryGetValue(name, out var at) && now - at < 2000) return null;
+
         var found = Resolve(name);
-        // Only remember successes: an object queried before the game finished
-        // loading must still be found later.
-        if (found != null) Cache[name] = found;
+        if (found is { } f) { Cache[name] = f; Misses.Remove(name); }
+        else Misses[name] = now;
         return found;
     }
 

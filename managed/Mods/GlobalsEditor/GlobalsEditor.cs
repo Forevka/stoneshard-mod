@@ -16,7 +16,8 @@ public sealed class GlobalsEditorMod : CoreMod
     private string _filter = "";
     private string _error = "";
     private readonly Dictionary<string, string> _edits = new();
-    private readonly Dictionary<string, double> _frozen = new();
+    // The value as it was captured, kind included: a frozen bool stays a bool.
+    private readonly Dictionary<string, RValue> _frozen = new();
     private int _nextRefresh;
 
     public override void OnUpdate()
@@ -24,8 +25,13 @@ public sealed class GlobalsEditorMod : CoreMod
         // Re-assert frozen values every frame, after the game had its turn.
         foreach (var (name, value) in _frozen)
         {
-            try { Globals.Set(name, value); }
-            catch (GmlException) { /* the global went away; leave the entry for the user to see */ }
+            try
+            {
+                // variable_global_set would re-create a global the game has
+                // removed; a freeze must only hold values that still exist.
+                if (Globals.Exists(name)) Globals.Set(name, value);
+            }
+            catch (GmlException) { /* leave the entry for the user to see */ }
         }
     }
 
@@ -81,15 +87,17 @@ public sealed class GlobalsEditorMod : CoreMod
         UI.SameLine();
         if (UI.Button("Set") && double.TryParse(text, out var v))
         {
-            Globals.Set(name, v);
-            if (frozen) _frozen[name] = v;
+            var nv = value.Kind == RValueKind.Bool ? RValue.FromBool(v != 0) : RValue.FromReal(v);
+            if (value.Kind == RValueKind.Bool) nv.Kind = RValueKind.Bool;
+            Globals.Set(name, nv);
+            if (frozen) _frozen[name] = nv;
             _edits.Remove(name);
             Log.Info($"global.{name} = {v}");
         }
         UI.SameLine();
         if (UI.Checkbox("freeze", ref frozen))
         {
-            if (frozen) _frozen[name] = value.AsReal;
+            if (frozen) _frozen[name] = value;
             else _frozen.Remove(name);
         }
         UI.PopId();

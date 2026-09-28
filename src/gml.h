@@ -126,6 +126,11 @@ void* CurrentSelf();
 // (2024+) it is the only source CurrentSelf() has.
 void NoteSelf(void* self);
 
+// Forgets the observed instance. Called once per frame after the loader's own
+// work, so what CurrentSelf() hands out was seen running during the frame in
+// progress - never an instance destroyed by a room change long ago.
+void ClearObservedSelf();
+
 // Whether this runtime exposes a current-self global (older runtimes do).
 bool HasSelfGlobal();
 

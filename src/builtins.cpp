@@ -278,6 +278,7 @@ namespace {
 void**        g_pArray   = nullptr;
 std::int32_t* g_pCount   = nullptr;
 bool          g_scanned  = false;
+bool          g_failed   = false;   // a populated table was rejected: final
 DWORD         g_lastTry  = 0;
 
 bool ResolveRegistrar() {
@@ -334,6 +335,7 @@ bool ResolveRegistrar() {
 
 bool Init() {
     if (g_ready) return true;
+    if (g_failed) return false;
     if (!sym::Healthy()) { g_status = "symbol resolver unhealthy"; return false; }
 
     // The registrar scan is deterministic: if it failed once it fails forever.
@@ -360,9 +362,12 @@ bool Init() {
         return false;
     }
 
+    // From here on the table is populated, so a rejection is deterministic:
+    // retrying would only rebuild the map and log the same failure forever.
     const Layout layout = DetectLayout(table, n);
     if (layout == Layout::Unknown) {
         g_status = "builtin entry layout not recognised";
+        g_failed = true;
         return false;
     }
 
@@ -398,6 +403,7 @@ bool Init() {
             g_status = buf;
             Logf("[!] builtins: %s", g_status.c_str());
             g_map.clear();
+            g_failed = true;
             return false;
         }
     }

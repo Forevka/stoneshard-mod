@@ -18,6 +18,7 @@ internal static unsafe class InteropGenerator
 {
     private static readonly Logger Log = new("CoreLoader");
     private static bool _done;
+    private static bool _degraded;
     private static int _waitFrames;
 
     private static readonly string[] EventTypes =
@@ -26,10 +27,16 @@ internal static unsafe class InteropGenerator
         "KeyPress", "KeyRelease", "Keyboard", "Collision", "Other", "Gesture", "Async",
     };
 
-    public static string SafeGameName =>
-        new string(Game.Name.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()).Trim('_') is { Length: > 0 } s
-            ? (char.IsDigit(s[0]) ? "_" + s : s)
-            : "Game";
+    public static string SafeGameName
+    {
+        get
+        {
+            var s = new string(Game.Name.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()).Trim('_');
+            if (s.Length == 0) return "YycGame";
+            if (char.IsDigit(s[0]) || Keywords.Contains(s)) s = "_" + s;
+            return s;
+        }
+    }
 
     public static string OutputDirectory =>
         Path.Combine(Game.LoaderDirectory, "Interop", SafeGameName + ".Interop");
@@ -63,9 +70,14 @@ internal static unsafe class InteropGenerator
             }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            _degraded = _waitFrames >= 1800 && !AssetsLoaded();
             Generate();
-            File.WriteAllText(stampFile, stamp);
-            Status = $"generated in {sw.ElapsedMilliseconds} ms: {OutputDirectory}";
+            // A scan that gave up waiting or was cut short is not stamped, so
+            // the next launch tries again instead of keeping a partial map.
+            if (_degraded) File.Delete(stampFile);
+            else File.WriteAllText(stampFile, stamp);
+            Status = $"generated{(_degraded ? " (partial - will retry next launch)" : "")} " +
+                     $"in {sw.ElapsedMilliseconds} ms: {OutputDirectory}";
             Log.Info($"interop {Status}");
         }
         catch (Exception ex)
@@ -146,7 +158,12 @@ internal static unsafe class InteropGenerator
     private static IEnumerable<T> SafeEnumerate<T>(Func<IReadOnlyList<T>> f)
     {
         try { return f(); }
-        catch (GmlException ex) { Log.Warning($"interop: skipped part of the asset scan: {ex.Message}"); return Array.Empty<T>(); }
+        catch (GmlException ex)
+        {
+            Log.Warning($"interop: skipped part of the asset scan: {ex.Message}");
+            _degraded = true;
+            return Array.Empty<T>();
+        }
     }
 
     // Asset indices are dense from 0; stop after a run of misses.
@@ -177,6 +194,7 @@ internal static unsafe class InteropGenerator
         catch (GmlException ex)
         {
             Log.Warning($"interop: {getName} scan stopped: {ex.Message}");
+            _degraded = true;
         }
         return names;
     }
@@ -257,13 +275,14 @@ internal static unsafe class InteropGenerator
         var sb = new StringBuilder(Header(ns));
         sb.Append("/// <summary>Every compiled script in the game. Call them, or hook them with Before/After.</summary>\n");
         sb.Append("public static class Scripts\n{\n");
-        var used = new HashSet<string>(StringComparer.Ordinal);
+        // A member may not share its enclosing type's name (CS0542).
+        var used = new HashSet<string>(StringComparer.Ordinal) { "Scripts" };
         foreach (var s in scripts)
         {
             var id = Ident(s["gml_Script_".Length..]);
             if (!used.Add(id)) continue;
             sb.Append($"    /// <summary><c>{s}</c></summary>\n");
-            sb.Append($"    public static readonly ScriptRef {id} = new(\"{s}\");\n");
+            sb.Append($"    public static readonly global::CoreLoader.ScriptRef {id} = new(\"{s}\");\n");
         }
         return sb.Append("}\n").ToString();
     }
@@ -273,23 +292,26 @@ internal static unsafe class InteropGenerator
         var sb = new StringBuilder(Header(ns));
         sb.Append("/// <summary>Every object in the game, with its events.</summary>\n");
         sb.Append("public static class Objects\n{\n");
-        var used = new HashSet<string>(StringComparer.Ordinal);
+        var used = new HashSet<string>(StringComparer.Ordinal) { "Objects" };
         foreach (var o in objects)
         {
             var id = Ident(o.Name);
+            // Each object class holds members called Name and Object, so an
+            // object with one of those names would clash with its own member.
+            if (id is "Name" or "Object") id += "_";
             if (!used.Add(id)) continue;
             sb.Append($"    /// <summary>Object <c>{o.Name}</c>.</summary>\n");
             sb.Append($"    public static class {id}\n    {{\n");
             sb.Append($"        public const string Name = \"{o.Name}\";\n");
             sb.Append($"        /// <summary>The object by name, resolved in the running game (null if it no longer exists).</summary>\n");
-            sb.Append($"        public static GmlObject? Object => GmlObject.Find(Name);\n");
+            sb.Append($"        public static global::CoreLoader.GmlObject? Object => global::CoreLoader.GmlObject.Find(Name);\n");
             var members = new HashSet<string>(StringComparer.Ordinal) { "Name", "Object", id };
             foreach (var (member, symbol) in o.Events.OrderBy(e => e.Member, StringComparer.Ordinal))
             {
                 var m = Ident(member);
                 if (!members.Add(m)) continue;
                 sb.Append($"        /// <summary><c>{symbol}</c></summary>\n");
-                sb.Append($"        public static readonly EventRef {m} = new(\"{symbol}\");\n");
+                sb.Append($"        public static readonly global::CoreLoader.EventRef {m} = new(\"{symbol}\");\n");
             }
             sb.Append("    }\n");
         }
@@ -311,13 +333,13 @@ internal static unsafe class InteropGenerator
             sb.Append($"    /// <summary><c>{name}</c> ({(arity < 0 ? "variadic" : arity + " argument" + (arity == 1 ? "" : "s"))})</summary>\n");
             if (arity < 0)
             {
-                sb.Append($"    public static RValue {id}(params RValue[] args) => Game.CallBuiltin(\"{name}\", args);\n");
+                sb.Append($"    public static global::CoreLoader.RValue {id}(params global::CoreLoader.RValue[] args) => global::CoreLoader.Game.CallBuiltin(\"{name}\", args);\n");
             }
             else
             {
-                var ps = string.Join(", ", Enumerable.Range(0, arity).Select(i => $"RValue a{i}"));
+                var ps = string.Join(", ", Enumerable.Range(0, arity).Select(i => $"global::CoreLoader.RValue a{i}"));
                 var args = string.Join(", ", Enumerable.Range(0, arity).Select(i => $"a{i}"));
-                sb.Append($"    public static RValue {id}({ps}) => Game.CallBuiltin(\"{name}\"{(arity > 0 ? ", " + args : "")});\n");
+                sb.Append($"    public static global::CoreLoader.RValue {id}({ps}) => global::CoreLoader.Game.CallBuiltin(\"{name}\"{(arity > 0 ? ", " + args : "")});\n");
             }
         }
         return sb.Append("}\n").ToString();

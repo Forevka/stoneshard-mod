@@ -83,6 +83,7 @@ internal static unsafe class Entry
             Game.DrainPending(Log);
             InteropGenerator.Tick();
             ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate());
+            ModConfig.FlushSettled();
         }
         catch (Exception ex)
         {
@@ -172,6 +173,7 @@ internal static unsafe class Entry
         try
         {
             ModManager.ForEach(nameof(CoreMod.OnShutdown), mod => mod.OnShutdown());
+            ModConfig.FlushAll();
             Log.Info("shut down");
         }
         catch (Exception ex)

@@ -5,21 +5,28 @@ namespace CoreLoader;
 
 /// <summary>
 /// A mod's persistent settings: a flat JSON object stored as
-/// <c>Mods/&lt;AssemblyName&gt;.json</c>. Values are written back on every change,
-/// so settings survive a crash as well as a normal exit. Hand-editing the file
-/// while the game is closed works too.
+/// <c>Mods/&lt;AssemblyName&gt;.json</c>. Changes are written shortly after they
+/// are made (a dragged slider saves once, not every frame) and on shutdown,
+/// through a temporary file, so a crash never leaves a truncated file behind.
+/// Hand-editing the file while the game is closed works too.
 /// </summary>
 public sealed class ModConfig
 {
+    private const long SaveDelayMs = 1000;
+
+    private static readonly List<ModConfig> All = new();
+
     private readonly string _path;
     private readonly Logger _log;
     private readonly JsonObject _values;
+    private long _dirtySince = -1;
 
     internal ModConfig(string path, Logger log)
     {
         _path = path;
         _log = log;
         _values = Load(path, log);
+        lock (All) All.Add(this);
     }
 
     /// <summary>Where the settings live.</summary>
@@ -45,23 +52,44 @@ public sealed class ModConfig
     public void Set(string key, bool value) => Put(key, JsonValue.Create(value));
     public void Set(string key, string value) => Put(key, JsonValue.Create(value));
 
-    private void Put(string key, JsonNode? node)
+    /// <summary>Writes pending changes now.</summary>
+    public void Save()
     {
-        if (_values[key]?.ToJsonString() == node?.ToJsonString()) return;
-        _values[key] = node;
-        Save();
-    }
-
-    private void Save()
-    {
+        if (_dirtySince < 0) return;
+        _dirtySince = -1;
         try
         {
-            File.WriteAllText(_path, _values.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            var tmp = _path + ".tmp";
+            File.WriteAllText(tmp, _values.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(tmp, _path, overwrite: true);   // atomic replace on NTFS
         }
         catch (Exception ex)
         {
             _log.Warning($"could not save settings to {_path}: {ex.Message}");
         }
+    }
+
+    private void Put(string key, JsonNode? node)
+    {
+        if (_values[key]?.ToJsonString() == node?.ToJsonString()) return;
+        _values[key] = node;
+        if (_dirtySince < 0) _dirtySince = Environment.TickCount64;
+    }
+
+    /// <summary>Called by the loader every frame; saves configs that settled.</summary>
+    internal static void FlushSettled()
+    {
+        long now = Environment.TickCount64;
+        lock (All)
+            foreach (var c in All)
+                if (c._dirtySince >= 0 && now - c._dirtySince >= SaveDelayMs) c.Save();
+    }
+
+    /// <summary>Called on shutdown: everything pending is written.</summary>
+    internal static void FlushAll()
+    {
+        lock (All)
+            foreach (var c in All) c.Save();
     }
 
     private static JsonObject Load(string path, Logger log)

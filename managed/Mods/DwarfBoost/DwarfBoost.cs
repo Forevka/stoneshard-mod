@@ -30,8 +30,8 @@ public sealed class DwarfBoostMod : CoreMod
     private int _tick;
     private string _status = "";
 
-    // instance id -> (the game's own damage, what we wrote)
-    private readonly Dictionary<long, (double Base, double Written)> _damage = new();
+    // instance id -> (the game's own damage, what we wrote, the unit's baseDamage then)
+    private readonly Dictionary<long, (double Base, double Written, double BaseDamage)> _damage = new();
 
     public override void OnInitialize()
     {
@@ -98,13 +98,20 @@ public sealed class DwarfBoostMod : CoreMod
             double current = unit.Get("damage").AsReal;
             if (double.IsNaN(current)) continue;
 
-            double gameValue = _damage.TryGetValue(key, out var d) && Math.Abs(current - d.Written) < 1e-6
+            // baseDamage moves when an upgrade lands, which catches a recompute
+            // that happens to produce exactly the value we last wrote.
+            double baseDamage = unit.Has("baseDamage") ? unit.Get("baseDamage").AsReal : double.NaN;
+            bool ours = _damage.TryGetValue(key, out var d)
+                        && Math.Abs(current - d.Written) < 1e-6
+                        && (double.IsNaN(baseDamage) || baseDamage.Equals(d.BaseDamage));
+
+            double gameValue = ours
                 ? d.Base          // still our own value: the game has not recomputed
                 : current;        // new instance or the game recomputed: that is the base now
 
             double want = gameValue * _damageMultiplier;
             if (Math.Abs(want - current) > 1e-6) unit.Set("damage", want);
-            _damage[key] = (gameValue, want);
+            _damage[key] = (gameValue, want, baseDamage);
         }
         foreach (var gone in _damage.Keys.Where(k => !seen.Contains(k)).ToList()) _damage.Remove(gone);
     }

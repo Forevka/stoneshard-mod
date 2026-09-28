@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <filesystem>
+#include <iterator>
 #include <mutex>
 
 namespace mod::paths {
@@ -28,15 +29,32 @@ void Resolve() {
         // player's own machine rather than at a path compiled in on ours.
         if (g_dir.empty()) {
             HMODULE self = nullptr;
-            GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                               reinterpret_cast<LPCSTR>(&Resolve), &self);
-            char path[MAX_PATH * 4];
-            const DWORD len = GetModuleFileNameA(self, path, sizeof(path));
-            if (len > 0 && len < sizeof(path)) {
-                const auto loader = std::filesystem::path(path).parent_path() / "CoreLoader";
+                               reinterpret_cast<LPCWSTR>(&Resolve), &self);
+            // Wide on purpose: an install under a folder name the ANSI code
+            // page cannot represent (Cyrillic, CJK) must still be found.
+            wchar_t path[MAX_PATH * 4];
+            const DWORD len = GetModuleFileNameW(self, path, static_cast<DWORD>(std::size(path)));
+            if (len > 0 && len < std::size(path)) {
+                const auto loader = std::filesystem::path(path).parent_path() / L"CoreLoader";
                 std::error_code ec;
-                if (std::filesystem::is_directory(loader, ec)) g_dir = (loader / "Logs").string();
+                if (std::filesystem::is_directory(loader, ec)) {
+                    // The rest of the mod opens files through narrow paths
+                    // (fopen). A path with characters outside the ANSI code
+                    // page cannot be narrowed faithfully, so the folder is
+                    // created first and its 8.3 short form - plain ASCII - is
+                    // what gets used.
+                    const auto logs = loader / L"Logs";
+                    std::filesystem::create_directories(logs, ec);
+                    wchar_t shortPath[MAX_PATH * 4];
+                    DWORD n = GetShortPathNameW(logs.c_str(), shortPath, static_cast<DWORD>(std::size(shortPath)));
+                    const wchar_t* use = (n > 0 && n < std::size(shortPath)) ? shortPath : logs.c_str();
+                    char narrow[MAX_PATH * 4];
+                    BOOL lossy = FALSE;
+                    const int m = WideCharToMultiByte(CP_ACP, 0, use, -1, narrow, sizeof(narrow), nullptr, &lossy);
+                    if (m > 0 && !lossy) g_dir = narrow;
+                }
             }
         }
         // A development build run straight from the build tree.

@@ -292,6 +292,9 @@ void DrawModsTab() {
 void Shutdown() {
     if (!g_running.exchange(false, std::memory_order_acq_rel)) return;
     g_exports.shutdown();
+    // Hooks stay installed until the process ends; from here on they only run
+    // the originals, never managed handlers of mods that have shut down.
+    hk::SetManagedDispatch(nullptr);
 }
 
 bool        Running() { return g_running.load(std::memory_order_acquire); }

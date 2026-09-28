@@ -187,7 +187,7 @@ internal static class ModManager
     /// The mod whose callback is running, so whatever it registers (hooks)
     /// is attributed to it and torn down with it if it faults.
     /// </summary>
-    public static LoadedMod? Current { get; private set; }
+    public static LoadedMod? Current { get; internal set; }
 
     public static void Invoke(LoadedMod m, string callback, Action<CoreMod> action)
     {

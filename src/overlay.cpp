@@ -429,6 +429,11 @@ void OverlayRender(IDXGISwapChain* swapChain) {
     // Render/NewFrame must stay balanced even when nothing is drawn.
     ImGui::Render();
 
+    // Everything that needed a live instance this frame has run; the next
+    // frame's events will supply a fresh one (only matters on runtimes without
+    // a current-self global, where the observed instance is the only source).
+    gml::ClearObservedSelf();
+
     g_context->OMSetRenderTargets(1, &g_rtv, nullptr);
     // The DX11 backend snapshots and restores the full pipeline state around
     // this call, so GameMaker's own render state is left untouched.

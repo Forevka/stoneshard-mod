@@ -47,6 +47,13 @@ public readonly unsafe struct HookCall
     /// Replaces argument <paramref name="index"/> in place. In a Before handler
     /// this changes what the original receives.
     /// </summary>
+    /// <remarks>
+    /// The argument slot belongs to the caller. Compiled GML normally passes
+    /// temporaries, but where it passes a variable by address the caller sees
+    /// the new value too - scale the value you were given rather than
+    /// accumulating into it. A string or array previously in the slot is not
+    /// released.
+    /// </remarks>
     public void SetArg(int index, RValue value)
     {
         CheckArg(index);
@@ -72,7 +79,8 @@ public readonly unsafe struct HookCall
     /// Runs the original script once more with this call's self, other and
     /// (possibly modified) arguments, and returns its result. No hook handler -
     /// this one included - sees the extra call, so repeating an effect cannot
-    /// recurse. Scripts only.
+    /// recurse. Scripts only. The returned value is a plain copy: if it holds a
+    /// string, array or struct, nothing releases that reference.
     /// </summary>
     public RValue CallOriginal()
     {
@@ -195,6 +203,11 @@ public static unsafe class Hooks
         {
             if (s.After != after) continue;
             if (s.Owner is { State: ModState.Faulted }) continue;
+            // The handler runs AS its mod: anything it registers (a hook added
+            // lazily from inside a hook) belongs to it - not to whichever mod's
+            // callback happened to make the game run this function.
+            var previous = ModManager.Current;
+            ModManager.Current = s.Owner;
             try
             {
                 s.Handler(call);
@@ -205,6 +218,10 @@ public static unsafe class Hooks
                     ModManager.Fault(s.Owner, $"hook on {call.Symbol} threw {ex.GetType().Name}: {ex.Message}", ex);
                 else
                     Log.Error($"hook on {call.Symbol} threw", ex);
+            }
+            finally
+            {
+                ModManager.Current = previous;
             }
         }
     }

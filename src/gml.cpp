@@ -125,16 +125,20 @@ void TallyStaticStringInits(std::unordered_map<std::uintptr_t, int>& votes) {
     const auto tx = sym::TextRange();
     for (std::uintptr_t at = tx.lo; at + 19 < tx.hi; ++at) {
         const auto* b = reinterpret_cast<const unsigned char*>(at);
-        if (!(b[0] == 0x48 && b[1] == 0x8D && b[2] == 0x15)) continue;
-        if (!(b[7] == 0x48 && b[8] == 0x8D && b[9] == 0x0D)) continue;
+        // Either order of the two leas: 48 8D 15 = rdx (the string), 48 8D 0D = rcx (the value).
+        if (!(b[0] == 0x48 && b[1] == 0x8D && (b[2] == 0x15 || b[2] == 0x0D))) continue;
+        if (!(b[7] == 0x48 && b[8] == 0x8D && b[9] == (b[2] == 0x15 ? 0x0D : 0x15))) continue;
         if (b[14] != 0xE8) continue;
 
-        std::int32_t dStr, dVal, rel;
-        std::memcpy(&dStr, b + 3, 4);
-        std::memcpy(&dVal, b + 10, 4);
+        std::int32_t d1, d2, rel;
+        std::memcpy(&d1, b + 3, 4);
+        std::memcpy(&d2, b + 10, 4);
         std::memcpy(&rel, b + 15, 4);
-        const std::uintptr_t str = at + 7 + static_cast<std::intptr_t>(dStr);
-        const std::uintptr_t val = at + 14 + static_cast<std::intptr_t>(dVal);
+        const std::uintptr_t first  = at + 7 + static_cast<std::intptr_t>(d1);
+        const std::uintptr_t second = at + 14 + static_cast<std::intptr_t>(d2);
+        const bool strFirst = b[2] == 0x15;
+        const std::uintptr_t str = strFirst ? first : second;
+        const std::uintptr_t val = strFirst ? second : first;
         const std::uintptr_t fn  = at + 19 + static_cast<std::intptr_t>(rel);
         if (!PrintableStringAt(str, 1) || !sym::DataRange().contains(val) || !tx.contains(fn)) continue;
         ++votes[fn];
@@ -325,7 +329,7 @@ namespace {
 // look, then always continue the search.
 constexpr DWORD kCppException = 0xE06D7363;
 
-thread_local bool  g_inCall = false;
+thread_local int   g_inCall = 0;   // depth: calls nest (a hook can call back into the game)
 thread_local char  g_lastError[512] = {};
 
 bool ReadableString(const char* p, std::size_t minLen) {
@@ -344,7 +348,7 @@ bool ReadableString(const char* p, std::size_t minLen) {
 }
 
 LONG CALLBACK ExceptionProbe(EXCEPTION_POINTERS* info) {
-    if (!g_inCall) return EXCEPTION_CONTINUE_SEARCH;
+    if (g_inCall <= 0) return EXCEPTION_CONTINUE_SEARCH;
     const EXCEPTION_RECORD* er = info->ExceptionRecord;
     if (er->ExceptionCode != kCppException) return EXCEPTION_CONTINUE_SEARCH;
     if (er->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
@@ -402,11 +406,11 @@ bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, voi
 
     auto fn = reinterpret_cast<ScriptFn>(func);
 
-    g_inCall = true;
+    ++g_inCall;
     __try {
         fn(self, other, result, argc, args);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        g_inCall = false;
+        --g_inCall;
         const DWORD code = GetExceptionCode();
         if (g_lastError[0])
             Logf("[!] gml: %s rejected the call: %s",
@@ -415,7 +419,7 @@ bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, voi
             Logf("[!] gml: exception 0x%08lX calling %p (no message recovered)", code, func);
         return false;
     }
-    g_inCall = false;
+    --g_inCall;
     return true;
 }
 
@@ -600,17 +604,17 @@ bool CallEvent(void* func, void* self, void* other) {
     g_lastError[0] = '\0';
 
     auto fn = reinterpret_cast<EventFn>(func);
-    g_inCall = true;
+    ++g_inCall;
     __try {
         fn(self, other ? other : self);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        g_inCall = false;
+        --g_inCall;
         const DWORD code = GetExceptionCode();
         if (g_lastError[0]) Logf("[!] gml: event rejected: %s", g_lastError);
         else                Logf("[!] gml: exception 0x%08lX in event %p", code, func);
         return false;
     }
-    g_inCall = false;
+    --g_inCall;
     return true;
 }
 
@@ -785,6 +789,8 @@ bool HasSelfGlobal() { return g_pCurrentSelf != nullptr; }
 void NoteSelf(void* self) {
     if (self) g_observedSelf.store(self, std::memory_order_relaxed);
 }
+
+void ClearObservedSelf() { g_observedSelf.store(nullptr, std::memory_order_relaxed); }
 
 // The runtime's own global when it has one; otherwise the instance a hook saw
 // most recently.

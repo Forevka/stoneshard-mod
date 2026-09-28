@@ -92,8 +92,9 @@ bool EnsureArena() {
 
 gml::RValue* ScriptDispatch(void* self, void* other, gml::RValue* result, int argc,
                             gml::RValue** args, Hook* h) {
-    gml::NoteSelf(self);
-
+    // No NoteSelf here: a script's self can be a struct (a bound method, a
+    // `with` over a struct), which is not a CInstance. Only object events,
+    // whose self always is one, feed CurrentSelf().
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
     Call c{self, other, result, args, argc, kBefore, 0, h->id};
@@ -263,14 +264,19 @@ bool CallOriginal(const Call* call, gml::RValue* result) {
 }
 
 void InstallSelfObservers(int maxEvents) {
-    int installed = 0;
+    // Step and Draw events of a spread of objects: whichever of them are alive
+    // in the current room keep supplying a fresh instance every frame. Draw is
+    // included because some games' long-lived controllers only draw.
+    int steps = 0, draws = 0;
     for (const sym::Entry& e : sym::All()) {
-        if (installed >= maxEvents) break;
+        if (steps >= maxEvents && draws >= maxEvents) break;
         if (std::strncmp(e.name, "gml_Object_", 11) != 0) continue;
-        if (!std::strstr(e.name, "_Step_")) continue;
-        if (Install(e.func, Kind::Event) >= 0) ++installed;
+        const bool isStep = std::strstr(e.name, "_Step_") != nullptr;
+        const bool isDraw = !isStep && std::strstr(e.name, "_Draw_") != nullptr;
+        if (isStep && steps < maxEvents && Install(e.func, Kind::Event) >= 0) ++steps;
+        if (isDraw && draws < maxEvents && Install(e.func, Kind::Event) >= 0) ++draws;
     }
-    Logf("hooks: watching %d Step events for a live instance", installed);
+    Logf("hooks: watching %d Step and %d Draw events for a live instance", steps, draws);
 }
 
 } // namespace mod::hk
