@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>ContentDemo</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Content ships in a folder named after the mod: Mods/ContentDemo/assets. -->
+  <ItemGroup>
+    <None Include="assets\**" Link="ContentDemo\assets\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

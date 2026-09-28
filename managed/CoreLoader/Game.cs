@@ -166,6 +166,22 @@ public static unsafe class Game
         _ => null,
     };
 
+    /// <summary>
+    /// Whether the game has loaded its assets (sprite or room 0 exists). Some
+    /// games load them seconds after their first frame.
+    /// </summary>
+    internal static bool AssetsLoaded()
+    {
+        try
+        {
+            return CallBuiltin("sprite_exists", 0).AsBool || CallBuiltin("room_exists", 0).AsBool;
+        }
+        catch (GmlException)
+        {
+            return true;   // cannot tell: do not hold anything back on it
+        }
+    }
+
     // ---------------------------------------------------------- game thread
 
     private static readonly ConcurrentQueue<(Action Action, Runtime.LoadedMod? Owner)> Pending = new();

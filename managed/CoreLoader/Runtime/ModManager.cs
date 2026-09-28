@@ -205,6 +205,10 @@ internal static class ModManager
             // Only a mod that actually started gets a shutdown.
             if (m.State == ModState.Running) Invoke(m, nameof(CoreMod.OnShutdown), mod => mod.OnShutdown());
             Hooks.RemoveOwner(m);
+            GameDraw.RemoveOwner(m);
+            // After OnShutdown, which is where a mod points instances away from
+            // its sprites before they go.
+            Content.RemoveOwner(m);
             try { m.Instance.Config.Save(); } catch (Exception ex) { Log.Warning($"saving {m.Instance.Info.Name}'s settings: {ex.Message}"); }
             ModConfig.Unregister(m.Instance.Config);
         }
@@ -337,7 +341,8 @@ internal static class ModManager
     {
         foreach (var m in ModList.ToList())
         {
-            if (m.State == ModState.Faulted) continue;
+            // Not started yet (waiting for the game's assets) or disabled.
+            if (m.State != ModState.Running) continue;
             Invoke(m, callback, action);
         }
     }
@@ -372,6 +377,9 @@ internal static class ModManager
         m.State = ModState.Faulted;
         m.Fault = reason;
         Hooks.RemoveOwner(m);
+        // Its drawing stops; its sprites and sounds stay until it unloads, as
+        // instances may still be showing them.
+        GameDraw.RemoveOwner(m);
         if (ex != null) m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded", ex);
         else m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded");
     }

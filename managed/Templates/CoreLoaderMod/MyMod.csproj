@@ -34,13 +34,23 @@
   </ItemGroup>
 <!--#endif -->
 
+  <!-- Content (sprites, sounds) in content/ ships as Mods/MyMod/..., where
+       Content.AddSprite("x.png") and friends look for it. -->
+  <ItemGroup>
+    <None Include="content\**" Link="MyMod\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(DeployOnBuild)' == 'true' And Exists('$(GameDir)')">
     <ItemGroup>
       <ModFiles Include="$(TargetDir)$(TargetName).dll;$(TargetDir)$(TargetName).pdb" />
       <!-- Dependencies built next to the mod (the interop dll, NuGet packages). -->
       <ModFiles Include="$(TargetDir)*.dll" Exclude="$(TargetDir)CoreLoader.dll" />
     </ItemGroup>
+    <ItemGroup>
+      <ModContent Include="$(TargetDir)MyMod\**" />
+    </ItemGroup>
     <Copy SourceFiles="@(ModFiles)" DestinationFolder="$(GameDir)\Mods" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(ModContent)" DestinationFolder="$(GameDir)\Mods\MyMod\%(RecursiveDir)" SkipUnchangedFiles="true" />
     <Message Importance="high" Text="MyMod -> $(GameDir)\Mods (hot reload picks it up in a running game)" />
   </Target>
 

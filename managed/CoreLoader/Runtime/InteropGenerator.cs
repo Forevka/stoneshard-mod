@@ -70,7 +70,7 @@ internal static unsafe class InteropGenerator
         if (_waitFrames < 1800)
         {
             if (Game.BuiltinCount == 0 || _waitFrames < 120) return;
-            if (_waitFrames % 30 != 0 || !AssetsLoaded()) return;
+            if (_waitFrames % 30 != 0 || !Game.AssetsLoaded()) return;
         }
         _done = true;
 
@@ -85,7 +85,7 @@ internal static unsafe class InteropGenerator
             }
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            _degraded = _waitFrames >= 1800 && !AssetsLoaded();
+            _degraded = _waitFrames >= 1800 && !Game.AssetsLoaded();
             Generate();
             // A scan that gave up waiting or was cut short is not stamped, so
             // the next launch tries again instead of keeping a partial map.
@@ -99,18 +99,6 @@ internal static unsafe class InteropGenerator
         {
             Status = $"failed: {ex.Message}";
             Log.Error("interop generation failed", ex);
-        }
-    }
-
-    private static bool AssetsLoaded()
-    {
-        try
-        {
-            return Game.CallBuiltin("sprite_exists", 0).AsBool || Game.CallBuiltin("room_exists", 0).AsBool;
-        }
-        catch (GmlException)
-        {
-            return true;   // cannot tell: do not hold generation back on it
         }
     }
 
@@ -154,9 +142,10 @@ internal static unsafe class InteropGenerator
             builtins.Add((name, Game.BuiltinArity(name) ?? -1));
         }
 
-        var sprites = EnumerateAssets("sprite_exists", "sprite_get_name");
+        // Sprites and sounds mods added at runtime are not part of the game.
+        var sprites = EnumerateAssets("sprite_exists", "sprite_get_name", Content.IsModSprite);
         var rooms = EnumerateAssets("room_exists", "room_get_name");
-        var sounds = EnumerateAssets("audio_exists", "audio_get_name");
+        var sounds = EnumerateAssets("audio_exists", "audio_get_name", Content.IsModSound);
 
         File.WriteAllText(Path.Combine(OutputDirectory, ns + ".Interop.csproj"), Csproj(ns));
         // Every function's start, in address order: each script is scanned only
@@ -197,7 +186,7 @@ internal static unsafe class InteropGenerator
     }
 
     // Asset indices are dense from 0; stop after a run of misses.
-    private static List<string> EnumerateAssets(string exists, string getName)
+    private static List<string> EnumerateAssets(string exists, string getName, Func<int, bool>? skip = null)
     {
         var names = new List<string>();
         if (Game.BuiltinArity(exists) is null || Game.BuiltinArity(getName) is null)
@@ -212,6 +201,7 @@ internal static unsafe class InteropGenerator
             {
                 if (!Game.CallBuiltin(exists, i).AsBool) { misses++; continue; }
                 misses = 0;
+                if (skip?.Invoke(i) == true) continue;
                 names.Add(Game.CallBuiltin(getName, i).ToString());
             }
             if (names.Count == 0)

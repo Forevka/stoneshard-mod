@@ -66,6 +66,11 @@ foreach ($m in $Mods) {
     Copy-Item -LiteralPath $found -Destination $modsDir -Force
     $pdb = [IO.Path]::ChangeExtension($found, ".pdb")
     if (Test-Path -LiteralPath $pdb) { Copy-Item -LiteralPath $pdb -Destination $modsDir -Force }
+    # A folder named after the mod holds its content (sprites, sounds).
+    $content = Join-Path (Split-Path -Parent $found) $m
+    if (Test-Path -LiteralPath $content -PathType Container) {
+        Copy-Item -LiteralPath $content -Destination $modsDir -Recurse -Force
+    }
 }
 
 Write-Host "CoreLoader installed in $GameDir ($($Mods.Count) mod(s))"

@@ -86,6 +86,20 @@ public sealed class MyMod : CoreMod
 Build it against `CoreLoader.dll`: the `Mods/` projects here inherit that setup from
 `Mods/Directory.Build.props`. Then drop the dll into `<game>\Mods\`.
 
+Content files go in a folder named after the mod, next to its dll (`Mods\MyMod\...`). Relative paths
+resolve there:
+
+```csharp
+public override void OnInitialize()
+{
+    var coin  = Content.AddSprite("assets/coin.png", frames: 8, xOrigin: 24, yOrigin: 24);
+    var chime = Content.AddSound("assets/chime.ogg");
+    Content.ReplaceSprite("spr_player", "assets/hero.png");   // a reskin, undone on unload
+    GameDraw.OnGui(() => coin.Draw(GameDraw.GuiWidth - 40, 40, frame: Environment.TickCount64 / 100));
+    chime.Play();
+}
+```
+
 ## API at a glance
 
 | Area | What you get |
@@ -98,6 +112,8 @@ Build it against `CoreLoader.dll`: the `Mods/` projects here inherit that setup 
 | `UI` | ImGui widgets for your tab, including scrolling regions and a history-aware input line. Scopes are tracked, so a mistake can't corrupt the overlay |
 | `RValue` | The runtime's 16-byte value, laid out identically. Converts implicitly from double, int, bool and string |
 | `Values` | Lifetime of strings, arrays and structs: `Keep`, `Free`, `Copy` |
+| `Content` | New sprites from PNG (`AddSprite`), reskins of the game's own sprites (`ReplaceSprite`) and sounds from OGG (`AddSound`), loaded at runtime. `Sprite.Draw`, `Sound.Play`/`Stop` |
+| `GameDraw` | `OnGui(handler)`: draw into the game's own GUI layer each frame with `draw_*` builtins and your sprites |
 
 The rules the loader enforces:
 - GML is only touched on the game thread. Every callback runs there; from anywhere else, use
@@ -106,6 +122,12 @@ The rules the loader enforces:
   are removed. It never takes the game down.
 - Hooks are shared: however many mods hook one function, it is detoured once, and the loader's own
   tools share the same detour. A function nobody hooks any more is detached again.
+- Mods start once the game has loaded its assets. Some games (Stoneshard) load them seconds after
+  their first frame.
+- Content belongs to the mod that added it. Unloading or hot reloading the mod deletes its sprites,
+  closes its sounds and gives replaced sprites their original image back. If several mods replace
+  one sprite, unloading them in any order restores what was there before each one. Before a sprite
+  goes, point instances that still show it back at a game sprite (in `OnShutdown`).
 - **Values are released automatically.** Every string, array or struct the game hands you (call
   results, variable reads, `RValue.FromString`) goes into a per-frame pool and is released at the
   end of the frame. Using it within the frame is always safe and never leaks, including formatting a
@@ -121,6 +143,7 @@ The rules the loader enforces:
 | GlobalsEditor | any | Browse, edit and freeze global variables |
 | InstanceInspector | any | Objects, live instances and their variables: edit and freeze them, and search every instance for a variable name |
 | SpeedControl | any | Run the game faster or slower (`game_set_speed`) |
+| ContentDemo | any | Runtime content. It loads a spinning coin sprite from a PNG strip and draws it in the game's GUI layer, plays a chime from an OGG file, and can reskin any game sprite by name. Its files ship in `Mods/ContentDemo/assets` |
 | DwarfBoost | Dwarf Eats Mountain | Gold income and unit damage multipliers, resource editor |
 | StoneshardBoost | Stoneshard | XP multiplier (every source goes through `scr_get_XP`), loot multiplier (re-runs `scr_loot`) |
 | HelloMod, InteropExample | any / DEM | Minimal examples |

@@ -11,7 +11,8 @@ namespace CoreLoader.Runtime;
 internal static unsafe class Entry
 {
     private static readonly Logger Log = new("CoreLoader");
-    private static bool _initialisedMods;
+    private static bool _initialisedMods, _announcedWait;
+    private static System.Diagnostics.Stopwatch? _startWait;
 
     [UnmanagedCallersOnly]
     public static int Init(CoreApi* api, ManagedExports* exports)
@@ -57,7 +58,18 @@ internal static unsafe class Entry
     {
         Loader.MarkGameThread();
         if (_initialisedMods) return;
+        // Mods start once the game has its assets: some games (Stoneshard)
+        // load sprites, sounds and rooms seconds after the first frame, and a
+        // sprite added before that would take a slot the game is about to fill.
+        // A game that never answers still gets its mods after ~30 s.
+        _startWait ??= System.Diagnostics.Stopwatch.StartNew();
+        if (_startWait.Elapsed < TimeSpan.FromSeconds(30) && !(Game.BuiltinCount > 0 && Game.AssetsLoaded()))
+        {
+            if (!_announcedWait) { _announcedWait = true; Log.Info("waiting for the game's assets before starting mods"); }
+            return;
+        }
         _initialisedMods = true;
+        if (_announcedWait) Log.Info($"starting mods after {_startWait.Elapsed.TotalSeconds:0.0} s");
         // The native side proves the value helpers on the first frame (before
         // this runs); pick up the verdict before any mod gets to use values.
         Values.Probe();
@@ -88,11 +100,12 @@ internal static unsafe class Entry
             Stage("initialise", EnsureModsInitialised);
             // Rebuilt mod dlls are swapped in here, between frames, where no
             // mod code is on the stack.
-            Stage("hot reload", ModManager.PollChanges);
+            if (_initialisedMods) Stage("hot reload", ModManager.PollChanges);
             Stage("queued actions", () => Game.DrainPending(Log));
             Stage("interop", InteropGenerator.Tick);
             Stage("variable harvest", VarHarvest.Tick);
             Stage("updates", () => ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate()));
+            Stage("game drawing", GameDraw.Tick);
             Stage("settings", ModConfig.FlushSettled);
         }
         finally
@@ -154,6 +167,11 @@ internal static unsafe class Entry
             if (m.State == ModState.Faulted)
             {
                 UI.TextColored(1f, 0.45f, 0.45f, $"Disabled - {m.Fault}");
+                return;
+            }
+            if (m.State != ModState.Running)
+            {
+                UI.TextDisabled("Starts once the game has loaded its assets.");
                 return;
             }
 
@@ -238,7 +256,11 @@ internal static unsafe class Entry
             switch (m.State)
             {
                 case ModState.Faulted: UI.TextColored(1f, 0.45f, 0.45f, $"{line} - disabled: {m.Fault}"); break;
-                case ModState.Running: UI.Text($"{line} - running, {Hooks.SubscriptionCount(m)} hook(s)"); break;
+                case ModState.Running:
+                    int assets = Content.CountOwned(m);
+                    UI.Text($"{line} - running, {Hooks.SubscriptionCount(m)} hook(s)" +
+                            (assets > 0 ? $", {assets} asset(s)" : ""));
+                    break;
                 default: UI.TextDisabled($"{line} - waiting for first frame"); break;
             }
             UI.PopId();
