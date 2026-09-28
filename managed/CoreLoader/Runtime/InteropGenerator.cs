@@ -40,8 +40,16 @@ internal static unsafe class InteropGenerator
     public static void Tick()
     {
         if (_done) return;
-        // Builtins resolve a moment after startup; asset names need them.
-        if (Game.BuiltinCount == 0 && ++_waitFrames < 1200) return;
+        ++_waitFrames;
+        // Builtins resolve a moment after startup, and some games (Stoneshard)
+        // only finish loading their sprites, rooms and sounds seconds after
+        // that - scanning too early records an empty asset list. Wait until an
+        // asset answers, or give up waiting after ~30 s and generate anyway.
+        if (_waitFrames < 1800)
+        {
+            if (Game.BuiltinCount == 0 || _waitFrames < 120) return;
+            if (_waitFrames % 30 != 0 || !AssetsLoaded()) return;
+        }
         _done = true;
 
         try
@@ -64,6 +72,18 @@ internal static unsafe class InteropGenerator
         {
             Status = $"failed: {ex.Message}";
             Log.Error("interop generation failed", ex);
+        }
+    }
+
+    private static bool AssetsLoaded()
+    {
+        try
+        {
+            return Game.CallBuiltin("sprite_exists", 0).AsBool || Game.CallBuiltin("room_exists", 0).AsBool;
+        }
+        catch (GmlException)
+        {
+            return true;   // cannot tell: do not hold generation back on it
         }
     }
 

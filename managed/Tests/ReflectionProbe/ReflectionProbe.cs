@@ -25,6 +25,20 @@ public sealed class Probe : CoreMod
             ? File.ReadAllLines(file).Select(l => l.Trim()).Where(l => l.Length > 0).ToArray()
             : new[] { "gold", "hp" };
 
+        // "!builtin arg" lines log a builtin's raw result for one numeric argument.
+        foreach (var line in keywords.Where(k => k.StartsWith('!')))
+        {
+            var parts = line[1..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 2 || !double.TryParse(parts[1], out var arg)) continue;
+            try
+            {
+                var r = Game.CallBuiltin(parts[0], arg);
+                Log.Info($"run {_runs}: {parts[0]}({arg}) -> kind {r.Kind}, real {r.Real}, text \"{r}\"");
+            }
+            catch (Exception ex) { Log.Info($"run {_runs}: {parts[0]}({arg}) threw {ex.Message}"); }
+        }
+        keywords = keywords.Where(k => !k.StartsWith('!')).ToArray();
+
         var objects = GmlObject.All();
 
         // "@name" lines dump every numeric/string variable of that object's first instance.
