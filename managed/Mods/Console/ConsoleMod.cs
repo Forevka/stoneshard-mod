@@ -66,6 +66,7 @@ public sealed class ConsoleMod : CoreMod
     private void Execute(string line)
     {
         if (_history.Count == 0 || _history[^1] != line) _history.Add(line);
+        if (_history.Count > 200) _history.RemoveRange(0, _history.Count - 200);
         Print("> " + line, 0.55f, 0.55f, 0.6f);
         try
         {
@@ -193,19 +194,22 @@ public sealed class ConsoleMod : CoreMod
         if (symbol.Length == 0) throw new ConsoleError("hook <script or event>");
         if (_hooks.ContainsKey(symbol)) { Print($"already hooked {symbol}"); return; }
         long calls = 0;
-        string pending = "";
+        // A stack, not one slot: the hooked script may call itself (or be
+        // reached again from inside), and each After must print its own call.
+        var pending = new Stack<(long N, string Args)>();
+        bool isEvent = symbol.StartsWith("gml_Object_", StringComparison.Ordinal);
         var before = Hooks.Before(symbol, c =>
         {
             calls++;
             var args = Enumerable.Range(0, Math.Min(c.ArgCount, 8)).Select(i => Format(c.GetArg(i)));
-            pending = $"({string.Join(", ", args)})";
+            pending.Push((calls, $"({string.Join(", ", args)})"));
         });
         var after = Hooks.After(symbol, c =>
         {
+            var (n, args) = pending.Count > 0 ? pending.Pop() : (calls, "");
             // Throttled: a Step event can fire thousands of times a second.
-            if (calls <= 20 || calls % 500 == 0)
-                Print($"[{symbol} #{calls}] {pending}{(c.ArgCount >= 0 && !symbol.StartsWith("gml_Object_") ? " -> " + Format(c.Result) : "")}",
-                      0.85f, 0.8f, 0.5f);
+            if (n <= 20 || n % 500 == 0)
+                Print($"[{symbol} #{n}] {args}{(isEvent ? "" : " -> " + Format(c.Result))}", 0.85f, 0.8f, 0.5f);
         });
         _hooks[symbol] = (before, after);
         Print($"hooked {symbol}");
@@ -235,8 +239,13 @@ public sealed class ConsoleMod : CoreMod
         _scrollToEnd = true;
     }
 
-    private static string Format(RValue v)
+    private static string Format(RValue v) => Format(v, 0);
+
+    // Depth-limited: GML arrays are references and can contain themselves, and
+    // unbounded recursion would end in a StackOverflow nothing can catch.
+    private static string Format(RValue v, int depth)
     {
+        if (depth > 3 && (v.Kind == RValueKind.Array || v.Kind == RValueKind.Object)) return "…";
         switch (v.Kind)
         {
             case RValueKind.Undefined:
@@ -247,7 +256,7 @@ public sealed class ConsoleMod : CoreMod
                 return "\"" + (s.Length > 200 ? s[..200] + "…" : s) + "\"";
             case RValueKind.Array:
                 int n = Gml.ArrayLength(v);
-                var items = Enumerable.Range(0, Math.Min(n, 8)).Select(i => Format(Gml.ArrayGet(v, i)));
+                var items = Enumerable.Range(0, Math.Min(n, 8)).Select(i => Format(Gml.ArrayGet(v, i), depth + 1));
                 return $"[{string.Join(", ", items)}{(n > 8 ? $", … ({n})" : "")}]";
             default:
                 if (v.IsNumber) return v.AsReal.ToString("G15", System.Globalization.CultureInfo.InvariantCulture);

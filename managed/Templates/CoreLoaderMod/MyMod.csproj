@@ -14,8 +14,10 @@
     <CoreLoaderDir>$(GameDir)\CoreLoader</CoreLoaderDir>
     <DeployOnBuild Condition="'$(DeployOnBuild)' == ''">true</DeployOnBuild>
 
-    <!-- CoreLoader is supplied by the loader at runtime; never ship a copy. -->
-    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <!-- A mod is a plugin: NuGet dependencies are copied next to it so they
+         deploy with it. CoreLoader itself is supplied by the loader at
+         runtime (Private=false below), so it is never shipped. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
   </PropertyGroup>
 
   <ItemGroup>

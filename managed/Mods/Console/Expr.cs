@@ -119,11 +119,13 @@ internal sealed class Evaluator
         var v = Statement();
         if (Peek.Kind != Tok.End) throw new ConsoleError($"unexpected '{Peek.Text}'");
 
-        // `ans` outlives this frame, so it holds its own reference (a copy),
-        // and the previous one is released.
+        // `ans` outlives this frame, so it holds its own reference (a copy).
+        // Copy first, release the previous one after: v may BE the previous one
+        // (typing `ans`), and releasing first would free it before the copy.
+        var fresh = Values.CanCopy || v.IsNumber || v.IsUndefined ? Values.Copy(v) : RValue.Undefined;
         var old = Ans;
+        Ans = fresh;
         Values.Free(ref old);
-        Ans = Values.CanCopy || v.IsNumber || v.IsUndefined ? Values.Copy(v) : RValue.Undefined;
         return v;
     }
 

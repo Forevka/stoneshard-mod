@@ -18,16 +18,20 @@ internal static unsafe class CodeScan
 {
     private const int Window = 6000;
 
-    public static int ArgumentCount(nint function)
+    /// <param name="function">The script's entry.</param>
+    /// <param name="next">The next function's entry (0 if unknown): the scan stops
+    /// there, so a small script never inherits the arguments of its neighbour.</param>
+    public static int ArgumentCount(nint function, nint next = 0)
     {
-        var buf = new byte[Window];
-        int len = Window;
+        int limit = next > function ? (int)Math.Min(next - function, Window) : Window;
+        var buf = new byte[limit];
+        int len = limit;
         fixed (byte* p = buf)
         {
             // Near the end of .text the full window may not be readable; shrink.
-            while (len >= 256 && Loader.Api->MemoryRead(function, p, len) == 0) len /= 2;
+            while (len >= 32 && Loader.Api->MemoryRead(function, p, len) == 0) len /= 2;
         }
-        if (len < 256) return 0;
+        if (len < 32) return 0;
         return Scan(new ReadOnlySpan<byte>(buf, 0, len));
     }
 

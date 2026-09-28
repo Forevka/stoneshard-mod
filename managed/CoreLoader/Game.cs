@@ -126,29 +126,70 @@ public static unsafe class Game
     public static RValue CallBuiltinAs(Instance self, string name, params RValue[] args)
     {
         Loader.EnsureGameThread();
-        RValue result = RValue.Undefined;
-        fixed (byte* n = Utf8.Get(name))
-        fixed (RValue* a = args)
+
+        // Variable-name arguments: creating a variable makes the runtime keep a
+        // pointer to the NAME's characters, and a pooled string would be freed
+        // under it at the end of the frame. Such names get permanent characters.
+        RValue wrapper = RValue.Undefined;
+        if (NameArgument(name) is { } ni && ni < args.Length && args[ni].Kind == RValueKind.String)
         {
-            if (Loader.Api->CallBuiltin(n, &result, a, args.Length, self.Pointer, 0) == 0)
-                throw new GmlException($"builtin {name} failed (see the loader log)");
+            args = (RValue[])args.Clone();
+            wrapper = RValue.FromStringPermanent(args[ni].ToString());
+            args[ni] = wrapper;
+        }
+
+        RValue result = RValue.Undefined;
+        try
+        {
+            fixed (byte* n = Utf8.Get(name))
+            fixed (RValue* a = args)
+            {
+                if (Loader.Api->CallBuiltin(n, &result, a, args.Length, self.Pointer, 0) == 0)
+                    throw new GmlException($"builtin {name} failed (see the loader log)");
+            }
+        }
+        finally
+        {
+            // The small wrapper around the permanent characters is ours to drop;
+            // the characters themselves are never freed.
+            if (wrapper.Kind == RValueKind.String && Values.CanFree) Loader.Api->ValueFree(&wrapper);
         }
         return Values.Track(result);
     }
 
+    private static int? NameArgument(string builtin) => builtin switch
+    {
+        "variable_global_get" or "variable_global_set" or "variable_global_exists" => 0,
+        "variable_instance_get" or "variable_instance_set" or "variable_instance_exists" => 1,
+        "variable_struct_get" or "variable_struct_set" or "variable_struct_exists" or "variable_struct_remove" => 1,
+        "struct_get" or "struct_set" or "struct_exists" or "struct_remove" => 1,
+        _ => null,
+    };
+
     // ---------------------------------------------------------- game thread
 
-    private static readonly ConcurrentQueue<Action> Pending = new();
+    private static readonly ConcurrentQueue<(Action Action, Runtime.LoadedMod? Owner)> Pending = new();
 
-    /// <summary>Runs <paramref name="action"/> on the game thread at the start of the next frame.</summary>
-    public static void RunOnGameThread(Action action) => Pending.Enqueue(action);
+    /// <summary>
+    /// Runs <paramref name="action"/> on the game thread at the start of the next
+    /// frame, as the mod that queued it (so anything it registers belongs to that
+    /// mod, and an exception faults that mod). Dropped if the mod is unloaded first.
+    /// </summary>
+    public static void RunOnGameThread(Action action) => Pending.Enqueue((action, Runtime.ModManager.Current));
 
     internal static void DrainPending(Logger log)
     {
-        while (Pending.TryDequeue(out var a))
+        while (Pending.TryDequeue(out var item))
         {
-            try { a(); }
-            catch (Exception ex) { log.Error("queued game-thread action threw", ex); }
+            var (a, owner) = item;
+            if (owner == null)
+            {
+                try { a(); }
+                catch (Exception ex) { log.Error("queued game-thread action threw", ex); }
+                continue;
+            }
+            if (!Runtime.ModManager.Mods.Contains(owner) || owner.State == Runtime.ModState.Faulted) continue;
+            Runtime.ModManager.Invoke(owner, "queued action", _ => a());
         }
     }
 

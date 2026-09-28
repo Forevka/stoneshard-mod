@@ -184,14 +184,16 @@ int RepeatCount(double repeat) {
     return n;
 }
 
-// Extra runs decided in Before, carried out in After. Hooked calls nest
-// strictly (inner calls finish before the outer After runs), so a per-thread
-// stack pairs each After with its own Before.
-thread_local std::vector<int> g_extraRuns;
+// Extra runs decided in Before, carried out in After. Hooked calls nest, so a
+// per-thread stack pairs each After with its Before - keyed by the call record,
+// because a GML exception can unwind a call whose After then never runs: any
+// entries above the matching one belong to such abandoned calls and are dropped.
+struct PendingRuns { const hk::Call* call; int extra; };
+thread_local std::vector<PendingRuns> g_extraRuns;
 
 void RuleBefore(hk::Call* c, void* ctx) {
     Slot& s = *static_cast<Slot*>(ctx);
-    if (!s.live.load(std::memory_order_acquire)) { g_extraRuns.push_back(0); return; }
+    if (!s.live.load(std::memory_order_acquire)) { g_extraRuns.push_back({c, 0}); return; }
 
     Apply(s, c->argc, c->args);
 
@@ -199,7 +201,7 @@ void RuleBefore(hk::Call* c, void* ctx) {
     // times the game's own call actually happens.
     const double repeat = s.enabled.load(std::memory_order_relaxed)
                               ? s.repeat.load(std::memory_order_relaxed) : 1.0;
-    if (repeat == 1.0) { g_extraRuns.push_back(0); return; }
+    if (repeat == 1.0) { g_extraRuns.push_back({c, 0}); return; }
 
     const int times = RepeatCount(repeat);
     if (times == 0) {
@@ -207,22 +209,32 @@ void RuleBefore(hk::Call* c, void* ctx) {
         c->skip = 1;
         if (c->result) { c->result->ptr = nullptr; c->result->flags = 0; c->result->kind = gml::kUndefined; }
         s.suppressed.fetch_add(1, std::memory_order_relaxed);
-        g_extraRuns.push_back(0);
+        g_extraRuns.push_back({c, 0});
         return;
     }
-    g_extraRuns.push_back(times - 1);
+    g_extraRuns.push_back({c, times - 1});
 }
 
 void RuleAfter(hk::Call* c, void* ctx) {
     Slot& s = *static_cast<Slot*>(ctx);
-    if (g_extraRuns.empty()) return;
-    const int extra = g_extraRuns.back();
-    g_extraRuns.pop_back();
-    if (extra <= 0 || c->skip) return;
+    // Pop down to this call's own entry; anything above it was pushed by a
+    // nested call that unwound before its After could run.
+    int extra = 0;
+    bool found = false;
+    while (!g_extraRuns.empty()) {
+        const PendingRuns top = g_extraRuns.back();
+        g_extraRuns.pop_back();
+        if (top.call == c) { extra = top.extra; found = true; break; }
+    }
+    if (!found || extra <= 0 || c->skip) return;
 
     // The unhooked original, so the repeats neither re-enter this rule nor
-    // any other subscriber of the same script.
-    for (int i = 0; i < extra; ++i) hk::CallOriginal(c, c->result);
+    // any other subscriber of the same script. Each repeat writes the result
+    // slot, so what is already there is released first.
+    for (int i = 0; i < extra; ++i) {
+        if (c->result) gml::FreeValue(*c->result);
+        hk::CallOriginal(c, c->result);
+    }
     s.repeated.fetch_add(1, std::memory_order_relaxed);
 }
 

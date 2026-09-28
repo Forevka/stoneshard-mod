@@ -256,6 +256,7 @@ void  UiEndChild()                  { ImGui::EndChild(); }
 void  UiSetKeyboardFocusHere()      { ImGui::SetKeyboardFocusHere(); }
 void  UiSetScrollHereY(float ratio) { ImGui::SetScrollHereY(ratio); }
 std::int32_t UiIsKeyPressed(std::int32_t key) {
+    if (key < ImGuiKey_NamedKey_BEGIN || key >= ImGuiKey_NamedKey_END) return 0;
     return ImGui::IsKeyPressed(static_cast<ImGuiKey>(key)) ? 1 : 0;
 }
 float UiGetScrollY()    { return ImGui::GetScrollY(); }
@@ -272,6 +273,7 @@ int HistoryCallback(ImGuiInputTextCallbackData* data) {
     if (data->EventFlag != ImGuiInputTextFlags_CallbackHistory || !st || st->count <= 0) return 0;
 
     std::int32_t cur = *st->cursor;
+    if (cur >= st->count) cur = -1;   // the caller's history shrank since last frame
     if (data->EventKey == ImGuiKey_UpArrow) {
         cur = cur < 0 ? st->count - 1 : (cur > 0 ? cur - 1 : 0);
     } else if (data->EventKey == ImGuiKey_DownArrow) {
@@ -287,6 +289,7 @@ int HistoryCallback(ImGuiInputTextCallbackData* data) {
 std::int32_t UiInputHistory(const char* label, char* buf, std::int32_t cap,
                             const char* const* history, std::int32_t count, std::int32_t* cursor) {
     if (!buf || cap <= 0 || !cursor) return 0;
+    if (*cursor >= count || *cursor < -1) *cursor = -1;
     HistoryState st{history, history ? count : 0, cursor};
     const bool enter = ImGui::InputText(label, buf, static_cast<std::size_t>(cap),
                                         ImGuiInputTextFlags_EnterReturnsTrue |

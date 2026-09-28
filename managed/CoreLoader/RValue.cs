@@ -79,16 +79,26 @@ public struct RValue
                     int ok;
                     fixed (byte* name = Utf8.Get("string_copy"))
                         ok = Loader.Api->CallBuiltin(name, &owned, args, 3, 0, 0);
+                    // A genuine copy is a different string; a runtime that answered
+                    // a full-length copy with the same string (one more reference)
+                    // would leave the result pointing at our temporary buffer.
+                    bool copied = ok != 0 && owned.Kind == RValueKind.String && owned.Pointer != tmp.Pointer;
+                    if (!copied && owned.Kind == RValueKind.String) Loader.Api->ValueFree(&owned);
                     Loader.Api->ValueFree(&tmp);   // the wrapper around our buffer
 
-                    if (ok != 0 && owned.Kind == RValueKind.String)
+                    if (copied)
                     {
                         _canCopyStrings = true;
                         return Values.Track(owned);
                     }
-                    if (_canCopyStrings == null)
-                        Loader.Log(LogLevel.Warning, "CoreLoader", "string_copy unusable; strings from mods are interned instead");
-                    _canCopyStrings = false;
+                    // Only a failure with the runtime fully up is conclusive; an
+                    // early call (builtins not resolved yet) just falls back once.
+                    if (Game.BuiltinCount > 0)
+                    {
+                        if (_canCopyStrings == null)
+                            Loader.Log(LogLevel.Warning, "CoreLoader", "string_copy unusable; strings from mods are interned instead");
+                        _canCopyStrings = false;
+                    }
                 }
             }
             finally
@@ -101,6 +111,19 @@ public struct RValue
         if (Loader.Api->SetString(&v, Utf8.Permanent(text)) == 0)
             throw new GmlException("the runtime's string constructor is unavailable in this game");
         return Values.Track(v);
+    }
+
+    /// <summary>
+    /// A string whose characters stay valid for the life of the process and is
+    /// not pooled. For the few places the runtime keeps a POINTER to the text,
+    /// such as the name of a newly created variable.
+    /// </summary>
+    internal static unsafe RValue FromStringPermanent(string text)
+    {
+        RValue v = default;
+        if (Loader.Api->SetString(&v, Utf8.Permanent(text ?? "")) == 0)
+            throw new GmlException("the runtime's string constructor is unavailable in this game");
+        return v;
     }
 
     public static implicit operator RValue(double v) => FromReal(v);

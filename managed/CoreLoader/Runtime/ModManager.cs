@@ -200,18 +200,29 @@ internal static class ModManager
     /// <summary>OnShutdown, then everything the mod registered goes, then its context. Game thread.</summary>
     private static void Unload(LoadedMod m)
     {
-        if (m.State != ModState.Faulted) Invoke(m, nameof(CoreMod.OnShutdown), mod => mod.OnShutdown());
-        Hooks.RemoveOwner(m);
-        m.Instance.Config.Save();
-        ModConfig.Unregister(m.Instance.Config);
-        ModList.Remove(m);
-        m.Context.Unload();
-        Log.Info($"unloaded {m.Instance.Info.Name}");
+        try
+        {
+            // Only a mod that actually started gets a shutdown.
+            if (m.State == ModState.Running) Invoke(m, nameof(CoreMod.OnShutdown), mod => mod.OnShutdown());
+            Hooks.RemoveOwner(m);
+            try { m.Instance.Config.Save(); } catch (Exception ex) { Log.Warning($"saving {m.Instance.Info.Name}'s settings: {ex.Message}"); }
+            ModConfig.Unregister(m.Instance.Config);
+        }
+        finally
+        {
+            // Whatever failed above, the mod must leave the list and its context.
+            ModList.Remove(m);
+            m.Context.Unload();
+            Log.Info($"unloaded {m.Instance.Info.Name}");
+        }
     }
 
     /// <summary>Reloads one mod from its file, keeping its place in the list. Game thread.</summary>
     public static void Reload(LoadedMod m)
     {
+        // A queued Reload can arrive after the watcher already replaced this
+        // entry; reloading the stale one would start a second copy of the mod.
+        if (!ModList.Contains(m)) return;
         int index = ModList.IndexOf(m);
         var path = m.Path;
         Unload(m);
@@ -248,7 +259,12 @@ internal static class ModManager
             _watcher.Changed += note;
             _watcher.Created += note;
             _watcher.Deleted += note;
-            _watcher.Renamed += (_, e) => Changed[e.FullPath] = Environment.TickCount64;
+            _watcher.Renamed += (_, e) =>
+            {
+                // Both ends: the old name unloads, the new one loads.
+                Changed[e.OldFullPath] = Environment.TickCount64;
+                Changed[e.FullPath] = Environment.TickCount64;
+            };
             _watcher.EnableRaisingEvents = true;
         }
         catch (Exception ex)
@@ -274,7 +290,11 @@ internal static class ModManager
             if (mod != null) { reload.Add(mod); continue; }
             bool isMod;
             try { isMod = File.Exists(path) && HasModInfo(path); }
-            catch (IOException) { Changed[path] = now; continue; }   // still being written
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException)
+            {
+                Changed[path] = now;   // still being written (or not a PE yet): look again later
+                continue;
+            }
             if (isMod) { added.Add(path); continue; }
 
             // A dependency changed (e.g. a rebuilt <Game>.Interop.dll): reload the

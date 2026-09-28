@@ -265,6 +265,8 @@ public static unsafe class UI
                                  int maxBytes = 512)
     {
         Guard();
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 2);
+        if (cursor >= history.Count || cursor < -1) cursor = -1;
         var buf = new byte[maxBytes];
         System.Text.Encoding.UTF8.GetEncoder().Convert((value ?? "").AsSpan(), buf.AsSpan(0, maxBytes - 1), true,
                                                        out _, out int written, out _);

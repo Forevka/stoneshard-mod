@@ -64,6 +64,10 @@ bool        CopyValue(RValue& dst, const RValue& src);
 bool        CanFreeValues();
 bool        CanCopyValues();
 
+// Proves the located free/copy helpers behave as such, on a probe string.
+// Game thread, once; until it passes, FreeValue/CopyValue refuse.
+void        VerifyValueLifetime();
+
 void        SetReal(RValue& v, double value);
 void        SetUndefined(RValue& v);
 bool        SetString(RValue& v, const char* text);

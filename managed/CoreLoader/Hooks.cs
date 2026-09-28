@@ -71,7 +71,10 @@ public readonly unsafe struct HookCall
         set
         {
             if (_p->Result == null) throw new InvalidOperationException("object events have no result");
-            Values.StoreInto(_p->Result, value);
+            // Before the original runs, the result slot holds whatever the
+            // caller left in its temporary - not necessarily an owned value -
+            // so it is overwritten, not released.
+            Values.StoreInto(_p->Result, value, releaseOld: IsAfter);
         }
     }
 

@@ -37,20 +37,24 @@ public static unsafe class Values
     }
 
     /// <summary>
-    /// Takes <paramref name="v"/> out of the autorelease pool so it survives the
-    /// frame. The caller now owns it and must <see cref="Free"/> it later.
+    /// Returns a reference to <paramref name="v"/> that survives the frame; the
+    /// caller owns it and must <see cref="Free"/> it later. A pooled value is
+    /// taken out of the pool; a value the mod does not own (a hook argument, a
+    /// result slot) gets an independent copy, so freeing it never releases the
+    /// game's reference.
     /// </summary>
     public static RValue Keep(RValue v)
     {
+        if (!HoldsReference(v)) return v;
         for (int i = Pool.Count - 1; i >= 0; i--)
         {
             if (Pool[i].Pointer == v.Pointer && Pool[i].Kind == v.Kind)
             {
                 Pool.RemoveAt(i);
-                break;
+                return v;
             }
         }
-        return v;
+        return Copy(v);
     }
 
     /// <summary>Releases a value obtained with <see cref="Keep"/> (or <see cref="Copy"/>).</summary>
@@ -81,21 +85,47 @@ public static unsafe class Values
     /// a result), releasing what was there. The slot gets its own reference, so
     /// the pool releasing the mod's copy later cannot free the slot's value.
     /// </summary>
-    internal static void StoreInto(RValue* slot, RValue value)
+    internal static void StoreInto(RValue* slot, RValue value, bool releaseOld = true)
     {
-        if (CanFree && HoldsReference(*slot)) Loader.Api->ValueFree(slot);
+        // Take the new reference FIRST: `value` may be the very value in the
+        // slot (c.Result = c.Result), and releasing the slot before copying
+        // would free it out from under the copy.
+        RValue stored = value;
+        bool copied = false;
         if (HoldsReference(value) && CanCopy)
         {
-            *slot = RValue.Undefined;
-            Loader.Api->ValueCopy(slot, &value);
+            stored = RValue.Undefined;
+            copied = Loader.Api->ValueCopy(&stored, &value) != 0;
+            if (!copied) stored = value;
         }
-        else
+
+        RValue old = *slot;
+        *slot = stored;
+        if (releaseOld && CanFree && HoldsReference(old)) Loader.Api->ValueFree(&old);
+
+        // Without a copy helper the reference is handed over instead: the value
+        // leaves the pool so it is not released under the game.
+        if (!copied && HoldsReference(value)) TakeFromPool(value);
+    }
+
+    private static void TakeFromPool(RValue v)
+    {
+        for (int i = Pool.Count - 1; i >= 0; i--)
         {
-            // Without a copy helper the reference is handed over instead: the
-            // value leaves the pool so it is not released under the game.
-            if (HoldsReference(value)) Keep(value);
-            *slot = value;
+            if (Pool[i].Pointer == v.Pointer && Pool[i].Kind == v.Kind)
+            {
+                Pool.RemoveAt(i);
+                return;
+            }
         }
+    }
+
+    /// <summary>Re-reads whether the runtime's (verified) free/copy helpers are available.</summary>
+    internal static void Probe()
+    {
+        RValue a = RValue.Undefined, b = RValue.Undefined;
+        CanFree = Loader.Api->ValueFree(&a) != 0;
+        CanCopy = Loader.Api->ValueCopy(&b, &a) != 0;
     }
 
     /// <summary>End of frame: releases everything still pooled.</summary>

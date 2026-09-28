@@ -58,6 +58,9 @@ internal static unsafe class Entry
         Loader.MarkGameThread();
         if (_initialisedMods) return;
         _initialisedMods = true;
+        // The native side proves the value helpers on the first frame (before
+        // this runs); pick up the verdict before any mod gets to use values.
+        Values.Probe();
         // Attribute hooks first, so OnInitialize can rely on them being live.
         foreach (var m in ModManager.Mods.ToList()) ModManager.Initialize(m);
     }
@@ -78,23 +81,30 @@ internal static unsafe class Entry
     [UnmanagedCallersOnly]
     private static void Frame()
     {
+        // Each stage is isolated: one failing (a half-written dll, a full disk)
+        // must not cost every mod its update, and the pool must drain regardless.
         try
         {
-            EnsureModsInitialised();
+            Stage("initialise", EnsureModsInitialised);
             // Rebuilt mod dlls are swapped in here, between frames, where no
             // mod code is on the stack.
-            ModManager.PollChanges();
-            Game.DrainPending(Log);
-            InteropGenerator.Tick();
-            VarHarvest.Tick();
-            ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate());
-            ModConfig.FlushSettled();
-            Values.Drain();
+            Stage("hot reload", ModManager.PollChanges);
+            Stage("queued actions", () => Game.DrainPending(Log));
+            Stage("interop", InteropGenerator.Tick);
+            Stage("variable harvest", VarHarvest.Tick);
+            Stage("updates", () => ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate()));
+            Stage("settings", ModConfig.FlushSettled);
         }
-        catch (Exception ex)
+        finally
         {
-            Log.Error("frame dispatch failed", ex);
+            try { Values.Drain(); } catch (Exception ex) { Log.Error("releasing the frame's values failed", ex); }
         }
+    }
+
+    private static void Stage(string name, Action a)
+    {
+        try { a(); }
+        catch (Exception ex) { Log.Error($"frame stage '{name}' failed", ex); }
     }
 
     [UnmanagedCallersOnly]

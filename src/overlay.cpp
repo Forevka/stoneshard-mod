@@ -417,6 +417,10 @@ void OverlayRender(IDXGISwapChain* swapChain) {
         builtins::SelfTest();
     }
 
+    // Before any mod runs: prove the value free/copy helpers on a probe string
+    // (game thread, once). Until then the managed side treats them as absent.
+    gml::VerifyValueLifetime();
+
     // C# mods: initialised on their first frame, then ticked every frame.
     host::Frame();
 

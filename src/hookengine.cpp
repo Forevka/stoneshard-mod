@@ -104,6 +104,16 @@ bool EnsureArena() {
 // saved/restored around each dispatch because hooked calls nest).
 thread_local const void* g_caller = nullptr;
 
+// Restores g_caller however the dispatch ends - including a GML exception
+// unwinding through it to an enclosing try.
+struct CallerScope {
+    const void* saved;
+    explicit CallerScope(const void* now) : saved(g_caller) { g_caller = now; }
+    ~CallerScope() { g_caller = saved; }
+    CallerScope(const CallerScope&) = delete;
+    CallerScope& operator=(const CallerScope&) = delete;
+};
+
 void RunNatives(Hook* h, Call* c, bool after) {
     const int n = h->nativeCount.load(std::memory_order_acquire);
     for (int i = 0; i < n; ++i) {
@@ -129,9 +139,8 @@ gml::RValue* ScriptDispatch(void* self, void* other, gml::RValue* result, int ar
     //
     // The thunk called us from inside its 0x38-byte frame, so the game's own
     // return address sits just above ours plus that frame.
-    const void* prevCaller = g_caller;
-    g_caller = *reinterpret_cast<void* const*>(
-        static_cast<const char*>(_AddressOfReturnAddress()) + 8 + 0x38);
+    CallerScope scope(*reinterpret_cast<void* const*>(
+        static_cast<const char*>(_AddressOfReturnAddress()) + 8 + 0x38));
 
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
@@ -143,15 +152,13 @@ gml::RValue* ScriptDispatch(void* self, void* other, gml::RValue* result, int ar
 
     c.phase = kAfter;
     Phase(h, &c, managed, true);
-    g_caller = prevCaller;
     return ret;
 }
 
 void EventDispatch(void* self, void* other, Hook* h) {
     gml::NoteSelf(self);
     // The event thunk tail-jumped here, so our return address is the game's.
-    const void* prevCaller = g_caller;
-    g_caller = *static_cast<void* const*>(_AddressOfReturnAddress());
+    CallerScope scope(*static_cast<void* const*>(_AddressOfReturnAddress()));
 
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
@@ -162,7 +169,6 @@ void EventDispatch(void* self, void* other, Hook* h) {
 
     c.phase = kAfter;
     Phase(h, &c, managed, true);
-    g_caller = prevCaller;
 }
 
 void* EmitThunk(Hook* h) {
@@ -296,28 +302,38 @@ int AddNative(void* target, Kind kind, NativeHandler before, NativeHandler after
     std::lock_guard<std::mutex> lock(g_lock);
     Hook& h = g_hooks[id];
     const int n = h.nativeCount.load(std::memory_order_relaxed);
+    bool placed = false;
     // Reuse a slot freed by RemoveNative before growing.
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < n && !placed; ++i) {
         NativeSub& s = h.natives[i];
         if (!s.before.load() && !s.after.load()) {
             s.ctx.store(ctx);
             s.before.store(before, std::memory_order_release);
             s.after.store(after, std::memory_order_release);
-            ++h.nativeUsers;
-            return id;
+            placed = true;
         }
     }
-    if (n >= kMaxNative) {
-        Logf("[!] hooks: #%d already has %d native users", id, kMaxNative);
-        return -1;
+    if (!placed) {
+        if (n >= kMaxNative) {
+            Logf("[!] hooks: #%d already has %d native users", id, kMaxNative);
+            // A hook just created for this call has no user at all: detach it.
+            if (h.nativeUsers == 0 && !h.managed.load() && h.enabled && MH_DisableHook(h.target) == MH_OK)
+                h.enabled = false;
+            return -1;
+        }
+        NativeSub& s = h.natives[n];
+        s.ctx.store(ctx);
+        s.before.store(before);
+        s.after.store(after);
+        h.nativeCount.store(n + 1, std::memory_order_release);   // publish last
     }
-    NativeSub& s = h.natives[n];
-    s.ctx.store(ctx);
-    s.before.store(before);
-    s.after.store(after);
-    h.nativeCount.store(n + 1, std::memory_order_release);   // publish last
     ++h.nativeUsers;
-    if (!h.enabled && MH_EnableHook(h.target) == MH_OK) h.enabled = true;
+    // Whichever path placed the handler, the detour must be attached: a hook
+    // detached when its previous users left would otherwise never fire again.
+    if (!h.enabled) {
+        if (MH_EnableHook(h.target) == MH_OK) h.enabled = true;
+        else Logf("[!] hooks: could not re-attach #%d", id);
+    }
     return id;
 }
 

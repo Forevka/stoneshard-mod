@@ -159,11 +159,17 @@ internal static unsafe class InteropGenerator
         var sounds = EnumerateAssets("audio_exists", "audio_get_name");
 
         File.WriteAllText(Path.Combine(OutputDirectory, ns + ".Interop.csproj"), Csproj(ns));
+        // Every function's start, in address order: each script is scanned only
+        // up to the next function, never into its neighbour.
+        var starts = Game.Symbols.Select(x => x.Address).Where(a => a != 0).Distinct().OrderBy(a => a).ToArray();
         var arity = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var s in scripts)
         {
             var addr = Game.FindSymbol(s);
-            if (addr != 0) arity[s] = CodeScan.ArgumentCount(addr);
+            if (addr == 0) continue;
+            int at = Array.BinarySearch(starts, addr);
+            nint next = at >= 0 && at + 1 < starts.Length ? starts[at + 1] : 0;
+            arity[s] = CodeScan.ArgumentCount(addr, next);
         }
         int typed = arity.Values.Count(n => n is >= 1 and <= 8);
         Log.Info($"interop: argument counts read from code for {typed} of {scripts.Count} scripts");

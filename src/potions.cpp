@@ -153,7 +153,8 @@ void BuildInContext(void* self, void* other) {
 void BottleAlarmAfter(hk::Call* c, void*) {
     void* self  = c->self;
     void* other = c->other;
-    if (!self) return;
+    // A mod skipped the game's own roll: there is no rolled bottle to build on.
+    if (!self || c->skip) return;
     g_bottle = self;
     if (!g_armed) return;
 

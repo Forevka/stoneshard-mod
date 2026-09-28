@@ -53,6 +53,10 @@ using FreeFn = void (*)(RValue*);
 using CopyFn = void (*)(RValue*, const RValue*);
 FreeFn      g_free = nullptr;
 CopyFn      g_copy = nullptr;
+// Newer runtimes inline COPY_RValue and call only its reference half,
+// COPY_RValue__Post, which writes the pointer and takes the reference but
+// leaves kind and flags to the (inlined) caller. The self-test tells them apart.
+bool        g_copyIsPost = false;
 void**      g_pCurrentSelf = nullptr;
 
 // Recorded from a genuine call by the game; see InstallCapture below.
@@ -365,11 +369,88 @@ bool Init() {
 bool        Ready()  { return g_ready; }
 const char* Status() { return g_status.c_str(); }
 
-bool CanFreeValues() { return g_free != nullptr; }
-bool CanCopyValues() { return g_copy != nullptr; }
+namespace {
+// The helpers are found by shape; this is the proof of behaviour. Until it has
+// run (on the game thread, first frame) they are not handed out at all.
+bool g_lifetimeVerified = false;
+bool g_lifetimeTested   = false;
+
+bool SafeRead(const void* src, void* dst, int n);   // defined with the player tracker
+
+int RefCountOf(const RValue& v) {
+    int rc = -1;
+    if (v.ptr) SafeRead(static_cast<const char*>(v.ptr) + 8, &rc, 4);
+    return rc;
+}
+} // namespace
+
+void VerifyValueLifetime() {
+    if (g_lifetimeTested || !g_ready) return;
+    g_lifetimeTested = true;
+    if (!g_free && !g_copy) return;
+
+    auto fail = [](const char* why) {
+        Logf("[!] gml: value lifetime self-test failed (%s) - freeing/copying disabled, values will leak instead",
+             why);
+        g_free = nullptr;
+        g_copy = nullptr;
+    };
+
+    static const char kProbe[] = "coreloader-lifetime-probe";   // static: stays valid forever
+    RValue a{};
+    if (!SetString(a, kProbe) || !a.ptr) { fail("could not build a probe string"); return; }
+
+    // The runtime must treat our characters as external, or freeing any string
+    // we built around our own buffer would free that buffer.
+    std::int32_t len = 0;
+    const char*  chars = nullptr;
+    SafeRead(static_cast<const char*>(a.ptr), &chars, sizeof(chars));
+    SafeRead(static_cast<const char*>(a.ptr) + 12, &len, 4);
+    if (chars != kProbe || (len & 0x80000000) == 0) { fail("string not marked external"); return; }
+
+    const int rc0 = RefCountOf(a);
+    if (rc0 != 1) { fail("unexpected initial refcount"); return; }
+
+    if (g_copy) {
+        RValue b{};
+        b.kind = kUndefined;
+        __try { g_copy(&b, &a); } __except (EXCEPTION_EXECUTE_HANDLER) { fail("copy faulted"); return; }
+        const bool tookRef = b.ptr == a.ptr && RefCountOf(a) == rc0 + 1;
+        if (tookRef && b.kind == kUndefined) {
+            g_copyIsPost = true;   // the reference half only; CopyValue writes kind/flags itself
+            b.flags = a.flags;
+            b.kind  = a.kind;
+        }
+        if (!tookRef || b.kind != kString) {
+            Logf("[!] gml: COPY_RValue did not behave like a copy; copying disabled");
+            g_copy = nullptr;
+        } else if (g_free) {
+            __try { g_free(&b); } __except (EXCEPTION_EXECUTE_HANDLER) { fail("free faulted"); return; }
+            if (RefCountOf(a) != rc0) { fail("free did not release the copy's reference"); return; }
+        }
+    }
+    if (g_free && !g_copy) {
+        // No verified copy to test with: take a second reference by hand (the
+        // probe string is ours alone, so its refcount is ours to set).
+        *reinterpret_cast<std::int32_t*>(static_cast<char*>(a.ptr) + 8) = 2;
+        RValue b = a;
+        __try { g_free(&b); } __except (EXCEPTION_EXECUTE_HANDLER) { fail("free faulted"); return; }
+        if (RefCountOf(a) != 1) { fail("free did not release a reference"); return; }
+    }
+    if (g_free) {
+        __try { g_free(&a); } __except (EXCEPTION_EXECUTE_HANDLER) { fail("free faulted"); return; }
+    }
+
+    g_lifetimeVerified = true;
+    Logf("gml: value lifetime self-test passed (free %s, copy %s)", g_free ? "yes" : "no",
+         g_copy ? (g_copyIsPost ? "yes, reference half" : "yes") : "no");
+}
+
+bool CanFreeValues() { return g_lifetimeVerified && g_free != nullptr; }
+bool CanCopyValues() { return g_lifetimeVerified && g_copy != nullptr; }
 
 bool FreeValue(RValue& v) {
-    if (!g_free) return false;
+    if (!g_lifetimeVerified || !g_free) return false;
     __try {
         g_free(&v);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -381,7 +462,14 @@ bool FreeValue(RValue& v) {
 }
 
 bool CopyValue(RValue& dst, const RValue& src) {
-    if (!g_copy) return false;
+    if (!g_lifetimeVerified || !g_copy) return false;
+    // dst's previous contents are overwritten, never released: starting from
+    // undefined keeps the full COPY_RValue from freeing whatever was there.
+    if (g_copyIsPost) {
+        dst = src;   // kind, flags and plain values; __Post then takes the reference
+    } else {
+        dst.i64 = 0; dst.flags = 0; dst.kind = kUndefined;
+    }
     __try {
         g_copy(&dst, &src);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
