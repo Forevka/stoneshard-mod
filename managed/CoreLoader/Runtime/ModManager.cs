@@ -27,11 +27,13 @@ internal sealed class ModLoadContext : AssemblyLoadContext
 {
     private static readonly Assembly Self = typeof(CoreMod).Assembly;
     private readonly AssemblyDependencyResolver _resolver;
+    private readonly string _directory;
 
     public ModLoadContext(string mainAssemblyPath)
         : base(System.IO.Path.GetFileNameWithoutExtension(mainAssemblyPath), isCollectible: false)
     {
         _resolver = new AssemblyDependencyResolver(mainAssemblyPath);
+        _directory = System.IO.Path.GetDirectoryName(mainAssemblyPath)!;
     }
 
     protected override Assembly? Load(AssemblyName name)
@@ -39,7 +41,13 @@ internal sealed class ModLoadContext : AssemblyLoadContext
         if (string.Equals(name.Name, Self.GetName().Name, StringComparison.OrdinalIgnoreCase))
             return Self;
         var path = _resolver.ResolveAssemblyToPath(name);
-        return path != null ? LoadFromAssemblyPath(path) : null;
+        if (path != null) return LoadFromAssemblyPath(path);
+
+        // Mods are often deployed as bare dlls without their deps.json; a
+        // dependency (such as a generated <Game>.Interop.dll) next to the mod
+        // is still the right one.
+        var local = System.IO.Path.Combine(_directory, name.Name + ".dll");
+        return File.Exists(local) ? LoadFromAssemblyPath(local) : null;
     }
 
     protected override nint LoadUnmanagedDll(string unmanagedDllName)
@@ -130,6 +138,9 @@ internal static class ModManager
             mod.Info = info;
             mod.Log = new Logger(info.Name);
             mod.Directory = System.IO.Path.GetDirectoryName(path)!;
+            mod.Config = new ModConfig(
+                System.IO.Path.Combine(mod.Directory, System.IO.Path.GetFileNameWithoutExtension(path) + ".json"),
+                mod.Log);
 
             ModList.Add(new LoadedMod { Instance = mod, Path = path });
             Log.Info($"loaded {info.Name} {info.Version} by {info.Author} ({file})");

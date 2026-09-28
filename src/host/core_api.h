@@ -39,7 +39,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 2;   // 2: hooks
+constexpr std::int32_t kCoreApiVersion = 5;   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -112,6 +112,16 @@ struct CoreApi {
     // Whether calls through the hook are routed to ManagedExports.hook_dispatch.
     std::int32_t (*hook_set_managed)(std::int32_t id, std::int32_t managed);
     std::int32_t (*hook_count)();
+
+    // A builtin's registered argument count: -1 variadic, -2 not found.
+    std::int32_t (*builtin_arity)(const char* name);
+
+    // Inside a hook handler: run the unhooked original script once more with
+    // the call's own self/other/arguments. Handlers do not see this call.
+    std::int32_t (*hook_call_original)(const struct CoreHookCall* call, CoreRValue* result);
+
+    // Builtins by index, sorted by name; 0..builtin_count()-1. Lives for the process.
+    const char*  (*builtin_name)(std::int32_t index);
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

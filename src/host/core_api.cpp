@@ -177,6 +177,22 @@ std::int32_t ApiHookSetManaged(std::int32_t id, std::int32_t managed) {
 
 std::int32_t ApiHookCount() { return hk::Count(); }
 
+std::int32_t ApiHookCallOriginal(const CoreHookCall* call, CoreRValue* result) {
+    if (!call || !result) return 0;
+    return hk::CallOriginal(reinterpret_cast<const hk::Call*>(call), Gml(result)) ? 1 : 0;
+}
+
+const char* ApiBuiltinName(std::int32_t index) {
+    const auto& names = builtins::Names();
+    return (index >= 0 && static_cast<std::size_t>(index) < names.size()) ? names[index] : nullptr;
+}
+
+std::int32_t ApiBuiltinArity(const char* name) {
+    if (!name) return -2;
+    const builtins::Builtin b = builtins::Find(name);
+    return b.fn ? b.argc : -2;
+}
+
 // ---------------------------------------------------------------------- UI
 
 std::int32_t UiBeginTabBar(const char* id)     { return ImGui::BeginTabBar(id) ? 1 : 0; }
@@ -259,6 +275,9 @@ CoreApi Build() {
     a.hook_install     = &ApiHookInstall;
     a.hook_set_managed = &ApiHookSetManaged;
     a.hook_count       = &ApiHookCount;
+    a.builtin_arity    = &ApiBuiltinArity;
+    a.hook_call_original = &ApiHookCallOriginal;
+    a.builtin_name       = &ApiBuiltinName;
     return a;
 }
 

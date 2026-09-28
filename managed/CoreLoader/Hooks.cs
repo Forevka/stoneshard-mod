@@ -68,6 +68,20 @@ public readonly unsafe struct HookCall
         }
     }
 
+    /// <summary>
+    /// Runs the original script once more with this call's self, other and
+    /// (possibly modified) arguments, and returns its result. No hook handler -
+    /// this one included - sees the extra call, so repeating an effect cannot
+    /// recurse. Scripts only.
+    /// </summary>
+    public RValue CallOriginal()
+    {
+        RValue r = RValue.Undefined;
+        if (Loader.Api->HookCallOriginal(_p, &r) == 0)
+            throw new GmlException($"re-running {_symbol} failed (see the loader log)");
+        return r;
+    }
+
     /// <summary>Stops the original from running. Before handlers only.</summary>
     public void SkipOriginal()
     {

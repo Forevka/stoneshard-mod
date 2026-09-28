@@ -19,6 +19,7 @@
 #include "symbols.h"
 
 #include <windows.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <unordered_map>
@@ -257,6 +258,17 @@ Layout DetectLayout(const void* table, int n) {
 bool        Ready()  { return g_ready; }
 const char* Status() { return g_status.c_str(); }
 std::size_t Count()  { return g_map.size(); }
+
+const std::vector<const char*>& Names() {
+    static std::vector<const char*> names;
+    if (names.empty() && g_ready) {
+        names.reserve(g_map.size());
+        for (const auto& [name, b] : g_map) names.push_back(name.c_str());
+        std::sort(names.begin(), names.end(),
+                  [](const char* a, const char* b) { return std::strcmp(a, b) < 0; });
+    }
+    return names;
+}
 
 namespace {
 

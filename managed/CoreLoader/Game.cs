@@ -89,6 +89,20 @@ public static unsafe class Game
             throw new GmlException($"event {name} failed (see the loader log)");
     }
 
+    /// <summary>
+    /// How many arguments this game's runtime registered <paramref name="name"/>
+    /// with: -1 variadic, null if the builtin does not exist. Registries do not
+    /// always match the manual, and a call with the wrong count is refused.
+    /// </summary>
+    public static int? BuiltinArity(string name)
+    {
+        fixed (byte* n = Utf8.Get(name))
+        {
+            int a = Loader.Api->BuiltinArity(n);
+            return a == -2 ? null : a;
+        }
+    }
+
     /// <summary>Calls a GameMaker builtin, e.g. <c>CallBuiltin("instance_number", obj)</c>.</summary>
     public static RValue CallBuiltin(string name, params RValue[] args) =>
         CallBuiltinAs(default, name, args);

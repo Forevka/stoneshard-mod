@@ -81,6 +81,7 @@ internal static unsafe class Entry
         {
             EnsureModsInitialised();
             Game.DrainPending(Log);
+            InteropGenerator.Tick();
             ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate());
         }
         catch (Exception ex)
@@ -186,6 +187,7 @@ internal static unsafe class Entry
         UI.Text($"GML bridge: {(Game.IsGmlReady ? "ready" : "unavailable")}   " +
                 $"ABI self-test: {(Game.IsAbiProven ? "passed" : "not passed")}");
         UI.Text($"Hooked functions: {Hooks.NativeHookCount}");
+        UI.TextDisabled($"Interop: {InteropGenerator.Status}");
         UI.TextDisabled($".NET {Environment.Version}   mods folder: {ModManager.ModsDirectory}");
         UI.Separator();
 

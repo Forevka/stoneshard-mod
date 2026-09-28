@@ -21,6 +21,11 @@ bool        Ready();
 const char* Status();
 std::size_t Count();
 
+// Every resolved builtin name, sorted. The pointers stay valid for the life of
+// the process (they point at the map's own keys, which are never erased once
+// resolution succeeds).
+const std::vector<const char*>& Names();
+
 struct Builtin {
     void* fn   = nullptr;
     int   argc = 0;          // -1 == variadic

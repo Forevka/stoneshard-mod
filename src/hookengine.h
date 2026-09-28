@@ -57,6 +57,11 @@ bool Enable(int id);
 
 int  Count();
 
+// Runs the ORIGINAL (unhooked) script of `call` once more with the same
+// self/other/arguments, writing into `result`. Nothing hooked runs again, so a
+// handler can repeat a call without re-entering itself. Scripts only.
+bool CallOriginal(const Call* call, gml::RValue* result);
+
 // The loader's own use: when the runtime has no current-self global (2024+),
 // watch a spread of Step events so a live instance is always known.
 void InstallSelfObservers(int maxEvents);

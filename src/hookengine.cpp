@@ -247,6 +247,21 @@ int Count() {
     return static_cast<int>(g_hooks.size());
 }
 
+bool CallOriginal(const Call* call, gml::RValue* result) {
+    if (!call || !result) return false;
+    Hook* h;
+    {
+        std::lock_guard<std::mutex> lock(g_lock);
+        h = ById(call->hookId);
+    }
+    if (!h || h->kind != Kind::Script || !h->original) return false;
+
+    // The trampoline IS the original: calling it skips our detour, so no
+    // handler sees this call. CallAs supplies the same fault guard as any
+    // other call into the game.
+    return gml::CallAs(h->original, result, call->args, call->argc, call->self, call->other);
+}
+
 void InstallSelfObservers(int maxEvents) {
     int installed = 0;
     for (const sym::Entry& e : sym::All()) {

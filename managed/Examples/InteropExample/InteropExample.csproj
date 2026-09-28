@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The workflow CoreLoader is built for: run the game once with CoreLoader
+    installed, and it writes CoreLoader\Interop\<Game>.Interop\ - a project with
+    typed refs to the game's scripts, objects, builtins and assets. Point
+    InteropProject at it and build:
+
+      dotnet build -p:InteropProject="<game>\CoreLoader\Interop\Dwarf_Eats_Mountain.Interop\Dwarf_Eats_Mountain.Interop.csproj"
+
+    The interop dll is copied next to the mod (ship both in Mods\).
+  -->
+  <PropertyGroup>
+    <AssemblyName>InteropExample</AssemblyName>
+    <OutputPath>$(ManagedOutRoot)Examples\</OutputPath>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\CoreLoader\CoreLoader.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+    <ProjectReference Include="$(InteropProject)" Condition="'$(InteropProject)' != ''" />
+  </ItemGroup>
+
+  <Target Name="RequireInterop" BeforeTargets="Build" Condition="'$(InteropProject)' == ''">
+    <Warning Text="InteropExample needs -p:InteropProject=... (see the comment in the csproj); skipping." />
+  </Target>
+
+  <PropertyGroup Condition="'$(InteropProject)' == ''">
+    <!-- Nothing to compile without the generated interop; keep solution builds green. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+</Project>

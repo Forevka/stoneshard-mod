@@ -17,6 +17,9 @@ public abstract class CoreMod
     /// <summary>Folder the mod's dll was loaded from.</summary>
     public string Directory { get; internal set; } = "";
 
+    /// <summary>Persistent settings, saved as Mods/&lt;AssemblyName&gt;.json.</summary>
+    public ModConfig Config { get; internal set; } = null!;
+
     /// <summary>Once, on the first frame after loading.</summary>
     public virtual void OnInitialize() { }
 
