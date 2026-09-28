@@ -39,7 +39,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 6;   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
+constexpr std::int32_t kCoreApiVersion = 7;   // 7: ui round 2   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -133,6 +133,24 @@ struct CoreApi {
     // Detaches (0) or re-attaches (1) a hook's detour. A hook nobody listens
     // to is detached so the function runs at full speed again.
     std::int32_t (*hook_enable)(std::int32_t id, std::int32_t enabled);
+
+    // UI, round 2 (for consoles and log views).
+    // Text input with ImGuiInputTextFlags; with EnterReturnsTrue (64) it returns
+    // 1 only on the frame Enter was pressed.
+    std::int32_t (*ui_input_text_flags)(const char* label, char* buffer, std::int32_t capacity, std::int32_t flags);
+    // A scrolling region `height` pixels tall (0 = fill, negative = leave that much below).
+    std::int32_t (*ui_begin_child)(const char* id, float height, std::int32_t border);
+    void         (*ui_end_child)();
+    void         (*ui_set_keyboard_focus_here)();
+    void         (*ui_set_scroll_here_y)(float ratio);
+    std::int32_t (*ui_is_key_pressed)(std::int32_t imguiKey);
+    float        (*ui_get_scroll_y)();
+    float        (*ui_get_scroll_max_y)();
+    // A single-line input with shell-style history: Up/Down walk `history`
+    // (oldest first, `count` entries) and *cursor tracks the position (-1 =
+    // editing a new line). Returns 1 on the frame Enter was pressed.
+    std::int32_t (*ui_input_history)(const char* label, char* buffer, std::int32_t capacity,
+                                     const char* const* history, std::int32_t count, std::int32_t* cursor);
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Console</AssemblyName>
+    <RootNamespace>CoreConsole</RootNamespace>
+  </PropertyGroup>
+</Project>

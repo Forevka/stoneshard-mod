@@ -49,6 +49,21 @@ public static unsafe class Game
         }
     }
 
+    private static string[]? _builtins;
+
+    /// <summary>Every GameMaker builtin this runtime registers, sorted (empty until the registry resolves).</summary>
+    public static IReadOnlyList<string> Builtins
+    {
+        get
+        {
+            if (_builtins is { Length: > 0 }) return _builtins;
+            int n = BuiltinCount;
+            var list = new string[n];
+            for (int i = 0; i < n; i++) list[i] = Utf8.Read(Loader.Api->BuiltinName(i)) ?? "";
+            return _builtins = list;
+        }
+    }
+
     /// <summary>Address of a gml_* function, or 0.</summary>
     public static nint FindSymbol(string name)
     {

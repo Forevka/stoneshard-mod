@@ -15,7 +15,7 @@ namespace CoreLoader;
 /// </remarks>
 public static unsafe class UI
 {
-    private enum Scope { Id, TabBar, TabItem }
+    private enum Scope { Id, TabBar, TabItem, Child }
 
     private static readonly List<Scope> Open = new();
     private static int _floor;
@@ -54,6 +54,7 @@ public static unsafe class UI
             case Scope.Id: Loader.Api->UiPopId(); break;
             case Scope.TabBar: Loader.Api->UiEndTabBar(); break;
             case Scope.TabItem: Loader.Api->UiEndTabItem(); break;
+            case Scope.Child: Loader.Api->UiEndChild(); break;
         }
     }
 
@@ -206,4 +207,94 @@ public static unsafe class UI
     }
 
     public static void EndTabItem() => Close(Scope.TabItem, nameof(EndTabItem));
+
+    /// <summary>
+    /// A scrolling region. <paramref name="height"/>: pixels, 0 to fill the
+    /// rest, negative to leave that much room below. Always pair with
+    /// <see cref="EndChild"/>, whatever this returns.
+    /// </summary>
+    public static bool BeginChild(string id, float height = 0f, bool border = true)
+    {
+        Guard();
+        bool visible;
+        fixed (byte* i = Utf8.Get(id)) visible = Loader.Api->UiBeginChild(i, height, border ? 1 : 0) != 0;
+        Open.Add(Scope.Child);   // ImGui wants EndChild even when not visible
+        return visible;
+    }
+
+    public static void EndChild() => Close(Scope.Child, nameof(EndChild));
+
+    /// <summary>Gives keyboard focus to the next widget.</summary>
+    public static void FocusNext()
+    {
+        Guard();
+        Loader.Api->UiSetKeyboardFocusHere();
+    }
+
+    /// <summary>Scrolls the current region so the last item is visible (ratio 1 = bottom).</summary>
+    public static void ScrollHere(float ratio = 1f)
+    {
+        Guard();
+        Loader.Api->UiSetScrollHereY(ratio);
+    }
+
+    /// <summary>Whether the current region is scrolled to (or within a line of) its bottom.</summary>
+    public static bool AtBottom
+    {
+        get
+        {
+            Guard();
+            return Loader.Api->UiGetScrollY() >= Loader.Api->UiGetScrollMaxY() - 20f;
+        }
+    }
+
+    public enum Key { Tab = 512, Left = 513, Right = 514, Up = 515, Down = 516, Enter = 525, Escape = 526 }
+
+    public static bool KeyPressed(Key key)
+    {
+        Guard();
+        return Loader.Api->UiIsKeyPressed((int)key) != 0;
+    }
+
+    /// <summary>
+    /// A command line: returns true on the frame Enter is pressed, with the line
+    /// in <paramref name="value"/>. Up/Down walk <paramref name="history"/>
+    /// (oldest first); keep <paramref name="cursor"/> between frames (-1 = new line).
+    /// </summary>
+    public static bool InputLine(string label, ref string value, IReadOnlyList<string> history, ref int cursor,
+                                 int maxBytes = 512)
+    {
+        Guard();
+        var buf = new byte[maxBytes];
+        System.Text.Encoding.UTF8.GetEncoder().Convert((value ?? "").AsSpan(), buf.AsSpan(0, maxBytes - 1), true,
+                                                       out _, out int written, out _);
+        buf[written] = 0;
+
+        // History entries are passed as NUL-terminated UTF-8, pinned for the call.
+        var handles = new System.Runtime.InteropServices.GCHandle[history.Count];
+        var ptrs = new nint[history.Count];
+        try
+        {
+            for (int i = 0; i < history.Count; i++)
+            {
+                handles[i] = System.Runtime.InteropServices.GCHandle.Alloc(Utf8.Encode(history[i]),
+                    System.Runtime.InteropServices.GCHandleType.Pinned);
+                ptrs[i] = handles[i].AddrOfPinnedObject();
+            }
+            int c = cursor;
+            bool enter;
+            fixed (byte* l = Utf8.Get(label))
+            fixed (byte* b = buf)
+            fixed (nint* h = ptrs)
+                enter = Loader.Api->UiInputHistory(l, b, maxBytes, (byte**)h, history.Count, &c) != 0;
+            cursor = c;
+            int end = Array.IndexOf(buf, (byte)0);
+            value = System.Text.Encoding.UTF8.GetString(buf, 0, end < 0 ? buf.Length : end);
+            return enter;
+        }
+        finally
+        {
+            foreach (var h in handles) if (h.IsAllocated) h.Free();
+        }
+    }
 }

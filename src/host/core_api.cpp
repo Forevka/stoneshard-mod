@@ -239,6 +239,61 @@ void UiSeparator()            { ImGui::Separator(); }
 void UiPushId(const char* id) { ImGui::PushID(id ? id : ""); }
 void UiPopId()                { ImGui::PopID(); }
 
+std::int32_t UiInputTextFlags(const char* label, char* buf, std::int32_t cap, std::int32_t flags) {
+    return buf && cap > 0 && ImGui::InputText(label, buf, static_cast<std::size_t>(cap),
+                                              static_cast<ImGuiInputTextFlags>(flags)) ? 1 : 0;
+}
+std::int32_t UiBeginChild(const char* id, float height, std::int32_t border) {
+    return ImGui::BeginChild(id ? id : "##child", ImVec2(0.0f, height),
+                             border ? ImGuiChildFlags_Borders : ImGuiChildFlags_None,
+                             ImGuiWindowFlags_HorizontalScrollbar) ? 1 : 0;
+}
+void  UiEndChild()                  { ImGui::EndChild(); }
+void  UiSetKeyboardFocusHere()      { ImGui::SetKeyboardFocusHere(); }
+void  UiSetScrollHereY(float ratio) { ImGui::SetScrollHereY(ratio); }
+std::int32_t UiIsKeyPressed(std::int32_t key) {
+    return ImGui::IsKeyPressed(static_cast<ImGuiKey>(key)) ? 1 : 0;
+}
+float UiGetScrollY()    { return ImGui::GetScrollY(); }
+float UiGetScrollMaxY() { return ImGui::GetScrollMaxY(); }
+
+struct HistoryState {
+    const char* const* items;
+    std::int32_t       count;
+    std::int32_t*      cursor;
+};
+
+int HistoryCallback(ImGuiInputTextCallbackData* data) {
+    auto* st = static_cast<HistoryState*>(data->UserData);
+    if (data->EventFlag != ImGuiInputTextFlags_CallbackHistory || !st || st->count <= 0) return 0;
+
+    std::int32_t cur = *st->cursor;
+    if (data->EventKey == ImGuiKey_UpArrow) {
+        cur = cur < 0 ? st->count - 1 : (cur > 0 ? cur - 1 : 0);
+    } else if (data->EventKey == ImGuiKey_DownArrow) {
+        if (cur < 0) return 0;
+        cur = cur + 1 < st->count ? cur + 1 : -1;
+    }
+    *st->cursor = cur;
+    data->DeleteChars(0, data->BufTextLen);
+    if (cur >= 0 && st->items[cur]) data->InsertChars(0, st->items[cur]);
+    return 0;
+}
+
+std::int32_t UiInputHistory(const char* label, char* buf, std::int32_t cap,
+                            const char* const* history, std::int32_t count, std::int32_t* cursor) {
+    if (!buf || cap <= 0 || !cursor) return 0;
+    HistoryState st{history, history ? count : 0, cursor};
+    const bool enter = ImGui::InputText(label, buf, static_cast<std::size_t>(cap),
+                                        ImGuiInputTextFlags_EnterReturnsTrue |
+                                        ImGuiInputTextFlags_CallbackHistory,
+                                        &HistoryCallback, &st);
+    // Keep the cursor in the line after Enter within the SAME frame: waiting a
+    // frame lets fast typing fall through to the game in between.
+    if (enter) ImGui::SetKeyboardFocusHere(-1);
+    return enter ? 1 : 0;
+}
+
 CoreApi Build() {
     CoreApi a{};
     a.size    = sizeof(CoreApi);
@@ -293,6 +348,16 @@ CoreApi Build() {
     a.value_free         = &ApiValueFree;
     a.value_copy         = &ApiValueCopy;
     a.hook_enable        = &ApiHookEnable;
+
+    a.ui_input_text_flags        = &UiInputTextFlags;
+    a.ui_begin_child             = &UiBeginChild;
+    a.ui_end_child               = &UiEndChild;
+    a.ui_set_keyboard_focus_here = &UiSetKeyboardFocusHere;
+    a.ui_set_scroll_here_y       = &UiSetScrollHereY;
+    a.ui_is_key_pressed          = &UiIsKeyPressed;
+    a.ui_get_scroll_y            = &UiGetScrollY;
+    a.ui_get_scroll_max_y        = &UiGetScrollMaxY;
+    a.ui_input_history           = &UiInputHistory;
     return a;
 }
 
