@@ -39,7 +39,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 7;   // 7: ui round 2   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
+constexpr std::int32_t kCoreApiVersion = 8;   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -151,6 +151,10 @@ struct CoreApi {
     // editing a new line). Returns 1 on the frame Enter was pressed.
     std::int32_t (*ui_input_history)(const char* label, char* buffer, std::int32_t capacity,
                                      const char* const* history, std::int32_t count, std::int32_t* cursor);
+
+    // Fault-safe read of game memory (code or data). Returns 1 when all
+    // `bytes` were readable. For tools that inspect compiled code.
+    std::int32_t (*memory_read)(const void* src, void* dst, std::int32_t bytes);
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

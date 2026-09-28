@@ -182,6 +182,10 @@ std::int32_t ApiHookCallOriginal(const CoreHookCall* call, CoreRValue* result) {
     return hk::CallOriginal(reinterpret_cast<const hk::Call*>(call), Gml(result)) ? 1 : 0;
 }
 
+std::int32_t ApiMemoryRead(const void* src, void* dst, std::int32_t bytes) {
+    return src && dst && bytes > 0 && gml::ReadMemory(src, dst, bytes) ? 1 : 0;
+}
+
 std::int32_t ApiHookEnable(std::int32_t id, std::int32_t enabled) {
     return (enabled ? hk::Enable(id) : hk::Disable(id)) ? 1 : 0;
 }
@@ -358,6 +362,7 @@ CoreApi Build() {
     a.ui_get_scroll_y            = &UiGetScrollY;
     a.ui_get_scroll_max_y        = &UiGetScrollMaxY;
     a.ui_input_history           = &UiInputHistory;
+    a.memory_read                = &ApiMemoryRead;
     return a;
 }
 

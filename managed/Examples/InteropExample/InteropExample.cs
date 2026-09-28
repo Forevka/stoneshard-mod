@@ -35,9 +35,15 @@ public sealed class InteropExampleMod : CoreMod
         if (UI.Button("Builtins.irandom(6) + 1"))
             _status = $"rolled {Builtins.irandom(6).AsReal + 1}";
 
-        // Objects resolve by name at runtime, so an index shuffle in an update is harmless.
-        if (Objects.oSys.Object is { InstanceCount: > 0 } sys)
-            UI.Text($"gold (oSys.gold): {sys.Instance(0)["gold"].AsReal:N0}");
+        // Objects resolve by name at runtime, so an index shuffle in an update is
+        // harmless; variable names are harvested constants, not magic strings.
+        if (Objects.oSys.First is { } sys)
+            UI.Text($"gold (oSys.gold): {sys[Objects.oSys.Vars.gold].AsReal:N0}");
+
+        // Scripts whose argument count was read from their code get a typed
+        // Invoke: key_to_string reads exactly one argument.
+        if (UI.Button("Scripts.key_to_string.Invoke(32)"))
+            _status = $"key 32 is {Scripts.key_to_string.Invoke(32)}";
 
         if (_status.Length > 0) UI.Text(_status);
     }

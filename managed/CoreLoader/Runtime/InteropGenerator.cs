@@ -43,6 +43,21 @@ internal static unsafe class InteropGenerator
 
     public static string Status { get; private set; } = "pending";
 
+    /// <summary>Forces the next launch to regenerate (new knowledge, e.g. harvested variables).</summary>
+    public static void MarkStale()
+    {
+        try { File.Delete(Path.Combine(OutputDirectory, ".stamp")); } catch (IOException) { }
+    }
+
+    /// <summary>Regenerates on the next frame, now, regardless of the stamp.</summary>
+    public static void RequestRegenerate()
+    {
+        VarHarvest.Flush();
+        MarkStale();
+        _done = false;
+        _waitFrames = 1800;   // assets are certainly loaded by now
+    }
+
     /// <summary>Called every frame; does its work once, when builtins are available.</summary>
     public static void Tick()
     {
@@ -144,11 +159,20 @@ internal static unsafe class InteropGenerator
         var sounds = EnumerateAssets("audio_exists", "audio_get_name");
 
         File.WriteAllText(Path.Combine(OutputDirectory, ns + ".Interop.csproj"), Csproj(ns));
-        File.WriteAllText(Path.Combine(OutputDirectory, "Scripts.g.cs"), ScriptsSource(ns, scripts));
+        var arity = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var s in scripts)
+        {
+            var addr = Game.FindSymbol(s);
+            if (addr != 0) arity[s] = CodeScan.ArgumentCount(addr);
+        }
+        int typed = arity.Values.Count(n => n is >= 1 and <= 8);
+        Log.Info($"interop: argument counts read from code for {typed} of {scripts.Count} scripts");
+
+        File.WriteAllText(Path.Combine(OutputDirectory, "Scripts.g.cs"), ScriptsSource(ns, scripts, arity));
         File.WriteAllText(Path.Combine(OutputDirectory, "Objects.g.cs"), ObjectsSource(ns, objects.Values));
         File.WriteAllText(Path.Combine(OutputDirectory, "Builtins.g.cs"), BuiltinsSource(ns, builtins));
         File.WriteAllText(Path.Combine(OutputDirectory, "Assets.g.cs"), AssetsSource(ns, sprites, rooms, sounds));
-        WriteCodeMap(scripts, objects.Values, builtins, sprites, rooms, sounds);
+        WriteCodeMap(scripts, arity, objects.Values, builtins, sprites, rooms, sounds);
 
         Log.Info($"interop: {scripts.Count} scripts, {objects.Count} objects, " +
                  $"{objects.Values.Sum(o => o.Events.Count)} events, {builtins.Count} builtins, " +
@@ -270,10 +294,11 @@ internal static unsafe class InteropGenerator
         </Project>
         """;
 
-    private static string ScriptsSource(string ns, List<string> scripts)
+    private static string ScriptsSource(string ns, List<string> scripts, IReadOnlyDictionary<string, int> arity)
     {
         var sb = new StringBuilder(Header(ns));
-        sb.Append("/// <summary>Every compiled script in the game. Call them, or hook them with Before/After.</summary>\n");
+        sb.Append("/// <summary>\n/// Every compiled script in the game. Call them (<c>Invoke</c> is typed where the argument\n");
+        sb.Append("/// count could be read from the compiled code, <c>Call</c> always works), or hook them with Before/After.\n/// </summary>\n");
         sb.Append("public static class Scripts\n{\n");
         // A member may not share its enclosing type's name (CS0542).
         var used = new HashSet<string>(StringComparer.Ordinal) { "Scripts" };
@@ -281,8 +306,13 @@ internal static unsafe class InteropGenerator
         {
             var id = Ident(s["gml_Script_".Length..]);
             if (!used.Add(id)) continue;
-            sb.Append($"    /// <summary><c>{s}</c></summary>\n");
-            sb.Append($"    public static readonly global::CoreLoader.ScriptRef {id} = new(\"{s}\");\n");
+            int n = arity.TryGetValue(s, out var a) ? a : 0;
+            // 0 means "reads no guarded arguments" - either none, or it indexes
+            // argument[i] dynamically - so it keeps the untyped Call(params).
+            string type = n is >= 1 and <= 8 ? $"ScriptRef{n}" : "ScriptRef";
+            string note = n is >= 1 and <= 8 ? $" - reads {n} argument{(n == 1 ? "" : "s")}" : "";
+            sb.Append($"    /// <summary><c>{s}</c>{note}</summary>\n");
+            sb.Append($"    public static readonly global::CoreLoader.{type} {id} = new(\"{s}\");\n");
         }
         return sb.Append("}\n").ToString();
     }
@@ -296,16 +326,32 @@ internal static unsafe class InteropGenerator
         foreach (var o in objects)
         {
             var id = Ident(o.Name);
-            // Each object class holds members called Name and Object, so an
-            // object with one of those names would clash with its own member.
-            if (id is "Name" or "Object") id += "_";
+            // Each object class holds members called Name, Object, First and
+            // Vars, so an object with one of those names would clash with them.
+            if (id is "Name" or "Object" or "First" or "Vars") id += "_";
             if (!used.Add(id)) continue;
             sb.Append($"    /// <summary>Object <c>{o.Name}</c>.</summary>\n");
             sb.Append($"    public static class {id}\n    {{\n");
             sb.Append($"        public const string Name = \"{o.Name}\";\n");
             sb.Append($"        /// <summary>The object by name, resolved in the running game (null if it no longer exists).</summary>\n");
             sb.Append($"        public static global::CoreLoader.GmlObject? Object => global::CoreLoader.GmlObject.Find(Name);\n");
-            var members = new HashSet<string>(StringComparer.Ordinal) { "Name", "Object", id };
+            sb.Append($"        /// <summary>The first live instance, or null when there is none.</summary>\n");
+            sb.Append($"        public static global::CoreLoader.InstanceRef? First => Object is {{ InstanceCount: > 0 }} o ? o.Instance(0) : null;\n");
+            var members = new HashSet<string>(StringComparer.Ordinal) { "Name", "Object", "First", "Vars", id };
+
+            if (VarHarvest.Known.TryGetValue(o.Name, out var vars) && vars.Count > 0)
+            {
+                sb.Append($"        /// <summary>Variables seen on live {o.Name} instances (harvested while playing).</summary>\n");
+                sb.Append("        public static class Vars\n        {\n");
+                var seen = new HashSet<string>(StringComparer.Ordinal) { "Vars" };
+                foreach (var v in vars)
+                {
+                    var vid = Ident(v);
+                    if (!seen.Add(vid)) continue;
+                    sb.Append($"            public const string {vid} = \"{v}\";\n");
+                }
+                sb.Append("        }\n");
+            }
             foreach (var (member, symbol) in o.Events.OrderBy(e => e.Member, StringComparer.Ordinal))
             {
                 var m = Ident(member);
@@ -367,7 +413,7 @@ internal static unsafe class InteropGenerator
         return sb.Append("}\n").ToString();
     }
 
-    private static void WriteCodeMap(List<string> scripts, IEnumerable<ObjectInfo> objects,
+    private static void WriteCodeMap(List<string> scripts, IReadOnlyDictionary<string, int> arity, IEnumerable<ObjectInfo> objects,
                                      List<(string Name, int Arity)> builtins,
                                      List<string> sprites, List<string> rooms, List<string> sounds)
     {
@@ -376,8 +422,12 @@ internal static unsafe class InteropGenerator
             game = Game.Name,
             generated = DateTime.UtcNow,
             functions = Game.Symbols.Select(s => new { name = s.Name, address = $"0x{s.Address:X}" }),
-            scripts,
-            objects = objects.Select(o => new { name = o.Name, index = o.Index, events = o.Events.Select(e => e.Symbol) }),
+            scripts = scripts.Select(s => new { name = s, arguments = arity.TryGetValue(s, out var n) ? n : 0 }),
+            objects = objects.Select(o => new
+            {
+                name = o.Name, index = o.Index, events = o.Events.Select(e => e.Symbol),
+                variables = VarHarvest.Known.TryGetValue(o.Name, out var v) ? v.ToArray() : Array.Empty<string>(),
+            }),
             builtins = builtins.Select(b => new { name = b.Name, arity = b.Arity }),
             sprites,
             rooms,

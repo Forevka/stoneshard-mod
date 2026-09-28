@@ -86,6 +86,7 @@ internal static unsafe class Entry
             ModManager.PollChanges();
             Game.DrainPending(Log);
             InteropGenerator.Tick();
+            VarHarvest.Tick();
             ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate());
             ModConfig.FlushSettled();
             Values.Drain();
@@ -180,6 +181,7 @@ internal static unsafe class Entry
         {
             ModManager.ForEach(nameof(CoreMod.OnShutdown), mod => mod.OnShutdown());
             ModConfig.FlushAll();
+            VarHarvest.Flush();
             Log.Info("shut down");
         }
         catch (Exception ex)
@@ -197,6 +199,9 @@ internal static unsafe class Entry
         UI.Text($"Hooked functions: {Hooks.NativeHookCount}   value lifetime: " +
                 $"{(Values.CanFree ? "free" : "no free")}/{(Values.CanCopy ? "copy" : "no copy")}");
         UI.TextDisabled($"Interop: {InteropGenerator.Status}");
+        UI.TextDisabled($"Variables harvested: {VarHarvest.Known.Sum(kv => kv.Value.Count):N0} on " +
+                        $"{VarHarvest.Known.Count:N0} objects ({VarHarvest.LearnedThisSession:N0} new this session)");
+        if (UI.Button("Regenerate interop now")) InteropGenerator.RequestRegenerate();
         UI.TextDisabled($".NET {Environment.Version}   mods folder: {ModManager.ModsDirectory}");
         UI.Separator();
 

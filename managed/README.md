@@ -34,14 +34,30 @@ overlay (**INSERT**) has a *Mods* tab that shows the loader's status and one tab
 
 1. Install CoreLoader and start the game once.
 2. CoreLoader writes `CoreLoader\Interop\<Game>.Interop\`, a buildable project that contains:
-   - `Scripts.*`: a `ScriptRef` for every script, which you can call and hook;
-   - `Objects.<object>.<Event>_<n>`: an `EventRef` for every object event;
+   - `Scripts.*`: a ref for every script, to call or hook. Where the argument count can be read from
+     the compiled code (366 of 486 scripts in Dwarf Eats Mountain), the ref has a typed `Invoke`, e.g.
+     `Scripts.dealDamage` is a `ScriptRef6`. The rest keep `Call(params)`;
+   - `Objects.<object>.<Event>_<n>`: an `EventRef` for every object event, plus `Objects.<object>.First`
+     (its first live instance) and `Objects.<object>.Vars.<name>`, the variable names harvested from
+     live instances as you play (2,020 in the first minute of Dwarf Eats Mountain);
    - `Builtins.*`: typed wrappers that use the argument counts this game's runtime actually registers;
    - `Assets.*`: sprite, room and sound names;
-   - `codemap.json`: all of the above, plus addresses, for tools.
+   - `codemap.json`: all of the above, plus addresses, argument counts and variables, for tools.
 
-   It is regenerated automatically when the game exe changes.
-3. Reference the interop project and write your mod. `Examples/InteropExample` shows how.
+   It is regenerated when the game exe changes, and after the harvester learns new variables (on
+   the next launch, or immediately with *Regenerate interop now* in the Loader tab).
+3. Create the mod from the template, which references CoreLoader and the interop and deploys every
+   build into the game:
+
+   ```
+   dotnet new install managed\Templates\CoreLoaderMod
+   dotnet new coreloader-mod -n MyMod --gameDir "<game folder>" --gameName "<Exe name>" --interop <Game_Interop_Namespace>
+   dotnet build MyMod
+   ```
+
+   With the game running, the build is **hot-reloaded**: CoreLoader watches `Mods\`, and a rebuilt
+   mod is swapped in between frames. The old copy gets `OnShutdown`, and its hooks and config are
+   released. The Loader tab also has Reload buttons.
 
 ## A mod
 
@@ -79,20 +95,28 @@ Build it against `CoreLoader.dll`: the `Mods/` projects here inherit that setup 
 | `Game` | `Name`, `Symbols`, `CallScript`, `CallEvent`, `CallBuiltin`, `BuiltinArity`, `CurrentSelf`, `RunOnGameThread` |
 | `Globals`, `GmlObject`, `InstanceRef` | Read and write global and instance variables by name, list objects and live instances |
 | `Gml` | `TypeOf`, arrays and structs through the runtime's own builtins |
-| `UI` | ImGui widgets for your tab. Scopes are tracked, so a mistake can't corrupt the overlay |
+| `UI` | ImGui widgets for your tab, including scrolling regions and a history-aware input line. Scopes are tracked, so a mistake can't corrupt the overlay |
 | `RValue` | The runtime's 16-byte value, laid out identically. Converts implicitly from double, int, bool and string |
+| `Values` | Lifetime of strings, arrays and structs: `Keep`, `Free`, `Copy` |
 
 The rules the loader enforces:
 - GML is only touched on the game thread. Every callback runs there; from anywhere else, use
   `Game.RunOnGameThread`.
-- A mod that throws, or that leaves UI scopes open, is disabled for the session and its hooks are
-  removed. It never takes the game down.
-- Hooks are shared: however many mods hook one function, it is detoured once.
+- A mod that throws, or that leaves UI scopes open, is disabled until it is reloaded, and its hooks
+  are removed. It never takes the game down.
+- Hooks are shared: however many mods hook one function, it is detoured once, and the loader's own
+  tools share the same detour. A function nobody hooks any more is detached again.
+- **Values are released automatically.** Every string, array or struct the game hands you (call
+  results, variable reads, `RValue.FromString`) goes into a per-frame pool and is released at the
+  end of the frame. Using it within the frame is always safe and never leaks, including formatting a
+  new string every frame. Only a value you keep in a field across frames needs `Values.Keep(v)`,
+  and later `Values.Free(ref v)`.
 
 ## Mods in this repository
 
 | Mod | Game | What it does |
 |---|---|---|
+| Console | any | In-game console. Evaluates GML-style expressions against the live game: `instance_number(o_enemy)`, `oSys.gold += 1e6`, `global.x`, `obj[2].hp = 1`, `scr_foo(1, "a")`. Also `find`, `objects`, `vars`, `globals`, `hook`/`unhook` for live call logging, and history |
 | ScriptSpy | any | Hook any function by name and watch its arguments and results live. Also logs them; `ScriptSpy.txt` lists watches to start with the game |
 | GlobalsEditor | any | Browse, edit and freeze global variables |
 | InstanceInspector | any | Objects, live instances and their variables: edit and freeze them, and search every instance for a variable name |
@@ -101,8 +125,13 @@ The rules the loader enforces:
 | StoneshardBoost | Stoneshard | XP multiplier (every source goes through `scr_get_XP`), loot multiplier (re-runs `scr_loot`) |
 | HelloMod, InteropExample | any / DEM | Minimal examples |
 
-`Tests/` holds regression mods for the loader itself: a UI-fault mod, a GC-safety variable probe,
-a reflection probe and an XP probe.
+`Tests/` holds regression mods for the loader itself:
+- a UI-fault mod;
+- a GC-safety variable probe;
+- a reflection probe;
+- an XP probe;
+- a value-lifetime probe (memory stays flat while it creates about 3,000 strings a frame);
+- a hook-coexistence probe (C# and the loader's own tools on the same event).
 
 ## Finding things to mod
 

@@ -7,7 +7,7 @@ namespace CoreLoader.Native;
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct CoreApi
 {
-    public const int ExpectedVersion = 7;
+    public const int ExpectedVersion = 8;
 
     public int Size;
     public int Version;
@@ -78,6 +78,7 @@ internal unsafe struct CoreApi
     public delegate* unmanaged<float> UiGetScrollY;
     public delegate* unmanaged<float> UiGetScrollMaxY;
     public delegate* unmanaged<byte*, byte*, int, byte**, int, int*, int> UiInputHistory;
+    public delegate* unmanaged<nint, byte*, int, int> MemoryRead;
 }
 
 // Mirror of `struct ManagedExports`.
