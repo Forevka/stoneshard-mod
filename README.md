@@ -1,4 +1,9 @@
-# Stoneshard Mod
+# Stoneshard Mod / CoreLoader
+
+> **CoreLoader** — the same `version.dll` now also hosts .NET and loads C# mods in *any* YYC-compiled
+> GameMaker game (verified on Stoneshard and Dwarf Eats Mountain), generates a typed interop project
+> from the running game, and ships tool and game mods. See **[managed/README.md](managed/README.md)**.
+> The Stoneshard tools described below appear only when the loader is running in Stoneshard.
 
 A native debugging and cheat mod for [Stoneshard](https://store.steampowered.com/app/625960/Stoneshard/),
 loaded as a `version.dll` proxy and driven from a Dear ImGui overlay (**INSERT** toggles it).

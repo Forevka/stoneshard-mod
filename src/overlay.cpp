@@ -356,20 +356,26 @@ void DrawUI() {
     ImGui::SetNextWindowSize(ImVec2(660.0f, 480.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(40.0f, 40.0f), ImGuiCond_FirstUseEver);
 
-    ImGui::Begin("Stoneshard Mod");
+    ImGui::Begin("CoreLoader");
 
-    // Ordered by who wants them: the tabs you play with first, the tooling
-    // that dissects the game after. Symbols and Status moved under Debug -
-    // they are diagnostics, and having seven top-level tabs meant hunting for
-    // the two that get used every session.
+    // The native Stoneshard tools predate the generic loader and name that
+    // game's own scripts and objects; in any other game they would only show
+    // errors, so they appear only where they apply. Its console scripts are
+    // the fingerprint.
+    static const bool stoneshard = sym::Find("gml_Script_scr_console_sethp") != nullptr;
+
+    // Ordered by who wants them: mods first, the game-specific tools next, the
+    // tooling that dissects the game last.
     if (ImGui::BeginTabBar("##tabs")) {
         if (ImGui::BeginTabItem("Mods"))    { host::DrawModsTab();          ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Cheats"))  { cheats::DrawCheatsTab();      ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Enemies")) { enemies::DrawEnemiesTab();   ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Loot"))    { loot::DrawLootTab();          ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Speed"))   { gamespeed::DrawSpeedTab();    ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Saves"))   { savemigrate::DrawSavesTab();  ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Console")) { console::DrawConsoleTab();    ImGui::EndTabItem(); }
+        if (stoneshard) {
+            if (ImGui::BeginTabItem("Cheats"))  { cheats::DrawCheatsTab();      ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Enemies")) { enemies::DrawEnemiesTab();   ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Loot"))    { loot::DrawLootTab();          ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Speed"))   { gamespeed::DrawSpeedTab();    ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Saves"))   { savemigrate::DrawSavesTab();  ImGui::EndTabItem(); }
+            if (ImGui::BeginTabItem("Console")) { console::DrawConsoleTab();    ImGui::EndTabItem(); }
+        }
         if (ImGui::BeginTabItem("Debug"))   { DrawDebugTab();               ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }

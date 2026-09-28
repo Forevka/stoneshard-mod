@@ -23,6 +23,23 @@ void Resolve() {
             while (!g_dir.empty() && (g_dir.back() == '\\' || g_dir.back() == '/'))
                 g_dir.pop_back();
         }
+        // An installed CoreLoader (a CoreLoader\ folder next to this dll) keeps
+        // everything it writes under CoreLoader\Logs - contained, and on the
+        // player's own machine rather than at a path compiled in on ours.
+        if (g_dir.empty()) {
+            HMODULE self = nullptr;
+            GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCSTR>(&Resolve), &self);
+            char path[MAX_PATH * 4];
+            const DWORD len = GetModuleFileNameA(self, path, sizeof(path));
+            if (len > 0 && len < sizeof(path)) {
+                const auto loader = std::filesystem::path(path).parent_path() / "CoreLoader";
+                std::error_code ec;
+                if (std::filesystem::is_directory(loader, ec)) g_dir = (loader / "Logs").string();
+            }
+        }
+        // A development build run straight from the build tree.
         if (g_dir.empty()) g_dir = MOD_DATA_DIR;
 
         std::error_code ec;

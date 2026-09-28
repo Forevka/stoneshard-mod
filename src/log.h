@@ -5,8 +5,8 @@
 
 namespace mod {
 
-// Writes to MOD_DATA_DIR/stoneshard-mod.log — deliberately inside the project
-// workspace, never the game directory.
+// Writes coreloader.log into paths::DataDir(): <game>\CoreLoader\Logs when
+// installed, the build workspace in development, or SSMOD_DATA_DIR.
 void LogInit();
 void LogShutdown();
 void Logf(const char* fmt, ...);

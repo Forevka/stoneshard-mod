@@ -133,7 +133,11 @@ internal static unsafe class InteropGenerator
     private static List<string> EnumerateAssets(string exists, string getName)
     {
         var names = new List<string>();
-        if (Game.BuiltinArity(exists) is null || Game.BuiltinArity(getName) is null) return names;
+        if (Game.BuiltinArity(exists) is null || Game.BuiltinArity(getName) is null)
+        {
+            Log.Warning($"interop: {exists}/{getName} not in this runtime's registry; skipping");
+            return names;
+        }
         try
         {
             int misses = 0;
@@ -142,6 +146,12 @@ internal static unsafe class InteropGenerator
                 if (!Game.CallBuiltin(exists, i).AsBool) { misses++; continue; }
                 misses = 0;
                 names.Add(Game.CallBuiltin(getName, i).ToString());
+            }
+            if (names.Count == 0)
+            {
+                var probe = Game.CallBuiltin(exists, 0);
+                Log.Warning($"interop: {exists} found nothing; {exists}(0) gave kind {probe.Kind} " +
+                            $"(real {probe.Real}, int {probe.Int32})");
             }
         }
         catch (GmlException ex)

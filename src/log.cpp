@@ -30,7 +30,7 @@ std::string Timestamp() {
 void LogInit() {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_file) return;
-    g_file = std::fopen(paths::File("stoneshard-mod.log").c_str(), "w");
+    g_file = std::fopen(paths::File("coreloader.log").c_str(), "w");
 }
 
 void LogShutdown() {
