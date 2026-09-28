@@ -39,7 +39,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 1;
+constexpr std::int32_t kCoreApiVersion = 2;   // 2: hooks
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -103,6 +103,27 @@ struct CoreApi {
     void         (*ui_separator)();
     void         (*ui_push_id)(const char* id);
     void         (*ui_pop_id)();
+
+    // --------------------------------------------------------------- hooks
+    // Detours a gml_* function (kind 0 = script, 1 = object event). One native
+    // hook per target however many subscribers the managed side has; returns
+    // its id, the same id again for the same target, or -1.
+    std::int32_t (*hook_install)(void* target, std::int32_t kind);
+    // Whether calls through the hook are routed to ManagedExports.hook_dispatch.
+    std::int32_t (*hook_set_managed)(std::int32_t id, std::int32_t managed);
+    std::int32_t (*hook_count)();
+};
+
+// Mirror of mod::hk::Call - what a hook callback sees.
+struct CoreHookCall {
+    void*         self;
+    void*         other;
+    CoreRValue*   result;    // null for events
+    CoreRValue**  args;      // null for events
+    std::int32_t  argc;
+    std::int32_t  phase;     // 0 before the original, 1 after
+    std::int32_t  skip;      // set during phase 0 to suppress the original
+    std::int32_t  hook_id;
 };
 
 // Filled in by the managed runtime's Init. Every entry is required.
@@ -111,6 +132,7 @@ struct ManagedExports {
     void (*frame)();                 // once per rendered frame, game thread
     void (*gui)();                   // inside the overlay's Mods tab
     void (*shutdown)();
+    void (*hook_dispatch)(CoreHookCall* call);
 };
 
 } // extern "C"

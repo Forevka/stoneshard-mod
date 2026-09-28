@@ -5,6 +5,7 @@
 #include "gml.h"
 #include "hooks.h"
 #include "host/dotnet_host.h"
+#include "hookengine.h"
 #include "log.h"
 #include "potions.h"
 #include "tracer.h"
@@ -66,6 +67,12 @@ DWORD WINAPI InitThread(LPVOID) {
     // Resolves the shared prologue helper; the hook itself is only installed
     // while a recording is armed.
     mod::tracer::Init();
+
+    // Runtimes without a current-self global need a live instance from
+    // somewhere before any builtin can be called; watching Step events is the
+    // generic source. Needs MinHook, so after InstallHooks.
+    if (mod::gml::Ready() && !mod::gml::HasSelfGlobal())
+        mod::hk::InstallSelfObservers(64);
 
     // Last, so the symbol table and runtime helpers the C# side asks for are
     // already resolved. Mods' OnInitialize runs later, on the game thread.

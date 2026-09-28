@@ -172,24 +172,37 @@ internal static class ModManager
         }
     }
 
+    /// <summary>
+    /// The mod whose callback is running, so whatever it registers (hooks)
+    /// is attributed to it and torn down with it if it faults.
+    /// </summary>
+    public static LoadedMod? Current { get; private set; }
+
     public static void Invoke(LoadedMod m, string callback, Action<CoreMod> action)
     {
+        var previous = Current;
+        Current = m;
         try
         {
             action(m.Instance);
         }
         catch (Exception ex)
         {
-            m.State = ModState.Faulted;
-            m.Fault = $"{callback}: {ex.GetType().Name}: {ex.Message}";
-            m.Instance.Log.Error($"{callback} threw - the mod is disabled for this session", ex);
+            Fault(m, $"{callback}: {ex.GetType().Name}: {ex.Message}", ex);
+        }
+        finally
+        {
+            Current = previous;
         }
     }
 
-    public static void Fault(LoadedMod m, string reason)
+    public static void Fault(LoadedMod m, string reason, Exception? ex = null)
     {
+        if (m.State == ModState.Faulted) return;
         m.State = ModState.Faulted;
         m.Fault = reason;
-        m.Instance.Log.Error($"{reason} - the mod is disabled for this session");
+        Hooks.RemoveOwner(m);
+        if (ex != null) m.Instance.Log.Error($"{reason} - the mod is disabled for this session", ex);
+        else m.Instance.Log.Error($"{reason} - the mod is disabled for this session");
     }
 }

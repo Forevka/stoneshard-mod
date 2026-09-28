@@ -30,15 +30,26 @@ namespace {
 using TRoutine = void (*)(gml::RValue* result, void* self, void* other,
                           int argc, gml::RValue* args);
 
+// The registry entry changed shape between runtimes, so both are understood and
+// the live table decides which one it is (see DetectLayout).
 #pragma pack(push, 1)
-struct RFunction {          // sizeof == 0x50
+struct RFunctionInline {    // older runtimes (Stoneshard): name stored inline
     char     name[0x40];
     TRoutine fn;
     int32_t  argc;          // -1 == variadic
     int32_t  id;
 };
+struct RFunctionRef {       // 2024+ runtimes: name by pointer
+    const char* name;
+    TRoutine    fn;
+    int32_t     argc;
+    int32_t     pad;
+};
 #pragma pack(pop)
-static_assert(sizeof(RFunction) == 0x50, "RFunction must be 80 bytes");
+static_assert(sizeof(RFunctionInline) == 0x50, "inline RFunction must be 80 bytes");
+static_assert(sizeof(RFunctionRef) == 0x18, "pointer RFunction must be 24 bytes");
+
+enum class Layout { Unknown, Inline, Ref };
 
 std::unordered_map<std::string, Builtin> g_map;
 bool        g_tried  = false;
@@ -139,61 +150,106 @@ void FindRegistrations(std::vector<AnchorResult>&                     anchors,
     }
 }
 
-// The registrar's prologue reads its three globals rip-relatively:
-//   8B 05 <d32>        -> count     (int32)
-//   44 8B 0D <d32>     -> capacity  (int32)
-//   48 8B 05 <d32>     -> array ptr (qword)
+// Decodes `[REX] 8B /r` with a rip-relative operand (modrm mod=00 rm=101) at `at`.
+// Returns the referenced address and whether the load is 64-bit (REX.W).
+bool RipLoad(std::uintptr_t at, std::uintptr_t& target, bool& is64, std::size_t& len) {
+    const auto* b = reinterpret_cast<const unsigned char*>(at);
+    std::size_t i = 0;
+    is64 = false;
+    if ((b[0] & 0xF0) == 0x40) { is64 = (b[0] & 0x08) != 0; i = 1; }
+    if (b[i] != 0x8B) return false;
+    if ((b[i + 1] & 0xC7) != 0x05) return false;        // mod=00, rm=101 -> [rip+d32]
+    std::int32_t d;
+    std::memcpy(&d, b + i + 2, 4);
+    len    = i + 6;
+    target = at + len + static_cast<std::intptr_t>(d);
+    return true;
+}
+
+// The registrar keeps three adjacent globals - array ptr, int count at +8 and
+// int capacity at +0xC - and reads all of them rip-relatively. Which register
+// each load uses varies between runtimes (Stoneshard's reads the count into eax,
+// the 2024 runtime into ecx and the capacity into eax), so no single encoding is
+// assumed: every rip-relative load in the function is collected, and the answer
+// is the qword global whose +8 is also loaded as a dword.
 bool ExtractGlobals(std::uintptr_t reg, void*** outPtr, std::int32_t** outCount) {
-    // The count and capacity are read in the prologue, but the array pointer is
-    // not touched until the store at the far end of the function - roughly 0xAA
-    // bytes in. A 0x60-byte window finds two of the three and fails; the whole
-    // registrar is only about 0x100 bytes, so scan past it and stop at the ret.
+    // The array pointer is only read at the far end of the function, so the
+    // window has to cover the whole registrar, not just its prologue.
     constexpr std::size_t kWindow = 0x200;
 
-    std::uintptr_t countG = 0, capG = 0;
-    std::vector<std::uintptr_t> qwordReads;      // every `mov r64,[rip+d32]` target
-
+    std::vector<std::uintptr_t> qwordReads, dwordReads;
     for (std::size_t i = 0; i + 8 < kWindow; ++i) {
         const std::uintptr_t at = reg + i;
-        if (!InText(at)) break;
-        const auto* b = reinterpret_cast<const unsigned char*>(at);
-
-        if (!countG && b[0] == 0x8B && b[1] == 0x05) {
-            std::int32_t d; std::memcpy(&d, b + 2, 4);
-            countG = at + 6 + static_cast<std::intptr_t>(d);
-        } else if (!capG && b[0] == 0x44 && b[1] == 0x8B && b[2] == 0x0D) {
-            std::int32_t d; std::memcpy(&d, b + 3, 4);
-            capG = at + 7 + static_cast<std::intptr_t>(d);
-        } else if (b[0] == 0x48 && b[1] == 0x8B && b[2] == 0x05) {
-            std::int32_t d; std::memcpy(&d, b + 3, 4);
-            qwordReads.push_back(at + 7 + static_cast<std::intptr_t>(d));
-        }
+        if (!InText(at + 8)) break;
+        std::uintptr_t target; bool is64; std::size_t len;
+        if (!RipLoad(at, target, is64, len)) continue;
+        if (!sym::DataRange().contains(target)) continue;
+        (is64 ? qwordReads : dwordReads).push_back(target);
     }
 
-    if (!countG || qwordReads.empty()) {
-        Logf("[!] builtins: could not extract globals (count=%p cap=%p qword reads=%zu)",
-             (void*)countG, (void*)capG, qwordReads.size());
+    std::uintptr_t ptrG = 0;
+    for (std::uintptr_t q : qwordReads) {
+        for (std::uintptr_t d : dwordReads) {
+            if (d == q + 8) { ptrG = q; break; }
+        }
+        if (ptrG) break;
+    }
+
+    if (!ptrG) {
+        Logf("[!] builtins: could not extract globals (%zu qword / %zu dword rip loads, none adjacent)",
+             qwordReads.size(), dwordReads.size());
         return false;
     }
 
-    // The three globals sit adjacent - ptr, then count at +8, capacity at +0xC.
-    // Preferring the qword read that lands exactly at count-8 turns "the first
-    // pointer-sized global this function reads" into a cross-checked answer.
-    std::uintptr_t ptrG = 0;
-    for (std::uintptr_t q : qwordReads) {
-        if (q + 8 == countG) { ptrG = q; break; }
-    }
-    if (!ptrG) {
-        ptrG = qwordReads.front();
-        Logf("builtins: note - no qword read landed at count-8; falling back to %p "
-             "(count=%p, %zu candidates)",
-             (void*)ptrG, (void*)countG, qwordReads.size());
-    }
-
     *outPtr   = reinterpret_cast<void**>(ptrG);
-    *outCount = reinterpret_cast<std::int32_t*>(countG);
-    Logf("builtins: globals ptr=%p count=%p cap=%p", (void*)ptrG, (void*)countG, (void*)capG);
+    *outCount = reinterpret_cast<std::int32_t*>(ptrG + 8);
+    Logf("builtins: globals ptr=%p count=%p cap=%p", (void*)ptrG, (void*)(ptrG + 8), (void*)(ptrG + 0xC));
     return true;
+}
+
+bool PrintableName(const char* s, std::size_t max) {
+    for (std::size_t c = 0; c < max; ++c) {
+        const auto ch = static_cast<unsigned char>(s[c]);
+        if (ch == 0) return c > 0;
+        if (ch < 0x20 || ch > 0x7e) return false;
+    }
+    return false;
+}
+
+// Reading a candidate name pointer that may be garbage: never fault on it.
+bool SafePrintableName(const char* s, std::size_t max) {
+    __try {
+        return PrintableName(s, max);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Decides the entry shape from the first entries of the live table: whichever
+// reading gives printable names, code pointers and sane arities for all of
+// them is the right one.
+Layout DetectLayout(const void* table, int n) {
+    const int probe = n < 16 ? n : 16;
+    int inlineOk = 0, refOk = 0;
+    __try {
+        const auto* in = static_cast<const RFunctionInline*>(table);
+        const auto* rf = static_cast<const RFunctionRef*>(table);
+        for (int i = 0; i < probe; ++i) {
+            if (PrintableName(in[i].name, 0x40) && InText(reinterpret_cast<std::uintptr_t>(in[i].fn)) &&
+                in[i].argc >= -1 && in[i].argc < 64)
+                ++inlineOk;
+            if (SafePrintableName(rf[i].name, 0x80) && InText(reinterpret_cast<std::uintptr_t>(rf[i].fn)) &&
+                rf[i].argc >= -1 && rf[i].argc < 64)
+                ++refOk;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return Layout::Unknown;
+    }
+    if (inlineOk == probe) return Layout::Inline;
+    if (refOk == probe) return Layout::Ref;
+    Logf("[!] builtins: entry layout not recognised (inline %d/%d, by-pointer %d/%d)",
+         inlineOk, probe, refOk, probe);
+    return Layout::Unknown;
 }
 
 } // namespace
@@ -202,12 +258,17 @@ bool        Ready()  { return g_ready; }
 const char* Status() { return g_status.c_str(); }
 std::size_t Count()  { return g_map.size(); }
 
-bool Init() {
-    if (g_tried) return g_ready;
-    if (!sym::Healthy()) { g_status = "symbol resolver unhealthy"; return false; }
-    g_tried = true;
+namespace {
 
-    // --- consensus on the registrar -----------------------------------------
+// Resolved once. The registrar and its globals are fixed at link time; only
+// the table they point to fills in during startup, so a retry never needs to
+// rescan .text - it only re-reads the globals.
+void**        g_pArray   = nullptr;
+std::int32_t* g_pCount   = nullptr;
+bool          g_scanned  = false;
+DWORD         g_lastTry  = 0;
+
+bool ResolveRegistrar() {
     std::vector<AnchorResult> anchors;
     anchors.reserve(std::size(kAnchors));
     for (const char* n : kAnchors)
@@ -250,41 +311,69 @@ bool Init() {
     Logf("builtins: registrar %p (%d/%d anchors agree, runner-up %d)",
          (void*)agreed, votes, total, runnerUp);
 
-    // --- globals and the array ----------------------------------------------
-    void**        pArray = nullptr;
-    std::int32_t* pCount = nullptr;
-    if (!ExtractGlobals(agreed, &pArray, &pCount)) {
+    if (!ExtractGlobals(agreed, &g_pArray, &g_pCount)) {
         g_status = "could not read the registrar's globals";
         return false;
     }
+    return true;
+}
 
-    auto* table = reinterpret_cast<RFunction*>(*pArray);
-    const int n = *pCount;
-    if (!table || n < 1500 || n > 6000) {
+} // namespace
+
+bool Init() {
+    if (g_ready) return true;
+    if (!sym::Healthy()) { g_status = "symbol resolver unhealthy"; return false; }
+
+    // The registrar scan is deterministic: if it failed once it fails forever.
+    if (!g_scanned) {
+        g_scanned = true;
+        if (!ResolveRegistrar()) { g_tried = true; return false; }
+    }
+    if (!g_pArray || !g_pCount) return false;
+
+    // Before the runner has registered its builtins the table is empty or
+    // half-built. Look again at most twice a second rather than every call,
+    // so an early caller neither spins nor floods the log.
+    const DWORD now = GetTickCount();
+    if (g_tried && now - g_lastTry < 500) return false;
+    g_tried   = true;
+    g_lastTry = now;
+
+    const void* table = *g_pArray;
+    const int   n     = *g_pCount;
+    if (!table || n < 500 || n > 20000) {
         char buf[128];
-        std::snprintf(buf, sizeof(buf), "implausible builtin table (ptr=%p count=%d)", (void*)table, n);
+        std::snprintf(buf, sizeof(buf), "builtin table not populated yet (ptr=%p count=%d)", table, n);
         g_status = buf;
-        Logf("[!] builtins: %s - registration may not have run yet", g_status.c_str());
-        g_tried = false;                       // allow a later retry
+        return false;
+    }
+
+    const Layout layout = DetectLayout(table, n);
+    if (layout == Layout::Unknown) {
+        g_status = "builtin entry layout not recognised";
         return false;
     }
 
     g_map.clear();
     g_map.reserve(static_cast<std::size_t>(n));
     for (int i = 0; i < n; ++i) {
-        const RFunction& e = table[i];
-
-        bool nameOk = false;                   // printable and NUL-terminated inside 64
-        for (int c = 0; c < 0x40; ++c) {
-            const unsigned char ch = static_cast<unsigned char>(e.name[c]);
-            if (ch == 0) { nameOk = c > 0; break; }
-            if (ch < 0x20 || ch > 0x7e) break;
+        const char* name;
+        TRoutine    fn;
+        int         argc;
+        if (layout == Layout::Inline) {
+            const auto& e = static_cast<const RFunctionInline*>(table)[i];
+            if (!PrintableName(e.name, 0x40)) continue;
+            name = e.name; fn = e.fn; argc = e.argc;
+        } else {
+            const auto& e = static_cast<const RFunctionRef*>(table)[i];
+            if (!SafePrintableName(e.name, 0x80)) continue;
+            name = e.name; fn = e.fn; argc = e.argc;
         }
-        if (!nameOk) continue;
-        if (!InText(reinterpret_cast<std::uintptr_t>(e.fn))) continue;
-
-        g_map.emplace(e.name, Builtin{reinterpret_cast<void*>(e.fn), e.argc});
+        if (!InText(reinterpret_cast<std::uintptr_t>(fn))) continue;
+        g_map.emplace(name, Builtin{reinterpret_cast<void*>(fn), argc});
     }
+    Logf("builtins: %s-name layout, %zu of %d entries usable",
+         layout == Layout::Inline ? "inline" : "by-pointer", g_map.size(), n);
 
     // --- arity spot-check ----------------------------------------------------
     for (const auto& chk : kArity) {
@@ -506,11 +595,14 @@ void PhaseA(void* self) {
     gml::SetReal(mk[2], 1.0);      // buffer_fixed
     gml::RValue buf{};
 
-    if (Call("buffer_create", &buf, mk, 3, self) && buf.kind == gml::kReal && buf.real >= 0.0) {
-        Logf("builtins:   buffer_create(64,1,1) -> %g", buf.real);
+    // Older runtimes hand back a numeric buffer index; 2024+ runtimes a typed
+    // handle (kind 15). Either way the value is passed straight back unchanged.
+    if (Call("buffer_create", &buf, mk, 3, self) &&
+        ((buf.kind == gml::kReal && buf.real >= 0.0) || buf.kind == gml::kRef)) {
+        if (buf.kind == gml::kReal) Logf("builtins:   buffer_create(64,1,1) -> %g", buf.real);
+        else                        Logf("builtins:   buffer_create(64,1,1) -> handle %p", buf.ptr);
 
-        gml::RValue id{};
-        gml::SetReal(id, buf.real);
+        gml::RValue id = buf;
 
         gml::RValue size{};
         if (Call("buffer_get_size", &size, &id, 1, self) && size.kind == gml::kReal) {

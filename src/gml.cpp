@@ -26,6 +26,7 @@
 #include <intrin.h>
 #include <MinHook.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <unordered_map>
@@ -111,6 +112,32 @@ void TallySetString(std::uintptr_t fn, std::unordered_map<std::uintptr_t, int>& 
             if (sym::TextRange().contains(target)) ++votes[target];
             break;
         }
+    }
+}
+
+// Newer runtimes (2024+) no longer build string literals inside scripts: every
+// literal is a static RValue constructed once at startup by a tiny initialiser,
+//     lea rdx, [rip+str]     ; 48 8D 15 d32  -> printable .rdata string
+//     lea rcx, [rip+value]   ; 48 8D 0D d32  -> the static RValue in .data
+//     call <YYSetString>     ; E8 rel32
+// so the call target is tallied across the whole of .text instead.
+void TallyStaticStringInits(std::unordered_map<std::uintptr_t, int>& votes) {
+    const auto tx = sym::TextRange();
+    for (std::uintptr_t at = tx.lo; at + 19 < tx.hi; ++at) {
+        const auto* b = reinterpret_cast<const unsigned char*>(at);
+        if (!(b[0] == 0x48 && b[1] == 0x8D && b[2] == 0x15)) continue;
+        if (!(b[7] == 0x48 && b[8] == 0x8D && b[9] == 0x0D)) continue;
+        if (b[14] != 0xE8) continue;
+
+        std::int32_t dStr, dVal, rel;
+        std::memcpy(&dStr, b + 3, 4);
+        std::memcpy(&dVal, b + 10, 4);
+        std::memcpy(&rel, b + 15, 4);
+        const std::uintptr_t str = at + 7 + static_cast<std::intptr_t>(dStr);
+        const std::uintptr_t val = at + 14 + static_cast<std::intptr_t>(dVal);
+        const std::uintptr_t fn  = at + 19 + static_cast<std::intptr_t>(rel);
+        if (!PrintableStringAt(str, 1) || !sym::DataRange().contains(val) || !tx.contains(fn)) continue;
+        ++votes[fn];
     }
 }
 
@@ -214,16 +241,27 @@ bool Init() {
 
     // Votes narrow the field; the structural check picks the winner, so a thin
     // margin between similar string helpers cannot pick the wrong one.
-    const std::uintptr_t setStr = BestValidated(strVotes, &LooksLikeSetString, "YYSetString");
-    const std::uintptr_t selfP  = Winner(selfVotes, 40, "currentSelf");
+    std::uintptr_t setStr = BestValidated(strVotes, &LooksLikeSetString, "YYSetString");
+    if (!setStr) {
+        Logf("gml: no in-script string construction; trying static string initialisers");
+        std::unordered_map<std::uintptr_t, int> initVotes;
+        TallyStaticStringInits(initVotes);
+        setStr = BestValidated(initVotes, &LooksLikeSetString, "YYSetString (static init)");
+    }
 
-    if (!setStr || !selfP) {
-        g_status = "could not resolve runtime helpers";
+    // Newer runtimes keep `self` in a register and never store it globally, so
+    // this may legitimately find nothing. That is not fatal: CurrentSelf() then
+    // falls back to instances observed by the loader's own hooks.
+    const std::uintptr_t selfP = Winner(selfVotes, 40, "currentSelf");
+    if (!selfP) Logf("gml: no current-self global in this runtime; using hook-observed instances");
+
+    if (!setStr) {
+        g_status = "could not resolve the string constructor";
         return false;
     }
 
     g_setString    = reinterpret_cast<SetStringFn>(setStr);
-    g_pCurrentSelf = reinterpret_cast<void**>(selfP);
+    g_pCurrentSelf = selfP ? reinterpret_cast<void**>(selfP) : nullptr;
 
     g_ready  = true;
     g_status = "ok";
@@ -343,7 +381,7 @@ bool Call(void* func, RValue* result, RValue** args, int argc) {
     // Prefer a self/other pair recorded from a genuine call - many scripts only
     // behave when run as the right instance. Otherwise borrow whatever instance
     // the game last ran code as, since a null self would fault.
-    void* self  = g_pCurrentSelf ? *g_pCurrentSelf : nullptr;
+    void* self  = CurrentSelf();
     void* other = self;
     if (g_useCaptured && g_capture.valid && g_capture.self) {
         self  = g_capture.self;
@@ -552,8 +590,8 @@ bool CallEvent(void* func, void* self, void* other) {
         if (g_useCaptured && g_capture.valid && g_capture.self) {
             self  = g_capture.self;
             other = g_capture.other;
-        } else if (g_pCurrentSelf) {
-            self = *g_pCurrentSelf;
+        } else {
+            self = CurrentSelf();
         }
     }
     if (!self) return false;
@@ -738,7 +776,22 @@ bool ReadMemory(const void* src, void* dst, int bytes) {
 
 void* PlayerInstance() { return g_playerInst; }
 
-void* CurrentSelf() { return g_pCurrentSelf ? *g_pCurrentSelf : nullptr; }
+namespace {
+std::atomic<void*> g_observedSelf{nullptr};
+}
+
+bool HasSelfGlobal() { return g_pCurrentSelf != nullptr; }
+
+void NoteSelf(void* self) {
+    if (self) g_observedSelf.store(self, std::memory_order_relaxed);
+}
+
+// The runtime's own global when it has one; otherwise the instance a hook saw
+// most recently.
+void* CurrentSelf() {
+    if (g_pCurrentSelf && *g_pCurrentSelf) return *g_pCurrentSelf;
+    return g_observedSelf.load(std::memory_order_relaxed);
+}
 
 bool PlayerPosition(double& x, double& y) {
     if (!g_playerInst) return false;
@@ -816,12 +869,12 @@ void AbiSelfTest() {
 
     // Wait until the game has actually run some GML, otherwise the borrowed
     // `self` global is still null.
-    if (!g_pCurrentSelf || !*g_pCurrentSelf) {
+    if (!CurrentSelf()) {
         g_abiTested = false;   // try again next frame
         return;
     }
 
-    Logf("gml: --- ABI self-test (self=%p) ---", *g_pCurrentSelf);
+    Logf("gml: --- ABI self-test (self=%p) ---", CurrentSelf());
 
     int passed = 0;
     int ran    = 0;

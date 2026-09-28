@@ -34,6 +34,7 @@ internal static unsafe class Entry
             exports->Frame = &Frame;
             exports->Gui = &Gui;
             exports->Shutdown = &Shutdown;
+            exports->HookDispatch = &HookDispatch;
             return 1;
         }
         catch (Exception ex)
@@ -52,8 +53,24 @@ internal static unsafe class Entry
         _initialisedMods = true;
         foreach (var m in ModManager.Mods)
         {
-            ModManager.Invoke(m, nameof(CoreMod.OnInitialize), mod => mod.OnInitialize());
+            // Attribute hooks first, so OnInitialize can rely on them being live.
+            ModManager.Invoke(m, "hook attributes", _ => Hooks.AttachAttributes(m));
+            if (m.State != ModState.Faulted)
+                ModManager.Invoke(m, nameof(CoreMod.OnInitialize), mod => mod.OnInitialize());
             if (m.State != ModState.Faulted) m.State = ModState.Running;
+        }
+    }
+
+    [UnmanagedCallersOnly]
+    private static void HookDispatch(CoreHookCall* call)
+    {
+        try
+        {
+            Hooks.Dispatch(call);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("hook dispatch failed", ex);
         }
     }
 
@@ -168,6 +185,7 @@ internal static unsafe class Entry
         UI.Text($"GML functions: {Game.Symbols.Count:N0}   builtins: {Game.BuiltinCount:N0}");
         UI.Text($"GML bridge: {(Game.IsGmlReady ? "ready" : "unavailable")}   " +
                 $"ABI self-test: {(Game.IsAbiProven ? "passed" : "not passed")}");
+        UI.Text($"Hooked functions: {Hooks.NativeHookCount}");
         UI.TextDisabled($".NET {Environment.Version}   mods folder: {ModManager.ModsDirectory}");
         UI.Separator();
 
@@ -184,7 +202,7 @@ internal static unsafe class Entry
             switch (m.State)
             {
                 case ModState.Faulted: UI.TextColored(1f, 0.45f, 0.45f, $"{line} - disabled: {m.Fault}"); break;
-                case ModState.Running: UI.Text($"{line} - running"); break;
+                case ModState.Running: UI.Text($"{line} - running, {Hooks.SubscriptionCount(m)} hook(s)"); break;
                 default: UI.TextDisabled($"{line} - waiting for first frame"); break;
             }
         }

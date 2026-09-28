@@ -2,6 +2,7 @@
 
 #include "builtins.h"
 #include "gml.h"
+#include "hookengine.h"
 #include "log.h"
 #include "symbols.h"
 
@@ -159,6 +160,23 @@ std::int32_t ApiVarSet(void* instance, const char* name, const CoreRValue* value
     return builtins::SetVar(builtins::SelfHandle(instance), InternName(name), *Gml(value)) ? 1 : 0;
 }
 
+// ------------------------------------------------------------------- hooks
+
+static_assert(sizeof(CoreHookCall) == sizeof(hk::Call), "hook call layouts must match");
+static_assert(offsetof(CoreHookCall, skip) == offsetof(hk::Call, skip), "hook call layouts must match");
+static_assert(offsetof(CoreHookCall, hook_id) == offsetof(hk::Call, hookId), "hook call layouts must match");
+
+std::int32_t ApiHookInstall(void* target, std::int32_t kind) {
+    if (kind != 0 && kind != 1) return -1;
+    return hk::Install(target, kind == 0 ? hk::Kind::Script : hk::Kind::Event);
+}
+
+std::int32_t ApiHookSetManaged(std::int32_t id, std::int32_t managed) {
+    return hk::SetManaged(id, managed != 0) ? 1 : 0;
+}
+
+std::int32_t ApiHookCount() { return hk::Count(); }
+
 // ---------------------------------------------------------------------- UI
 
 std::int32_t UiBeginTabBar(const char* id)     { return ImGui::BeginTabBar(id) ? 1 : 0; }
@@ -237,6 +255,10 @@ CoreApi Build() {
     a.ui_separator         = &UiSeparator;
     a.ui_push_id           = &UiPushId;
     a.ui_pop_id            = &UiPopId;
+
+    a.hook_install     = &ApiHookInstall;
+    a.hook_set_managed = &ApiHookSetManaged;
+    a.hook_count       = &ApiHookCount;
     return a;
 }
 

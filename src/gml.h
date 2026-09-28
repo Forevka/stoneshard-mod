@@ -121,6 +121,14 @@ bool  ReadMemory(const void* src, void* dst, int bytes);
 // Builtins need a plausible `self` even when they never look at it.
 void* CurrentSelf();
 
+// Records an instance the game was just seen running code as. The hook engine
+// calls this on every hooked call; on runtimes without a current-self global
+// (2024+) it is the only source CurrentSelf() has.
+void NoteSelf(void* self);
+
+// Whether this runtime exposes a current-self global (older runtimes do).
+bool HasSelfGlobal();
+
 bool           InstallWeaponRecorder();
 const Capture& WeaponRecord();
 

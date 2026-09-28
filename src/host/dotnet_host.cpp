@@ -9,6 +9,7 @@
 #include "host/dotnet_host.h"
 #include "host/core_api.h"
 
+#include "hookengine.h"
 #include "log.h"
 
 #include <windows.h>
@@ -257,10 +258,11 @@ bool Start() {
     g_exports      = ManagedExports{};
     g_exports.size = sizeof(ManagedExports);
     const std::int32_t ok = reinterpret_cast<ManagedInitFn>(initRaw)(api, &g_exports);
-    if (!ok || !g_exports.frame || !g_exports.gui || !g_exports.shutdown) {
+    if (!ok || !g_exports.frame || !g_exports.gui || !g_exports.shutdown || !g_exports.hook_dispatch) {
         Fail("CoreLoader.Runtime.Entry.Init reported failure (see managed log lines above)");
         return false;
     }
+    hk::SetManagedDispatch(reinterpret_cast<hk::ManagedDispatch>(g_exports.hook_dispatch));
 
     SetStatus("running");
     g_running.store(true, std::memory_order_release);

@@ -99,6 +99,7 @@ add_library(stoneshard_mod SHARED
     src/remote.cpp
     src/inspector.cpp
     src/savebackup.cpp
+    src/hookengine.cpp
     src/host/core_api.cpp
     src/host/dotnet_host.cpp
     ${IMGUI_SOURCES}

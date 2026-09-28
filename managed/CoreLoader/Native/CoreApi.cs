@@ -7,7 +7,7 @@ namespace CoreLoader.Native;
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct CoreApi
 {
-    public const int ExpectedVersion = 1;
+    public const int ExpectedVersion = 2;
 
     public int Size;
     public int Version;
@@ -55,6 +55,11 @@ internal unsafe struct CoreApi
     public delegate* unmanaged<void> UiSeparator;
     public delegate* unmanaged<byte*, void> UiPushId;
     public delegate* unmanaged<void> UiPopId;
+
+    // hooks
+    public delegate* unmanaged<nint, int, int> HookInstall;
+    public delegate* unmanaged<int, int, int> HookSetManaged;
+    public delegate* unmanaged<int> HookCount;
 }
 
 // Mirror of `struct ManagedExports`.
@@ -65,4 +70,19 @@ internal unsafe struct ManagedExports
     public delegate* unmanaged<void> Frame;
     public delegate* unmanaged<void> Gui;
     public delegate* unmanaged<void> Shutdown;
+    public delegate* unmanaged<CoreHookCall*, void> HookDispatch;
+}
+
+// Mirror of `struct CoreHookCall` / mod::hk::Call.
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct CoreHookCall
+{
+    public nint Self;
+    public nint Other;
+    public RValue* Result;
+    public RValue** Args;
+    public int Argc;
+    public int Phase;
+    public int Skip;
+    public int HookId;
 }
