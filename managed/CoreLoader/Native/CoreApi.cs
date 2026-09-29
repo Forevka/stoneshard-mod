@@ -110,6 +110,7 @@ internal unsafe struct CoreApi
     public delegate* unmanaged<int, float, void> UiClipperBegin;
     public delegate* unmanaged<int*, int*, int> UiClipperStep;
     public delegate* unmanaged<void> UiClipperEnd;
+    public delegate* unmanaged<int> UiIsItemDeactivatedAfterEdit;
 }
 
 // Mirror of `struct ManagedExports`.

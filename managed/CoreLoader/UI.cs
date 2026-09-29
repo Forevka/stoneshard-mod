@@ -449,12 +449,31 @@ public static unsafe class UI
         return changed;
     }
 
-    /// <summary>A bar filled to <paramref name="fraction"/> (0..1). Width 0 fills the row.</summary>
+    /// <summary>
+    /// A bar filled to <paramref name="fraction"/> (clamped to 0..1; NaN reads as 0).
+    /// Width 0 fills the row, a negative width fills it but leaves that much room
+    /// on the right, a positive width is in pixels.
+    /// </summary>
     public static void ProgressBar(float fraction, float width = 0f, string? overlay = null)
     {
         Guard();
+        fraction = float.IsNaN(fraction) ? 0f : Math.Clamp(fraction, 0f, 1f);
         fixed (byte* o = overlay == null ? null : Utf8.Encode(overlay))
             Loader.Api->UiProgressBar(fraction, width, o);
+    }
+
+    /// <summary>
+    /// True on the one frame the last widget (a slider or input) stopped being
+    /// edited after its value changed. Commit an edit then, instead of writing on
+    /// every frame of a drag.
+    /// </summary>
+    public static bool ItemDeactivatedAfterEdit
+    {
+        get
+        {
+            Guard();
+            return Loader.Api->UiIsItemDeactivatedAfterEdit() != 0;
+        }
     }
 
     /// <summary>Greys out and disables the widgets up to <see cref="EndDisabled"/>. Always pair.</summary>

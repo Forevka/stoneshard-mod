@@ -88,7 +88,9 @@ internal sealed class SavesTab : Tab
         UI.Spacing();
         int n = found.Count(c => c.Ok);
 
-        UI.BeginDisabled(n == 0 || working);
+        // Not while the picker is open either: a pick that lands mid-import
+        // would otherwise be dropped with no sign it happened.
+        UI.BeginDisabled(n == 0 || working || browsing);
         if (UI.Button("Import", 220f))
             Actions.Run($"import {n} character(s) from {source} into {Target}", () => StartImport(found));
         UI.EndDisabled();
@@ -111,11 +113,12 @@ internal sealed class SavesTab : Tab
         Actions.Log.Info($"saves: {status}");
     }
 
-    private void SetSourceAndScan(string source)
+    /// <summary>False, doing nothing, when a scan or import is already running.</summary>
+    private bool SetSourceAndScan(string source)
     {
         lock (_gate)
         {
-            if (_working) return;
+            if (_working) return false;
             _source = source;
             _sourceSeq++;
             _found = [];
@@ -130,6 +133,7 @@ internal sealed class SavesTab : Tab
             lock (_gate) { _found = found; _status = status; _working = false; }
             Actions.Log.Info($"saves: {status}");
         });
+        return true;
     }
 
     // Runs inside Actions.Run, so the saves have been backed up before the first
@@ -164,12 +168,17 @@ internal sealed class SavesTab : Tab
     private void Browse()
     {
         if (Interlocked.Exchange(ref _browsing, 1) != 0) return;   // one dialog at a time
+        // The game window owns the dialog, so it stays in front of the game and
+        // does not get lost behind it. Read here, on the game thread.
+        IntPtr owner;
+        using (var self = System.Diagnostics.Process.GetCurrentProcess()) owner = self.MainWindowHandle;
         var t = new Thread(() =>
         {
             try
             {
-                var picked = FolderPicker.Pick("Select the save folder to import");
-                if (!string.IsNullOrEmpty(picked)) SetSourceAndScan(picked);
+                var picked = FolderPicker.Pick("Select the save folder to import", owner);
+                if (!string.IsNullOrEmpty(picked) && !SetSourceAndScan(picked))
+                    SetStatus($"The picked folder was dropped because a scan or import was running: {picked}. Pick it again once it is done.");
             }
             catch (Exception ex)
             {
@@ -221,7 +230,7 @@ internal sealed class SavesTab : Tab
             ((delegate* unmanaged<IntPtr, uint>)Vtbl(obj)[SlotRelease])(obj);
 
         /// <summary>The chosen folder, or null when cancelled or unavailable. Blocks: never call on the game thread.</summary>
-        public static string? Pick(string title)
+        public static string? Pick(string title, IntPtr owner)
         {
             int init = CoInitializeEx(IntPtr.Zero, CoinitApartmentThreaded | CoinitDisableOle1Dde);
             try
@@ -239,7 +248,7 @@ internal sealed class SavesTab : Tab
                         ((delegate* unmanaged<IntPtr, char*, int>)vt[SlotSetTitle])(dlg, t);
 
                     // Cancel comes back as a failure HRESULT, like any other error.
-                    if (((delegate* unmanaged<IntPtr, IntPtr, int>)vt[SlotShow])(dlg, IntPtr.Zero) < 0) return null;
+                    if (((delegate* unmanaged<IntPtr, IntPtr, int>)vt[SlotShow])(dlg, owner) < 0) return null;
 
                     IntPtr item;
                     if (((delegate* unmanaged<IntPtr, IntPtr*, int>)vt[SlotGetResult])(dlg, &item) < 0 || item == IntPtr.Zero)

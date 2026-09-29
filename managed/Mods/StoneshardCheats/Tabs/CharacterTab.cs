@@ -10,8 +10,6 @@ internal sealed class CharacterTab : Tab
 {
     private sealed record Attr(string Key, string Label, int Soft);
 
-    private sealed record Condition(string Name, string Display, int Index, bool Positive);
-
     private sealed class PsyField
     {
         public required string Key;
@@ -44,23 +42,24 @@ internal sealed class CharacterTab : Tab
         "lock_regen", "lock_mana_regen", "lock_turn", "lock_items",
     };
 
-    // The object table is walked a slice per frame: every index costs one or two
-    // builtin calls and the game has thousands of objects, which in one frame
-    // would be a visible hitch.
-    private const int ScanPerFrame = 400;
-
-    private readonly List<Condition> _found = new();
-    private List<Condition>? _conditions;
-    private int _scanAt;
-    private int _scanMisses;
-
     private double _xpAmount = 100;
     private string _condFilter = "";
     private int _condChoice = -1;
     private int _condDuration = 200;
     private readonly List<PsyField> _psy = new();
 
+    // Values being edited, by attribute key or psyche key. A slider or input
+    // shows the edit while it is held and the live value otherwise, and the
+    // game is written once, when the edit ends - not on every frame of a drag,
+    // which would run a script (and a recalculation) per frame.
+    private static readonly Dictionary<string, int> AttrEdits = new();
+    private readonly Dictionary<string, double> _psyEdits = new();
+
     public override string Name => "Character";
+
+    // The statuses come from the shared catalogue's object walk; starting it
+    // here too means the tab works whichever tab is opened first.
+    public override void Initialize(CheatsMod mod) => Catalogue.Start();
 
     public override void Draw()
     {
@@ -107,15 +106,19 @@ internal sealed class CharacterTab : Tab
             return;
         }
 
-        int value = (int)Math.Round(r.AsReal);
+        // An integer slider for every attribute, HP and MP included. They can be
+        // fractional, but nothing is written unless the slider is actually
+        // edited, so the rounding only shapes what an edit commits - a whole
+        // number, which is what a player dragging a slider means anyway. The
+        // exact live value is shown beside it.
+        double live = r.AsReal;
+        int value = AttrEdits.TryGetValue(a.Key, out var editing) ? editing : (int)Math.Round(live);
         UI.SetNextItemWidth(220f);
-        if (UI.SliderInt($"{a.Label}##atr_{a.Key}", ref value, 0, a.Soft))
-        {
-            int v = value;
+        if (UI.SliderInt($"{a.Label}##atr_{a.Key}", ref value, 0, a.Soft)) AttrEdits[a.Key] = value;
+        if (UI.ItemDeactivatedAfterEdit && AttrEdits.Remove(a.Key, out var v))
             Actions.Run($"scr_atr_set \"{a.Key}\" {v}", () => Player.Call("scr_atr_set", a.Key, v));
-        }
         UI.SameLine();
-        UI.TextDisabled(a.Key);
+        UI.TextDisabled(live == Math.Round(live) ? a.Key : $"{a.Key} {live:0.##}");
     }
 
     // ------------------------------------------------------------ conditions
@@ -124,19 +127,15 @@ internal sealed class CharacterTab : Tab
     {
         UI.SeparatorText("Conditions");
 
-        if (_conditions == null)
+        // The statuses are filled in as soon as the catalogue's object scan
+        // ends, before it goes on to item categories and the exe.
+        var conds = Catalogue.Conditions;
+        if (conds.Count == 0)
         {
-            StepScan();
-            if (_conditions == null)
-            {
-                UI.TextDisabled($"Reading the object table for statuses... {_scanAt} objects, {_found.Count} found.");
-                return;
-            }
-        }
-
-        if (_conditions.Count == 0)
-        {
-            UI.TextDisabled("No condition catalogue (no o_db_* or o_b_* objects found).");
+            if (Catalogue.Done)
+                UI.TextDisabled($"No condition catalogue (no o_db_* or o_b_* objects found). ({Catalogue.Status})");
+            else
+                UI.ProgressBar(Catalogue.Progress, 0f, Catalogue.Status);
             return;
         }
 
@@ -146,22 +145,21 @@ internal sealed class CharacterTab : Tab
             "duration - and the game's recalculation, which runs every step and every " +
             "turn, picks it up from there.");
         UI.TextDisabled(
-            $"{_conditions.Count} statuses, read from the object table. Behavioural ones (stun, bleeding, " +
+            $"{conds.Count} statuses, read from the object table. Behavioural ones (stun, bleeding, " +
             "poison) work; pure stat buffs apply with no magnitude - see the note below.");
         UI.SetNextItemWidth(-1f);
         UI.InputTextWithHint("##condfilter", "filter conditions...", ref _condFilter, 96);
 
         var shown = new List<int>();
-        for (int i = 0; i < _conditions.Count; i++)
+        for (int i = 0; i < conds.Count; i++)
         {
-            var c = _conditions[i];
+            var c = conds[i];
             if (_condFilter.Length == 0 ||
                 c.Display.Contains(_condFilter, StringComparison.OrdinalIgnoreCase) ||
                 c.Name.Contains(_condFilter, StringComparison.OrdinalIgnoreCase))
                 shown.Add(i);
         }
 
-        var conds = _conditions;
         UI.BeginChild("##condlist", 200f);
         UI.Clipped(shown.Count, row =>
         {
@@ -193,38 +191,6 @@ internal sealed class CharacterTab : Tab
             "Note: `data`, the stat-modifier map, is filled by whoever applies a buff and " +
             "there is no shared call that does it, so a pure stat buff lands with no " +
             "magnitude. Making numbers up here is what broke this last time.");
-    }
-
-    // Walks the next slice of object indices, the way GmlObject.All does (stop
-    // after 64 missing indices in a row), keeping only the status objects.
-    private void StepScan()
-    {
-        int end = _scanAt + ScanPerFrame;
-        while (_scanAt < end)
-        {
-            if (_scanMisses >= 64 || _scanAt >= 100_000)
-            {
-                _found.Sort((a, b) => string.CompareOrdinal(a.Display, b.Display));
-                _conditions = new List<Condition>(_found);
-                Actions.Log.Info($"character: {_conditions.Count} statuses found in {_scanAt} object indices");
-                return;
-            }
-
-            int i = _scanAt++;
-            if (!Game.CallBuiltin("object_exists", i).AsBool) { _scanMisses++; continue; }
-            _scanMisses = 0;
-
-            string name = Game.CallBuiltin("object_get_name", i).ToString();
-            bool debuff = name.StartsWith("o_db_", StringComparison.Ordinal);
-            bool buff = name.StartsWith("o_b_", StringComparison.Ordinal);
-            if (!debuff && !buff) continue;
-            // The family parents are abstract: nothing of theirs is a status on its own.
-            if (name.Length > 7 && name.EndsWith("_parent", StringComparison.Ordinal)) continue;
-
-            string display = name[(debuff ? 5 : 4)..].Replace('_', ' ');
-            if (display.Length > 0) display = char.ToUpperInvariant(display[0]) + display[1..];
-            _found.Add(new Condition(name, display, i, buff));
-        }
     }
 
     private static void ApplyClicked(Condition c, int duration)
@@ -310,13 +276,25 @@ internal sealed class CharacterTab : Tab
         if (inst.IsUndefined)
             throw new InvalidOperationException($"instance_create_depth failed for {c.Name} (index {c.Index})");
 
-        var buff = new InstanceRef(inst);
-        buff.Set("owner", owner);
-        buff.Set("target", playerObject.Index);
-        buff.Set("duration", Math.Max(1, duration));
+        // From here on the status exists in the room. If wiring it up fails, it
+        // is destroyed again: a half-set status (no owner, or a duration of 0,
+        // which never retires) is worse than none.
+        try
+        {
+            var buff = new InstanceRef(inst);
+            buff.Set("owner", owner);
+            buff.Set("target", playerObject.Index);
+            buff.Set("duration", Math.Max(1, duration));
 
-        // The reference itself goes in the list, not a decoded id.
-        Ds.Add(list, inst);
+            // The reference itself goes in the list, not a decoded id.
+            Ds.Add(list, inst);
+        }
+        catch
+        {
+            try { Game.CallBuiltinAs(player, "instance_destroy", inst); }
+            catch (Exception ex) { Actions.Log.Warning($"character: could not destroy the half-applied {c.Name}: {ex.Message}"); }
+            throw;
+        }
 
         // The unit's own dirty flag, raised when its buff set changes and cleared
         // once the attributes have been recomputed. Setting it asks for that pass
@@ -371,6 +349,12 @@ internal sealed class CharacterTab : Tab
         UI.SameLine();
         UI.TextDisabled($"{_psy.Count} field(s)");
 
+        // The key list comes from the last read; the numbers are re-read every
+        // frame, so a field nobody is editing always shows what the game holds.
+        RValue map;
+        try { map = _psy.Count > 0 ? PsyMap() : RValue.Undefined; }
+        catch (Exception ex) when (ex is GmlException or InvalidOperationException) { map = RValue.Undefined; }
+
         UI.BeginChild("##psy", 220f);
         for (int i = 0; i < _psy.Count; i++)
         {
@@ -380,11 +364,17 @@ internal sealed class CharacterTab : Tab
                 UI.TextDisabled($"{f.Key} = {f.Text}");
                 continue;
             }
+            if (!map.IsUndefined)
+            {
+                var live = Ds.Get(map, f.Key);
+                if (live.IsNumber) f.Value = live.AsReal;
+            }
+            double value = _psyEdits.TryGetValue(f.Key, out var editing) ? editing : f.Value;
             UI.SetNextItemWidth(180f);
-            if (UI.InputDouble($"{f.Key}##psy{i}", ref f.Value, 1, 10, "%.2f"))
+            if (UI.InputDouble($"{f.Key}##psy{i}", ref value, 1, 10, "%.2f")) _psyEdits[f.Key] = value;
+            if (UI.ItemDeactivatedAfterEdit && _psyEdits.Remove(f.Key, out var v))
             {
                 string key = f.Key;
-                double v = f.Value;
                 Actions.Run($"psyData.{key} = {v:0.##}", () => Ds.Set(PsyMap(), key, v));
             }
         }

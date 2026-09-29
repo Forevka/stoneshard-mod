@@ -416,8 +416,11 @@ std::int32_t UiButtonEx(const char* label, float w, float h) {
 }
 std::int32_t UiSmallButton(const char* label) { return ImGui::SmallButton(label ? label : "") ? 1 : 0; }
 void UiProgressBar(float fraction, float width, const char* overlay) {
-    ImGui::ProgressBar(fraction, ImVec2(width > 0.0f ? width : -FLT_MIN, 0.0f), overlay);
+    // 0 means "fill", which ImGui spells -FLT_MIN; a negative width is already
+    // ImGui's "fill, leaving this much on the right", so it passes through.
+    ImGui::ProgressBar(fraction, ImVec2(width == 0.0f ? -FLT_MIN : width, 0.0f), overlay);
 }
+std::int32_t UiIsItemDeactivatedAfterEdit() { return ImGui::IsItemDeactivatedAfterEdit() ? 1 : 0; }
 void UiPushTextColor(float r, float g, float b, float a) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(r, g, b, a));
 }
@@ -541,6 +544,7 @@ CoreApi Build() {
     a.ui_clipper_begin       = &UiClipperBegin;
     a.ui_clipper_step        = &UiClipperStep;
     a.ui_clipper_end         = &UiClipperEnd;
+    a.ui_is_item_deactivated_after_edit = &UiIsItemDeactivatedAfterEdit;
     return a;
 }
 

@@ -29,10 +29,16 @@ internal static class Actions
             Add(true, $"> {echo}");
             return true;
         }
-        catch (Exception ex) when (ex is GmlException or InvalidOperationException or ArgumentException)
+        // Anything short of running out of memory is reported rather than
+        // rethrown: an escaped exception would fault the whole mod over one cheat.
+        // (A stack overflow cannot be caught at all.)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            Log.Warning($"  failed: {ex.Message}");
-            Add(false, $"> {echo}  - failed: {ex.Message}");
+            // GML failures carry their own context; anything else is a bug in the
+            // cheat, and its type is the first thing needed to find it.
+            string why = ex is GmlException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
+            Log.Warning($"  failed: {why}");
+            Add(false, $"> {echo}  - failed: {why}");
             return false;
         }
     }

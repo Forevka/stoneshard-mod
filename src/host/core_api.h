@@ -40,7 +40,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 10;  // 10: ui round 3 (combo, selectable, disabled, clipper, ...)   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
+constexpr std::int32_t kCoreApiVersion = 10;  // 10: ui round 3 (combo, selectable, disabled, clipper, is_item_deactivated_after_edit, ...)   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -198,7 +198,9 @@ struct CoreApi {
     void         (*ui_spacing)();
     std::int32_t (*ui_button_ex)(const char* label, float width, float height);
     std::int32_t (*ui_small_button)(const char* label);
-    // fraction 0..1; width <= 0 fills; overlay may be null.
+    // fraction 0..1. width 0 fills the row, a negative width fills it but leaves
+    // that much room on the right (ImGui's convention), a positive one is pixels.
+    // overlay may be null.
     void         (*ui_progress_bar)(float fraction, float width, const char* overlay);
     void         (*ui_push_text_color)(float r, float g, float b, float a);
     void         (*ui_pop_text_color)();
@@ -208,6 +210,10 @@ struct CoreApi {
     void         (*ui_clipper_begin)(std::int32_t count, float itemHeight);
     std::int32_t (*ui_clipper_step)(std::int32_t* start, std::int32_t* end);
     void         (*ui_clipper_end)();
+    // 1 on the frame the last item (a slider or input) stopped being edited
+    // after its value changed: the moment to commit an edit, once, instead of
+    // writing on every frame of a drag.
+    std::int32_t (*ui_is_item_deactivated_after_edit)();
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

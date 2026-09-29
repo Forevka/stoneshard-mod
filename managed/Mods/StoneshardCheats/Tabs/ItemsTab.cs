@@ -14,6 +14,10 @@ internal sealed class ItemsTab : Tab
     private Item? _selected;
     private int _rarity = Gear.Common;
 
+    // The count box's range. A mistyped 1000 would otherwise run a thousand
+    // give calls in one frame.
+    private const int MaxCount = 99;
+
     // The filtered rows, as indices into Catalogue.Items, rebuilt only when the
     // filter or category changes rather than on every frame.
     private List<int> _shown = new();
@@ -25,6 +29,10 @@ internal sealed class ItemsTab : Tab
     private List<Gear.Field> _template = new();
     private List<Gear.Field> _edit = new();
     private string _editFor = "";
+    // The rarity the template was spawned at. Spawn configured uses it, not the
+    // rarity combo as it is now: the fields being edited are that rarity's roll,
+    // and spawning them onto another rarity's item would mix the two.
+    private int _templateRarity = Gear.Common;
     private int _addChoice;
 
     public override string Name => "Items";
@@ -77,7 +85,7 @@ internal sealed class ItemsTab : Tab
         UI.Text($"Selected: {sel.Display}  [{sel.Category}]");
         UI.SetNextItemWidth(130f);
         UI.InputInt("count", ref _count);
-        if (_count < 1) _count = 1;
+        _count = Math.Clamp(_count, 1, MaxCount);
         UI.Spacing();
 
         bool ready = Player.Available;
@@ -183,6 +191,7 @@ internal sealed class ItemsTab : Tab
             {
                 _edit = Gear.Clone(_template);
                 _editFor = sel.Display;
+                _templateRarity = rarity;
             }
             else
             {
@@ -206,7 +215,7 @@ internal sealed class ItemsTab : Tab
         bool isArmor = _edit.Any(f => f.Key == "Metatype" && f.IsString && f.Str == "Armor");
         var vocab = isArmor ? Catalogue.ArmorStats : Catalogue.WeaponStats;
 
-        UI.Text($"{_editFor} - {_edit.Count} field(s)");
+        UI.Text($"{_editFor} ({Gear.RarityName(_templateRarity)}, as loaded) - {_edit.Count} field(s)");
 
         UI.BeginChild("##fields", 240f);
         for (int i = 0; i < _edit.Count; i++)
@@ -240,16 +249,21 @@ internal sealed class ItemsTab : Tab
         {
             var fields = Gear.Clone(_edit);
             string name = _editFor;
-            int rarity = _rarity;
+            int rarity = _templateRarity;
             Actions.Run($"build \"{name}\" ({Gear.RarityName(rarity)}) with {fields.Count} field(s)", () =>
             {
-                Gear.SpawnConfigured(name, fields, rarity);
-                Actions.Report("built - it is on the ground at your feet");
+                var failed = Gear.SpawnConfigured(name, fields, rarity);
+                // The item exists either way; a partial write is reported as
+                // such rather than as a failure that would suggest nothing spawned.
+                if (failed.Count == 0) Actions.Report("built - it is on the ground at your feet");
+                else Actions.Report($"spawned with errors - it is on the ground, but these fields were not written: {string.Join(", ", failed)}", ok: false);
             });
         }
         UI.EndDisabled();
         UI.SameLine();
         if (UI.Button("Reset to base")) _edit = Gear.Clone(_template);
+        UI.SameLine();
+        UI.TextDisabled($"spawns at {Gear.RarityName(_templateRarity)}, the template's rarity");
     }
 }
 
@@ -290,10 +304,21 @@ internal static class Gear
         public bool IsString;
         public double Num;
         public string Str = "";
+        // The kind the game stored a number as. Written back as the same kind:
+        // a flag the game keeps as a bool must not come back as a real.
+        public RValueKind Kind = RValueKind.Real;
+
+        public RValue ToValue() => IsString ? Str : Kind switch
+        {
+            RValueKind.Bool => new RValue { Real = Num != 0 ? 1 : 0, Kind = RValueKind.Bool },
+            RValueKind.Int32 => new RValue { Int32 = (int)Num, Kind = RValueKind.Int32 },
+            RValueKind.Int64 => new RValue { Int64 = (long)Num, Kind = RValueKind.Int64 },
+            _ => Num,
+        };
     }
 
     public static List<Field> Clone(List<Field> fields) =>
-        fields.Select(f => new Field { Key = f.Key, IsString = f.IsString, Num = f.Num, Str = f.Str }).ToList();
+        fields.Select(f => new Field { Key = f.Key, IsString = f.IsString, Num = f.Num, Str = f.Str, Kind = f.Kind }).ToList();
 
     /// <summary>
     /// Spawns gear by its CSV display name ("Militia Falchion") through the
@@ -386,30 +411,29 @@ internal static class Gear
     /// <summary>
     /// Spawns the item, then writes every field over its `data` map. Fields
     /// absent from the template are added; that is how a stat becomes an
-    /// enchantment.
+    /// enchantment. Returns the keys that could not be written (the item stays).
     /// </summary>
-    public static void SpawnConfigured(string displayName, List<Field> fields, int rarity)
+    public static List<string> SpawnConfigured(string displayName, List<Field> fields, int rarity)
     {
         var map = DataMap(Spawn(displayName, rarity), displayName);
 
-        int written = 0;
+        var failed = new List<string>();
         foreach (var f in fields)
         {
             try
             {
                 // replace, not add: it sets an existing key and creates a missing
                 // one, which is exactly the "a new stat IS an enchantment" case.
-                Ds.Set(map, f.Key, f.IsString ? f.Str : f.Num);
-                written++;
+                Ds.Set(map, f.Key, f.ToValue());
             }
             catch (GmlException ex)
             {
-                Actions.Report($"{f.Key}: {ex.Message}", ok: false);
+                failed.Add(f.Key);
+                Actions.Log.Warning($"  {f.Key}: {ex.Message}");
             }
         }
-        Actions.Log.Info($"  configured {displayName} - {written} of {fields.Count} field(s) written");
-        if (written != fields.Count)
-            throw new InvalidOperationException($"only {written} of {fields.Count} fields were written");
+        Actions.Log.Info($"  configured {displayName} - {fields.Count - failed.Count} of {fields.Count} field(s) written");
+        return failed;
     }
 
     // Walks the map with the game's own iterator rather than parsing json_encode
@@ -431,7 +455,7 @@ internal static class Gear
                 // reading it as raw 64 bits once turned "identified": 1 into
                 // 4607182418800017408.
                 case RValueKind.Real or RValueKind.Bool or RValueKind.Int32 or RValueKind.Int64:
-                    fields.Add(new Field { Key = key, Num = val.AsReal });
+                    fields.Add(new Field { Key = key, Num = val.AsReal, Kind = val.Kind });
                     break;
                 case RValueKind.String:
                     fields.Add(new Field { Key = key, IsString = true, Str = val.ToString() });
@@ -456,7 +480,9 @@ internal static class Gear
     // match a live ds id and get silently dropped.
     //
     // So json_encode decides, since it demonstrably gets this right. Only the
-    // shape is inspected - "key": [ or "key": { - which needs no JSON parser.
+    // shape is inspected - "key": [ or "key": { - which needs no JSON parser, but
+    // the walk does track strings and depth: a string value may hold escaped
+    // quotes or brackets, and a nested map's own keys are not the item's keys.
     // json_encode on a stale or non-map id returns a null string rather than
     // faulting, which makes this safe to try.
     private static HashSet<string> NestedKeys(RValue map)
@@ -465,22 +491,40 @@ internal static class Gear
         string json = Ds.Json(map);
         if (json.Length == 0 || json == "<null string>") return keys;
 
-        for (int i = 0; i + 1 < json.Length; i++)
+        int depth = 0;
+        for (int i = 0; i < json.Length; i++)
         {
-            if (json[i] != '"') continue;
-            int close = json.IndexOf('"', i + 1);
-            if (close < 0) break;
+            char ch = json[i];
+            if (ch is '{' or '[') { depth++; continue; }
+            if (ch is '}' or ']') { depth--; continue; }
+            if (ch != '"') continue;
 
-            string key = json.Substring(i + 1, close - i - 1);
+            // To the closing quote, stepping over every escaped character.
+            int close = i + 1;
+            while (close < json.Length && json[close] != '"') close += json[close] == '\\' ? 2 : 1;
+            if (close >= json.Length) break;
+            string raw = json.Substring(i + 1, close - i - 1);
             i = close;
 
-            // Must be followed by ": " and then a bracket to count.
+            // Only the top-level map's keys: depth 1 is inside its braces.
+            if (depth != 1) continue;
+
+            // A key is followed by ':'; it counts when a bracket comes next.
             int j = close + 1;
+            while (j < json.Length && char.IsWhiteSpace(json[j])) j++;
             if (j >= json.Length || json[j] != ':') continue;
             j++;
-            while (j < json.Length && json[j] == ' ') j++;
-            if (j < json.Length && (json[j] == '[' || json[j] == '{')) keys.Add(key);
+            while (j < json.Length && char.IsWhiteSpace(json[j])) j++;
+            if (j < json.Length && (json[j] == '[' || json[j] == '{')) keys.Add(Unescape(raw));
         }
         return keys;
+    }
+
+    // Keys are compared against the map's own, unescaped, keys.
+    private static string Unescape(string raw)
+    {
+        if (!raw.Contains('\\')) return raw;
+        try { return System.Text.Json.JsonSerializer.Deserialize<string>("\"" + raw + "\"") ?? raw; }
+        catch (System.Text.Json.JsonException) { return raw; }
     }
 }

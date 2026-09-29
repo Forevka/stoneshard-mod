@@ -51,6 +51,8 @@ internal sealed class PotionsTab : Tab
     // The armed request.
     private bool _armed;
     private long _armedAt;
+    // The bottle the give created, or -1 when it could not be singled out.
+    private long _armedId = -1;
     private List<string> _wantTags = new();
 
     // The outcome of the last request, posted by the hook and collected once by
@@ -92,6 +94,15 @@ internal sealed class PotionsTab : Tab
         {
             TimedOut();
             return;
+        }
+        // Aimed at the bottle the give created: any other bottle rolling in the
+        // meantime (loot, a trader restock) is left exactly as the game made it.
+        if (_armedId >= 0)
+        {
+            long self;
+            try { self = IdKey(c.Self.Get("id")); }
+            catch (Exception) { return; }
+            if (self != _armedId) return;
         }
 
         // This runs inside the game's event: a failure is turned into the outcome
@@ -160,8 +171,17 @@ internal sealed class PotionsTab : Tab
         // Arm first, give the bottle second: the alarm fires on a later step, and
         // the hook does the building then - inside the event frame, the only
         // place the potion scripts run.
+        //
+        // The bottles that exist before the give are noted, so the one the give
+        // creates can be told apart by diffing afterwards, and the hook then acts
+        // on that instance only. If the give does not create its bottle
+        // synchronously (no new instance, or more than one), the request stays
+        // unaimed and the first bottle alarm within the timeout is built - the
+        // same behaviour as before the aiming existed.
+        var before = BottleIds(index);
         _wantTags = tags;
         _armed = true;
+        _armedId = -1;
         _armedAt = Environment.TickCount64;
         _outcomeNew = false;
         try
@@ -173,7 +193,32 @@ internal sealed class PotionsTab : Tab
             _armed = false;
             throw;
         }
+
+        var added = BottleIds(index);
+        added.ExceptWith(before);
+        if (added.Count == 1) _armedId = added.First();
+        Actions.Log.Info(added.Count == 1
+            ? $"potions: aimed at bottle {_armedId}"
+            : $"potions: {added.Count} new bottle(s) after the give - building the first bottle alarm instead");
     }
+
+    // The ids of every live bottle, as numbers comparable across frames.
+    private static HashSet<long> BottleIds(int index)
+    {
+        var ids = new HashSet<long>();
+        int n = (int)Game.CallBuiltin("instance_number", index).AsReal;
+        for (int i = 0; i < n; i++)
+        {
+            long id = IdKey(Game.CallBuiltin("instance_find", index, i));
+            if (id >= 0) ids.Add(id);
+        }
+        return ids;
+    }
+
+    // Older runtimes hand out instance ids as plain numbers; newer ones as typed
+    // references whose low 32 bits are the id.
+    private static long IdKey(RValue v) =>
+        v.IsNumber ? (long)v.AsReal : v.Kind == RValueKind.Reference ? v.Int64 & 0xFFFFFFFF : -1;
 
     public override void Draw()
     {

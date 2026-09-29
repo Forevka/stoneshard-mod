@@ -35,6 +35,10 @@ internal static class SaveMigration
     /// <param name="Note">Why it was rejected, when not <paramref name="Ok"/>.</param>
     public sealed record Character(string Dir, string Name, int Saves, int Files, bool Ok, string Note);
 
+    // A save is a few MB unpacked. The cap keeps a hostile or corrupt file (a
+    // zlib bomb) from inflating into gigabytes; a file over it is not a save.
+    private const long MaxUnpacked = 64L * 1024 * 1024;
+
     private static readonly EnumerationOptions Recursive = new()
     {
         RecurseSubdirectories = true,
@@ -66,7 +70,7 @@ internal static class SaveMigration
     /// The JSON body of a packed save, without its checksum. Null for anything
     /// that is not a save file, which is how junk in the source folder is rejected
     /// rather than copied blindly. The old checksum is not checked: it was made
-    /// for a path this file no longer lives at.
+    /// for a path this file no longer lives at. Also null past 64 MB unpacked.
     /// </summary>
     public static byte[]? UnpackJson(byte[] packed)
     {
@@ -74,8 +78,16 @@ internal static class SaveMigration
         try
         {
             using var z = new ZLibStream(new MemoryStream(packed), CompressionMode.Decompress);
-            using var ms = new MemoryStream(packed.Length * 8);
-            z.CopyTo(ms);
+            // Not pre-sized from the packed length: that guess is what a small
+            // hostile file would turn into a huge allocation.
+            using var ms = new MemoryStream();
+            var buf = new byte[81920];
+            int n;
+            while ((n = z.Read(buf)) > 0)
+            {
+                if (ms.Length + n > MaxUnpacked) return null;
+                ms.Write(buf, 0, n);
+            }
             plain = ms.ToArray();
         }
         catch (InvalidDataException) { return null; }
@@ -139,7 +151,7 @@ internal static class SaveMigration
     public static bool IsSaveFile(string path)
     {
         var ext = Path.GetExtension(path);
-        return ext == ".map" || ext == ".sav";
+        return ext.Equals(".map", StringComparison.OrdinalIgnoreCase) || ext.Equals(".sav", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NameFromCharacterMap(string charDir)
@@ -247,17 +259,31 @@ internal static class SaveMigration
             var slotName = $"character_{slot}";
             var dest = Path.Combine(target, slotName);
 
+            // Re-checked right before creating it: the game (or another import)
+            // may have made this slot since it was found free, and a folder this
+            // import did not create must never be written into or deleted.
+            bool created = false;
             try
             {
+                if (Path.Exists(dest)) throw new IOException($"{slotName} appeared while importing");
+                Directory.CreateDirectory(dest);
+                created = true;
                 CopyCharacter(c.Dir, dest, slotName);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            catch (Exception ex)
             {
-                // Never leave a half-written character behind.
-                try { if (Directory.Exists(dest)) Directory.Delete(dest, recursive: true); }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-                log($"saves: import of {c.Name} failed: {ex.Message}");
-                return (false, $"Failed while importing {c.Name} - nothing was left behind.");
+                // Never leave a half-written character behind - but only remove
+                // what this import made.
+                bool cleaned = !created;
+                if (created)
+                {
+                    try { Directory.Delete(dest, recursive: true); cleaned = true; }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                }
+                log($"saves: import of {c.Name} failed: {ex.GetType().Name}: {ex.Message}");
+                return (false, cleaned
+                    ? $"Failed while importing {c.Name} - nothing was left behind."
+                    : $"Failed while importing {c.Name}, and {dest} could not be removed - delete it by hand.");
             }
 
             log($"saves: imported {c.Name} -> {slotName} ({c.Files} file(s) re-signed)");

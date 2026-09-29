@@ -106,6 +106,18 @@ public sealed class Main : CoreMod
                     break;
             }
         }, ex => _lastError = ex.Message);
+
+        // The real open-combo case: the popup is open (the user opened it) and
+        // the throw comes from inside it, between BeginCombo and EndCombo, so
+        // Scope.Combo is unwound with its popup live.
+        UI.Guarded(() =>
+        {
+            UI.SetNextItemWidth(200f);
+            if (!UI.BeginCombo("open combo fault###opencombo", "pick 'throw here'")) return;
+            if (UI.Selectable("harmless", false)) _lastError = "";
+            if (UI.Selectable("throw here", false)) throw new InvalidOperationException("inside an open combo");
+            UI.EndCombo();
+        }, ex => _lastError = ex.Message);
         UI.TextDisabled(_lastError.Length == 0 ? "no fault yet" : $"recovered from: {_lastError}");
         UI.Text("If this line is normal white, not greyed or green, every scope was unwound.");
     }

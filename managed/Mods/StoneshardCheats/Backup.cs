@@ -38,6 +38,35 @@ internal static class Backup
         {
             Result = $"backup FAILED: {ex.Message}";
             log.Error($"backup: {Result}");
+            return;
+        }
+        Prune(Path.GetDirectoryName(dst)!, log);
+    }
+
+    private const int KeepBackups = 10;
+
+    // One backup per session adds up. Only after a good backup, so the newest
+    // copies are never the ones removed; the folder names are timestamps
+    // (yyyyMMdd-HHmmss), so ordinal order is age order. Best-effort: a folder
+    // that cannot be removed (open in Explorer, say) is simply left for next time.
+    private static void Prune(string root, Logger log)
+    {
+        try
+        {
+            var old = System.IO.Directory.EnumerateDirectories(root)
+                .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
+                .Skip(KeepBackups)
+                .ToList();
+            foreach (var d in old)
+            {
+                try { System.IO.Directory.Delete(d, recursive: true); }
+                catch (Exception ex) { log.Warning($"backup: could not prune {d}: {ex.Message}"); }
+            }
+            if (old.Count > 0) log.Info($"backup: pruned {old.Count} old backup(s), keeping the newest {KeepBackups}");
+        }
+        catch (Exception ex)
+        {
+            log.Warning($"backup: pruning skipped: {ex.Message}");
         }
     }
 

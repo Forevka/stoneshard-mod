@@ -25,16 +25,27 @@ internal static class Player
 
     internal static void OnStep(HookCall c)
     {
-        var self = c.Self;
-        if (self.IsNull) return;
-        if (!self.Equals(_self))
+        // A throw from a hook faults the whole mod, and nothing here is worth
+        // that: on any failure the tracked player is dropped, and the next step
+        // that reads cleanly picks it up again.
+        try
         {
-            _self = self;
-            _id = self.Get("id");
+            var self = c.Self;
+            if (self.IsNull) return;
+            // The id is re-read every step, not only when the pointer changes: a
+            // save load can destroy o_player and create the new one at the same
+            // address, and the old id would then fail instance_exists forever.
             // A number keeps nothing alive; a reference is a plain handle too.
             // Neither is a pooled string or array, so it may outlive the frame.
+            _id = self.Get("id");
+            _self = self;
+            _seenAt = Environment.TickCount64;
         }
-        _seenAt = Environment.TickCount64;
+        catch (Exception)
+        {
+            _self = default;
+            _id = RValue.Undefined;
+        }
     }
 
     /// <summary>The live player, or null while it is not stepping.</summary>

@@ -184,7 +184,7 @@ internal sealed class EnemiesTab : Tab
 
             (double X, double Y)? player = Player.Available ? Player.Position : null;
 
-            var built = new List<Enemy>(_reported);
+            var built = new List<Enemy>(Math.Max(0, _reported));
             foreach (var r in obj.Instances())
             {
                 if (r.Id.IsUndefined || !r.Exists) continue;
@@ -276,8 +276,9 @@ internal sealed class EnemiesTab : Tab
 
             // The reference form: destroys the instance named by the argument.
             // The player is passed as self because builtins are handed one even
-            // when they ignore it, and a null one is not worth the risk.
-            Game.CallBuiltinAs(Player.Current ?? default, "instance_destroy", e.Ref.Id);
+            // when they ignore it, and a null self is not worth the risk - so
+            // with no player there is no remove (Require throws "no player").
+            Game.CallBuiltinAs(Player.Require(), "instance_destroy", e.Ref.Id);
 
             // instance_exists skips an instance that has been destroyed, so a
             // survivor here means the call was accepted but did nothing.
