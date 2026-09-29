@@ -16,6 +16,14 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - Combos, disabled blocks, text colours and clippers are tracked scopes: a mod that throws inside
     one is unwound like any other scope.
 - `WidgetProbe` test mod.
+- **`StoneshardCheats` mod:** the native Stoneshard cheat tabs, ported to C#. Tabs: Stats, Items, Potions,
+  Character, Body, Enemies and Saves.
+  - Character scripts run as the player. The player instance comes from a hook on `o_player`'s Step event,
+    and is dropped half a second after that event stops running.
+  - Potions are rewritten inside `o_inv_bottle`'s Alarm 0, the only place the potion scripts work. A build
+    that sees no bottle within 2 s gives up, rather than rewriting the next bottle the game makes.
+  - The item catalogue is read from the live object table and from the game exe's own CSV rows.
+  - The save folder is backed up once per session, to `<game>\CoreLoader\save-backups`, before the first cheat.
 
 ### Changed
 - **Breaking:** CoreApi version 10 (UI round 3). The managed runtime requires this exact version.

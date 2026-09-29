@@ -192,6 +192,7 @@ The rules the loader enforces:
 | ContentDemo | any | Runtime content. It loads a spinning coin sprite from a PNG strip and draws it in the game's GUI layer, plays a chime from an OGG file, and can reskin any game sprite by name. Its files ship in `Mods/ContentDemo/assets` |
 | DwarfBoost | Dwarf Eats Mountain | Gold income and unit damage multipliers, resource editor |
 | StoneshardBoost | Stoneshard | XP multiplier (every source goes through `scr_get_XP`), loot multiplier (re-runs `scr_loot`) |
+| StoneshardCheats | Stoneshard | Stats, items (any weapon/armor at any rarity, a stat constructor, every inventory object), potions built from chosen effects, needs/vitals/XP/conditions/psyche, body parts, an enemy roster with Remove, and save import from another machine. Saves are backed up before the first cheat |
 | HelloMod, InteropExample | any / DEM | Minimal examples |
 
 `Tests/` holds regression mods for the loader itself:
