@@ -26,13 +26,6 @@ internal static partial class World
         return found;
     }
 
-    /// <summary>The unit's tile, in tile coordinates.</summary>
-    public static (int X, int Y) TileOf(InstanceRef unit)
-    {
-        var (x, y) = Position(unit);
-        return ((int)Math.Floor(x / Tile), (int)Math.Floor(y / Tile));
-    }
-
     /// <summary>
     /// Keeps a status on a unit for at least <paramref name="turns"/> more
     /// turns: an existing one has its duration raised, otherwise a new one is

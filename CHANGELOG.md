@@ -15,6 +15,10 @@ bump may break the mod API or the native CoreApi table; each version says so und
   from the bag (the ring when worn), show a live status line in the game's own tooltip, report in the
   game's action log, and activate by hovering one and pressing a key (`activateKey`, default U).
   Test-host commands `reliq.*`.
+  - The other seventeen: Faceless Mirror, Split Quiver, Cinder Rosary, Echoing Bell, Debtor's Knot,
+    Weeping Candle, Pallbearer's Coin, Vessel of Borrowed Years, Reliquary of Saint Mardun, Usurer's
+    Scale, Sundered Gate, Censer of the Drowned Choir, Lodestone Idol, Surveyor's Chain, Iron Lung,
+    Oath-Stone of the Deep Road, Sated Worm. Relics can install their own hooks (`Relic.Install`).
 - **Interop:** an `InstanceVars` class with GameMaker's built-in instance variables (`x`, `y`, `id`,
   `object_index`, `sprite_index`, ...), which the variable harvest never sees; every object's `Vars`
   class repeats them (objects never seen live have no `Vars`; use `InstanceVars`). The interop stamp now carries a format number, so installed interops

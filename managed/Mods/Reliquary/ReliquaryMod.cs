@@ -44,6 +44,12 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
         new CopperRing(),
         new GraftedHand(),
         new PilgrimsMillstone(),
+        // Riders and other damage-path relics.
+        new FacelessMirror(), new SplitQuiver(), new CinderRosary(), new EchoingBell(), new DebtorsKnot(), new WeepingCandle(),
+        // Panic buttons and scaling passives.
+        new PallbearersCoin(), new VesselOfBorrowedYears(), new ReliquaryOfSaintMardun(), new UsurersScale(), new SunderedGate(),
+        // Auras, grafts and needs.
+        new Censer(), new LodestoneIdol(), new SurveyorsChain(), new IronLung(), new OathStone(), new SatedWorm(),
     };
 
     private Carriers _carriers = null!;

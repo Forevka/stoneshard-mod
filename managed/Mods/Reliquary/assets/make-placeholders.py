@@ -13,6 +13,23 @@ RELICS = [
     ("copper_ring", "Copper Ring of Faith", 1, 1),
     ("stavebound_ember", "Stavebound Ember", 1, 2),
     ("grafted_hand", "Grafted Hand", 1, 2),
+    ("faceless_mirror", "Faceless Mirror", 1, 2),
+    ("split_quiver", "The Split Quiver", 1, 2),
+    ("cinder_rosary", "Cinder Rosary", 1, 2),
+    ("echoing_bell", "The Echoing Bell", 1, 2),
+    ("debtors_knot", "The Debtor\'s Knot", 1, 2),
+    ("weeping_candle", "The Weeping Candle", 1, 2),
+    ("pallbearers_coin", "Pallbearer\'s Coin", 1, 2),
+    ("vessel_of_borrowed_years", "Vessel of Borrowed Years", 1, 2),
+    ("reliquary_of_saint_mardun", "Reliquary of Saint Mardun", 1, 2),
+    ("usurers_scale", "The Usurer\'s Scale", 1, 2),
+    ("sundered_gate", "The Sundered Gate", 1, 2),
+    ("censer", "Censer of the Drowned Choir", 1, 2),
+    ("lodestone_idol", "Lodestone Idol", 1, 2),
+    ("surveyors_chain", "The Surveyor\'s Chain", 1, 2),
+    ("iron_lung", "The Iron Lung", 1, 2),
+    ("oath_stone", "Oath-Stone of the Deep Road", 1, 2),
+    ("sated_worm", "The Sated Worm", 1, 2),
 ]
 
 here = Path(__file__).parent
