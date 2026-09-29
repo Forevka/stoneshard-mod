@@ -10,6 +10,10 @@
   the log lines that matter: loaded mods, faults, errors and -WaitFor matches.
   Exit code 1 on timeout. -Stop only stops the game.
 
+  -TestHost launches the game with CORELOADER_TEST=1, which turns on the
+  loader's test host (the pipe tools\coreloader.ps1 talks to), and waits for
+  its "test host ON" line as well.
+
   The log counts as this run's once it names the pid of a live instance of
   the game ("loaded into pid N"), so a leftover log from the previous run, or
   a relaunch through Steam, cannot fool it.
@@ -18,6 +22,7 @@
   tools\run-game.ps1 -Game Dwarf -Deploy -Mods Console,DwarfBoost -CleanMods
   tools\run-game.ps1 -Game Stoneshard -WaitFor 'StructProbe.*PASSED' -TimeoutSec 180
   tools\run-game.ps1 -Game Stoneshard -Stop
+  tools\run-game.ps1 -Game Stoneshard -TestHost   # then: tools\coreloader.ps1 -Game Stoneshard ping
 #>
 param(
     [ValidateSet("Stoneshard", "Dwarf")] [string] $Game,
@@ -30,6 +35,7 @@ param(
     [switch]   $CleanMods,
     [string]   $Configuration = "Release",
     [string]   $WaitFor,
+    [switch]   $TestHost,
     [int]      $TimeoutSec = 120
 )
 
@@ -74,8 +80,13 @@ if ($Deploy) {
 }
 
 $started = Get-Date
-Write-Host "launching $exePath"
-Start-Process -FilePath $exePath -WorkingDirectory $GameDir | Out-Null
+Write-Host "launching $exePath$(if ($TestHost) { ' with CORELOADER_TEST=1' })"
+# The game inherits this process's environment. The variable is put back at
+# once, so nothing else started from this shell runs a test host.
+$previousTest = $env:CORELOADER_TEST
+if ($TestHost) { $env:CORELOADER_TEST = "1" }
+try { Start-Process -FilePath $exePath -WorkingDirectory $GameDir | Out-Null }
+finally { $env:CORELOADER_TEST = $previousTest }
 
 function Read-FreshLog {
     # The loader rotates the log at startup, so it can vanish between checks;
@@ -102,7 +113,8 @@ $matched = -not $WaitFor
 while ((Get-Date) -lt $deadline) {
     $lines = Read-FreshLog
     if ($lines) {
-        $loaded  = [bool]($lines | Where-Object { $_ -match 'mod\(s\) loaded' })
+        $loaded  = [bool]($lines | Where-Object { $_ -match 'mod\(s\) loaded' }) -and
+                   (-not $TestHost -or [bool]($lines | Where-Object { $_ -match 'test host ON' }))
         if ($WaitFor) { $matched = [bool]($lines | Where-Object { $_ -match $WaitFor }) }
         if ($loaded -and $matched) { break }
     }
@@ -113,7 +125,7 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
 }
 
-$pattern = 'mod\(s\) loaded|\] loaded |fault|error|exception|failed'
+$pattern = 'mod\(s\) loaded|\] loaded |fault|error|exception|failed|test host'
 if ($WaitFor) { $pattern = "$pattern|$WaitFor" }
 if ($lines) { $lines | Where-Object { $_ -match $pattern } | ForEach-Object { Write-Host $_ } }
 
@@ -122,7 +134,7 @@ if ($loaded -and $matched) {
     Write-Host "ready after $elapsed s ($log)"
     exit 0
 }
-$what = if (-not $loaded) { "'mod(s) loaded'" } else { "/$WaitFor/" }
+$what = if (-not $loaded) { "'mod(s) loaded'" + $(if ($TestHost) { " and 'test host ON'" } else { "" }) } else { "/$WaitFor/" }
 Write-Host "timed out after $elapsed s waiting for $what in $log"
 if ($lines) { Write-Host "--- last lines ---"; $lines | Select-Object -Last 15 | ForEach-Object { Write-Host $_ } }
 exit 1
