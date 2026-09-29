@@ -24,6 +24,11 @@ bump may break the mod API or the native CoreApi table; each version says so und
     killing hits (`Relic.OnPlayerDying`, run as `scr_pure_damage` returns).
   - The Censer of the Drowned Choir is not registered for now: neither of the game's statuses it used
     stops abilities, and one of them crashed the game when it expired.
+- **FastTravel** (Stoneshard): fast travel from the world map. The map's own controls bar gains a
+  "[F] - Fast Travel" entry (click it, or press `toggleKey`); while the mode is on a banner in the
+  game's style says what a click on the hovered cell would do, and clicking land you have visited, or
+  a cell next to one, travels there the way a border crossing does. A blocked arrival is moved to the
+  nearest free cell joined to the room's edges; travel starts only from the open world (not inside a building or dungeon) and is refused with enemies nearby. Test-host commands `ft.*`.
 - **Interop:** an `InstanceVars` class with GameMaker's built-in instance variables (`x`, `y`, `id`,
   `object_index`, `sprite_index`, ...), which the variable harvest never sees; every object's `Vars`
   class repeats them (objects never seen live have no `Vars`; use `InstanceVars`). The interop stamp now carries a format number, so installed interops

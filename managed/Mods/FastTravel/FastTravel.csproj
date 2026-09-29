@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Written against Stoneshard's generated interop, like Reliquary. -->
+  <PropertyGroup>
+    <AssemblyName>FastTravel</AssemblyName>
+    <InteropGame>StoneShard</InteropGame>
+  </PropertyGroup>
+
+</Project>
