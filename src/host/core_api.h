@@ -15,8 +15,9 @@
 //   * `int` results are 1 for success and 0 for failure; the reason goes to the log.
 //   * GML values travel as the runtime's own 16-byte RValue. Argument lists are
 //     CONTIGUOUS arrays; the loader builds whatever layout the callee needs.
-//   * Everything that touches GML (calls, variables, strings) must run on the
-//     game thread - i.e. from inside a frame, GUI or hook callback.
+//   * Everything that touches GML (calls, variables, strings, value free/copy)
+//     must run on the game thread - i.e. from inside a frame, GUI or hook
+//     callback. From version 9 such calls fail (return 0) on any other thread.
 
 #include <cstdint>
 
@@ -39,7 +40,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 8;   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
+constexpr std::int32_t kCoreApiVersion = 9;   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -155,6 +156,24 @@ struct CoreApi {
     // Fault-safe read of game memory (code or data). Returns 1 when all
     // `bytes` were readable. For tools that inspect compiled code.
     std::int32_t (*memory_read)(const void* src, void* dst, std::int32_t bytes);
+
+    // Pick mode (version 9): while armed, the next click outside the overlay's
+    // windows is swallowed and reported once by input_pick_take - client
+    // pixel position, client size, button (0 left, 1 right). Arming again or
+    // disarming drops a click nobody took.
+    void         (*input_pick_arm)(std::int32_t armed);
+    std::int32_t (*input_pick_take)(std::int32_t* x, std::int32_t* y, std::int32_t* width,
+                                    std::int32_t* height, std::int32_t* button);
+    // Collapsible tree rows: pop only when tree_node returned 1.
+    std::int32_t (*ui_tree_node)(const char* label);
+    void         (*ui_tree_pop)();
+    void         (*ui_set_clipboard)(const char* text);
+    // The native function behind a builtin (null if not found): compiled code
+    // calls it directly, so tools can name a call target.
+    void*        (*builtin_address)(const char* name);
+    // The builtin at a runner-registry index (what compiled code passes to
+    // its builtin-call helper), or null. Lives for the process.
+    const char*  (*builtin_name_at)(std::int32_t registryIndex);
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

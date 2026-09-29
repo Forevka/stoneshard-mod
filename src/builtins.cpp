@@ -53,6 +53,8 @@ static_assert(sizeof(RFunctionRef) == 0x18, "pointer RFunction must be 24 bytes"
 enum class Layout { Unknown, Inline, Ref };
 
 std::unordered_map<std::string, Builtin> g_map;
+// Registry order: compiled code names a builtin by this index (see NameAt).
+std::vector<const char*> g_byIndex;
 bool        g_tried  = false;
 bool        g_ready  = false;
 std::string g_status = "not initialised";
@@ -259,6 +261,11 @@ bool        Ready()  { return g_ready; }
 const char* Status() { return g_status.c_str(); }
 std::size_t Count()  { return g_map.size(); }
 
+const char* NameAt(int registryIndex) {
+    return registryIndex >= 0 && static_cast<std::size_t>(registryIndex) < g_byIndex.size()
+        ? g_byIndex[static_cast<std::size_t>(registryIndex)] : nullptr;
+}
+
 const std::vector<const char*>& Names() {
     static std::vector<const char*> names;
     if (names.empty() && g_ready) {
@@ -373,6 +380,7 @@ bool Init() {
 
     g_map.clear();
     g_map.reserve(static_cast<std::size_t>(n));
+    g_byIndex.assign(static_cast<std::size_t>(n), nullptr);
     for (int i = 0; i < n; ++i) {
         const char* name;
         TRoutine    fn;
@@ -387,7 +395,9 @@ bool Init() {
             name = e.name; fn = e.fn; argc = e.argc;
         }
         if (!InText(reinterpret_cast<std::uintptr_t>(fn))) continue;
-        g_map.emplace(name, Builtin{reinterpret_cast<void*>(fn), argc});
+        // The map's nodes never move, so its key stays a valid name for good.
+        const auto placed = g_map.emplace(name, Builtin{reinterpret_cast<void*>(fn), argc});
+        g_byIndex[static_cast<std::size_t>(i)] = placed.first->first.c_str();
     }
     Logf("builtins: %s-name layout, %zu of %d entries usable",
          layout == Layout::Inline ? "inline" : "by-pointer", g_map.size(), n);

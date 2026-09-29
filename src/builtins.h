@@ -26,6 +26,11 @@ std::size_t Count();
 // resolution succeeds).
 const std::vector<const char*>& Names();
 
+// The builtin at a position in the runner's own registry. YYC code calls many
+// builtins through a helper that takes this index (loaded from a global the
+// runner fills at startup), not the function's address. Null if out of range.
+const char* NameAt(int registryIndex);
+
 struct Builtin {
     void* fn   = nullptr;
     int   argc = 0;          // -1 == variadic

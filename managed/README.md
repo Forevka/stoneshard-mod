@@ -114,6 +114,8 @@ public override void OnInitialize()
 | `Values` | Lifetime of strings, arrays and structs: `Keep`, `Free`, `Copy` |
 | `Content` | New sprites from PNG (`AddSprite`), reskins of the game's own sprites (`ReplaceSprite`) and sounds from OGG (`AddSound`), loaded at runtime. `Sprite.Draw`, `Sound.Play`/`Stop` |
 | `GameDraw` | `OnGui(handler)`: draw into the game's own GUI layer each frame with `draw_*` builtins and your sprites |
+| `Input` | Pick mode: `ArmPick()`, then `TryTakePick(out click)` gives the next click outside the overlay (the game never sees it), in window pixels and room coordinates |
+| `Code` | Read-only views of compiled code: `Describe(fn)` lists the scripts, events and builtins a function calls and the strings it uses; `FindCallers(fn)` finds what calls it |
 
 The rules the loader enforces:
 - GML is only touched on the game thread. Every callback runs there; from anywhere else, use
@@ -133,16 +135,19 @@ The rules the loader enforces:
 - **Values are released automatically.** Every string, array or struct the game hands you (call
   results, variable reads, `RValue.FromString`) goes into a per-frame pool and is released at the
   end of the frame. Using it within the frame is always safe and never leaks, including formatting a
-  new string every frame. Structs are the exception: the runtime garbage-collects them rather than
-  counting references, so a struct only stays alive while GML itself holds it (in a global or an
-  instance variable, say). Only a value you keep in a field across frames needs `Values.Keep(v)`,
-  and later `Values.Free(ref v)`.
+  new string every frame. Only a value you keep in a field across frames needs `Values.Keep(v)`, and
+  later `Values.Free(ref v)`. Structs are garbage-collected rather than reference-counted, and the
+  collector can't see a pointer held in C#. So `Keep` also roots a kept struct in a GML array (the
+  global `__coreloader_roots`), and `Free` takes it out again.
+- GML is single-threaded. From another thread, the loader refuses every call that touches it
+  (builtins, scripts, strings, value free/copy), including calls from native plugins, and logs the
+  refusal.
 
 ## Mods in this repository
 
 | Mod | Game | What it does |
 |---|---|---|
-| Console | any | In-game console. Evaluates GML-style expressions against the live game: `instance_number(o_enemy)`, `oSys.gold += 1e6`, `global.x`, `obj[2].hp = 1`, `scr_foo(1, "a")`. Also `find`, `objects`, `vars`, `globals`, `hook`/`unhook` for live call logging, and history |
+| Console | any | In-game console. Evaluates GML-style expressions against the live game: `instance_number(o_enemy)`, `oSys.gold += 1e6`, `global.x`, `obj[2].hp = 1`, `scr_foo(1, "a")`. Also `find`, `objects`, `vars`, `globals`, `hook`/`unhook` for live call logging, and history. Its **Inspector** tab lets you click any instance in the game (`inspect`) and see its object and parents, every variable (edit with any GML expression, freeze, expand arrays and structs), and read-only code: what each of its events calls and which strings it uses, and who calls those. `code <fn>`, `callers <fn>` and `dump` do the same from the console |
 | ScriptSpy | any | Hook any function by name and watch its arguments and results live. Also logs them; `ScriptSpy.txt` lists watches to start with the game |
 | GlobalsEditor | any | Browse, edit and freeze global variables |
 | InstanceInspector | any | Objects, live instances and their variables: edit and freeze them, and search every instance for a variable name |
@@ -158,6 +163,7 @@ The rules the loader enforces:
 - a reflection probe;
 - an XP probe;
 - a value-lifetime probe (memory stays flat while it creates about 3,000 strings a frame);
+- a struct probe (a struct kept from C# survives forced garbage collections, and its root is released afterwards);
 - a hook-coexistence probe (C# and the loader's own tools on the same event).
 
 ## Finding things to mod

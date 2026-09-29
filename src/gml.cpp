@@ -382,7 +382,47 @@ int RefCountOf(const RValue& v) {
     if (v.ptr) SafeRead(static_cast<const char*>(v.ptr) + 8, &rc, 4);
     return rc;
 }
+
+// The string probe proves the reference path. This proves the other half: a
+// value that holds no reference must come out bit for bit, and its payload
+// must never be treated as a pointer. A helper that bumps "+8 of whatever the
+// payload points at" without checking the kind would pass the string probe
+// and then corrupt memory on the first number; here the payload points at a
+// canary instead, so such a helper is caught before any mod runs.
+bool CopiesPlainValuesVerbatim() {
+    static const std::int32_t kKinds[] = {kReal, kInt32, kInt64, kBool, kPtr, kUndefined};
+    alignas(16) std::int32_t canary[16] = {};
+    for (const std::int32_t kind : kKinds) {
+        RValue src{};
+        src.ptr   = canary;
+        src.flags = 0;
+        src.kind  = kind;
+        RValue dst{};
+        if (g_copyIsPost) dst = src;
+        else { dst.i64 = 0; dst.flags = 0; dst.kind = kUndefined; }
+        __try { g_copy(&dst, &src); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        // An int32 only owns its low half; everything else is the full 8 bytes.
+        const bool same = (kind == kInt32 ? dst.i32 == src.i32 : dst.i64 == src.i64) &&
+                          dst.kind == src.kind && dst.flags == src.flags;
+        if (!same) return false;
+        for (const std::int32_t c : canary) if (c != 0) return false;
+    }
+    return true;
+}
+
+std::atomic<DWORD> g_gameThread{0};
 } // namespace
+
+void NoteGameThread() {
+    DWORD expected = 0;
+    if (g_gameThread.compare_exchange_strong(expected, GetCurrentThreadId()))
+        Logf("gml: game thread is %lu", static_cast<unsigned long>(GetCurrentThreadId()));
+}
+
+bool OnGameThread() {
+    const DWORD t = g_gameThread.load(std::memory_order_relaxed);
+    return t == 0 || t == GetCurrentThreadId();
+}
 
 void VerifyValueLifetime() {
     if (g_lifetimeTested || !g_ready) return;
@@ -429,6 +469,10 @@ void VerifyValueLifetime() {
             if (RefCountOf(a) != rc0) { fail("free did not release the copy's reference"); return; }
         }
     }
+    if (g_copy && !CopiesPlainValuesVerbatim()) {
+        Logf("[!] gml: COPY_RValue mishandles plain values; copying disabled");
+        g_copy = nullptr;
+    }
     if (g_free && !g_copy) {
         // No verified copy to test with: take a second reference by hand (the
         // probe string is ours alone, so its refcount is ours to set).
@@ -451,6 +495,13 @@ bool CanCopyValues() { return g_lifetimeVerified && g_copy != nullptr; }
 
 bool FreeValue(RValue& v) {
     if (!g_lifetimeVerified || !g_free) return false;
+    // Structs are garbage-collected, not counted: there is no reference to
+    // drop, and the runtime's helpers for them expect to run inside the game's
+    // own code (they consult the GC's context).
+    if ((v.kind & 0x00FFFFFF) == kObject) {
+        v.i64 = 0; v.flags = 0; v.kind = kUndefined;
+        return true;
+    }
     __try {
         g_free(&v);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -464,6 +515,15 @@ bool FreeValue(RValue& v) {
 bool CopyValue(RValue& dst, const RValue& src) {
     if (!g_lifetimeVerified || !g_copy) return false;
     if (&dst == &src) return true;   // already its own copy; clearing dst would clear src
+    // A struct is copied bit for bit. The runtime's copy of one only feeds the
+    // GC's root bookkeeping, which reads the GC context of the GML code that
+    // is running - there is none at Present, where mods mostly run. A copy
+    // held outside GML is invisible to the GC either way; the managed side
+    // keeps such structs alive by rooting them in a GML array.
+    if ((src.kind & 0x00FFFFFF) == kObject) {
+        dst = src;
+        return true;
+    }
     // dst's previous contents are overwritten, never released: starting from
     // undefined keeps the full COPY_RValue from freeing whatever was there.
     if (g_copyIsPost) {

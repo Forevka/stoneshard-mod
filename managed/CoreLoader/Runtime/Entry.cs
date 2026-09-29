@@ -27,15 +27,11 @@ internal static unsafe class Entry
             if (exports->Size < sizeof(ManagedExports)) return 0;
             Loader.Api = api;
 
-            // Freeing or copying an undefined value is a no-op for the runtime
-            // but still reports whether its helper was found.
-            RValue probe = RValue.Undefined, probe2 = RValue.Undefined;
-            Values.CanFree = api->ValueFree(&probe) != 0;
-            Values.CanCopy = api->ValueCopy(&probe2, &probe) != 0;
-
+            // Init runs on the host's start-up thread, not the game's: nothing
+            // here may touch GML (the value helpers are probed on the game
+            // thread, just before mods start).
             Log.Info($"CoreLoader {typeof(Entry).Assembly.GetName().Version} on .NET {Environment.Version}, " +
-                     $"game '{Game.Name}', {api->SymbolCount()} GML functions, " +
-                     $"value free {(Values.CanFree ? "yes" : "no")} / copy {(Values.CanCopy ? "yes" : "no")}");
+                     $"game '{Game.Name}', {api->SymbolCount()} GML functions");
 
             ModManager.DiscoverAndLoad();
 
@@ -75,6 +71,7 @@ internal static unsafe class Entry
         // The native side proves the value helpers on the first frame (before
         // this runs); pick up the verdict before any mod gets to use values.
         Values.Probe();
+        Log.Info($"value lifetime: free {(Values.CanFree ? "yes" : "no")} / copy {(Values.CanCopy ? "yes" : "no")}");
         // Attribute hooks first, so OnInitialize can rely on them being live.
         // Only mods still waiting: never a second start for one already running.
         foreach (var m in ModManager.Mods.ToList())

@@ -14,4 +14,11 @@ void OverlayInvalidate();
 
 void OverlayShutdown();
 
+// Pick mode, for tools that let the user click on something in the game. While
+// armed, the next left or right click outside the overlay's own windows is
+// swallowed (the game never sees it) and kept for OverlayTakePick: the
+// position in client pixels, the client size, and the button (0 left, 1 right).
+void OverlaySetPick(bool armed);
+bool OverlayTakePick(int* x, int* y, int* width, int* height, int* button);
+
 } // namespace mod

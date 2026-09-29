@@ -15,7 +15,7 @@ namespace CoreLoader;
 /// </remarks>
 public static unsafe class UI
 {
-    private enum Scope { Id, TabBar, TabItem, Child }
+    private enum Scope { Id, TabBar, TabItem, Child, Tree }
 
     private static readonly List<Scope> Open = new();
     private static int _floor;
@@ -55,6 +55,7 @@ public static unsafe class UI
             case Scope.TabBar: Loader.Api->UiEndTabBar(); break;
             case Scope.TabItem: Loader.Api->UiEndTabItem(); break;
             case Scope.Child: Loader.Api->UiEndChild(); break;
+            case Scope.Tree: Loader.Api->UiTreePop(); break;
         }
     }
 
@@ -157,6 +158,30 @@ public static unsafe class UI
         return changed;
     }
 
+    /// <summary>
+    /// Like <see cref="InputText"/>, but returns true only on the frame Enter is
+    /// pressed - for edits that should apply once, not on every keystroke.
+    /// </summary>
+    public static bool InputTextEnter(string label, ref string value, int maxBytes = 256)
+    {
+        Guard();
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 2);
+        value ??= "";
+        var buf = new byte[maxBytes];
+        Encoding.UTF8.GetEncoder().Convert(value.AsSpan(), buf.AsSpan(0, maxBytes - 1), flush: true,
+                                           out _, out int written, out _);
+        buf[written] = 0;
+
+        const int EnterReturnsTrue = 1 << 6, AutoSelectAll = 1 << 12;
+        bool enter;
+        fixed (byte* l = Utf8.Get(label))
+        fixed (byte* b = buf)
+            enter = Loader.Api->UiInputTextFlags(l, b, maxBytes, EnterReturnsTrue | AutoSelectAll) != 0;
+        int end = Array.IndexOf(buf, (byte)0);
+        value = Encoding.UTF8.GetString(buf, 0, end < 0 ? buf.Length : end);
+        return enter;
+    }
+
     public static bool CollapsingHeader(string label)
     {
         Guard();
@@ -223,6 +248,25 @@ public static unsafe class UI
     }
 
     public static void EndChild() => Close(Scope.Child, nameof(EndChild));
+
+    /// <summary>A collapsible row. Call <see cref="TreePop"/> only when this returned true.</summary>
+    public static bool TreeNode(string label)
+    {
+        Guard();
+        bool open;
+        fixed (byte* l = Utf8.Get(label)) open = Loader.Api->UiTreeNode(l) != 0;
+        if (open) Open.Add(Scope.Tree);
+        return open;
+    }
+
+    public static void TreePop() => Close(Scope.Tree, nameof(TreePop));
+
+    /// <summary>Puts text on the system clipboard.</summary>
+    public static void SetClipboard(string text)
+    {
+        Guard();
+        fixed (byte* t = Utf8.Encode(text ?? "")) Loader.Api->UiSetClipboard(t);
+    }
 
     /// <summary>Gives keyboard focus to the next widget.</summary>
     public static void FocusNext()

@@ -24,6 +24,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
+#include <atomic>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -52,6 +53,34 @@ WNDPROC               g_prevWndProc = nullptr;
 UINT g_width  = 0;
 UINT g_height = 0;
 
+// Pick mode: written by the window thread, read by the game thread (the same
+// thread in practice, but nothing here relies on it).
+std::atomic<bool> g_pickArmed{false};
+std::atomic<bool> g_pickReady{false};
+std::atomic<bool> g_pickSwallowUp{false};
+std::atomic<int>  g_pickX{0}, g_pickY{0}, g_pickW{0}, g_pickH{0}, g_pickButton{0};
+
+// True when the message was a pick click and must not reach the game.
+bool HandlePick(HWND hwnd, UINT msg, LPARAM lParam) {
+    const bool down = msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN;
+    const bool up   = msg == WM_LBUTTONUP || msg == WM_RBUTTONUP;
+    if (up && g_pickSwallowUp.exchange(false)) return true;   // the rest of a swallowed click
+    if (!down || !g_pickArmed.load()) return false;
+    if (g_visible && g_initialised && ImGui::GetIO().WantCaptureMouse) return false;   // a click on the overlay
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    g_pickX = static_cast<short>(LOWORD(lParam));
+    g_pickY = static_cast<short>(HIWORD(lParam));
+    g_pickW = rc.right - rc.left;
+    g_pickH = rc.bottom - rc.top;
+    g_pickButton = msg == WM_RBUTTONDOWN ? 1 : 0;
+    g_pickArmed = false;
+    g_pickSwallowUp = true;
+    g_pickReady = true;
+    return true;
+}
+
 LRESULT CALLBACK HookedWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     // The trace lines up keystrokes with what the game ran in response.
     if (msg == WM_KEYDOWN) tracer::NoteKey(static_cast<int>(wParam));
@@ -65,6 +94,8 @@ LRESULT CALLBACK HookedWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         Logf("overlay %s", g_visible ? "shown" : "hidden");
         return 0;   // swallow, so the game never sees the toggle key
     }
+
+    if (HandlePick(hwnd, msg, lParam)) return 0;
 
     if (g_visible && g_initialised) {
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam);
@@ -417,6 +448,10 @@ void OverlayRender(IDXGISwapChain* swapChain) {
         builtins::SelfTest();
     }
 
+    // Present runs on the game's main thread: from here on, API calls that
+    // touch GML are refused from any other thread.
+    gml::NoteGameThread();
+
     // Before any mod runs: prove the value free/copy helpers on a probe string
     // (game thread, once). Until then the managed side treats them as absent.
     gml::VerifyValueLifetime();
@@ -470,6 +505,21 @@ void OverlayShutdown() {
     if (g_device)  { g_device->Release();  g_device  = nullptr; }
 
     Logf("overlay shut down");
+}
+
+void OverlaySetPick(bool armed) {
+    g_pickArmed = armed;
+    if (!armed) g_pickReady = false;
+}
+
+bool OverlayTakePick(int* x, int* y, int* width, int* height, int* button) {
+    if (!g_pickReady.exchange(false)) return false;
+    if (x) *x = g_pickX;
+    if (y) *y = g_pickY;
+    if (width) *width = g_pickW;
+    if (height) *height = g_pickH;
+    if (button) *button = g_pickButton;
+    return true;
 }
 
 } // namespace mod

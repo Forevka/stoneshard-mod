@@ -64,6 +64,11 @@ bool        CopyValue(RValue& dst, const RValue& src);
 bool        CanFreeValues();
 bool        CanCopyValues();
 
+// The game's main thread, as first seen at Present. OnGameThread() is true on
+// it - and on any thread until it is known, so start-up is not blocked.
+void        NoteGameThread();
+bool        OnGameThread();
+
 // Proves the located free/copy helpers behave as such, on a probe string.
 // Game thread, once; until it passes, FreeValue/CopyValue refuse.
 void        VerifyValueLifetime();

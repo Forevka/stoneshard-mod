@@ -18,6 +18,8 @@ public sealed class ConsoleMod : CoreMod
     private readonly List<string> _history = new();
     private readonly Dictionary<string, (HookHandle Before, HookHandle After)> _hooks = new(StringComparer.Ordinal);
     private readonly Evaluator _eval = new();
+    private Inspector? _inspector;
+    private IDisposable? _gameDrawing;
     private string _input = "";
     private int _historyCursor = -1;
     private bool _focus = true;
@@ -27,11 +29,31 @@ public sealed class ConsoleMod : CoreMod
     {
         _history.AddRange(Config.Get("history", "").Split('\n', StringSplitOptions.RemoveEmptyEntries));
         Print($"CoreLoader console - {Game.Name}. Type 'help'.", 0.6f, 0.8f, 1f);
+        _inspector = new Inspector(_eval, Print, () => Path.Combine(Directory, "Console", "dumps"));
+        _gameDrawing = GameDraw.OnGui(_inspector.DrawGame);
     }
+
+    public override void OnUpdate() => _inspector?.Update();
 
     private long _lastDrawn;
 
     public override void OnGUI()
+    {
+        if (!UI.BeginTabBar("##console_tabs")) return;
+        if (UI.BeginTabItem("Console"))
+        {
+            DrawConsole();
+            UI.EndTabItem();
+        }
+        if (UI.BeginTabItem("Inspector"))
+        {
+            _inspector?.Draw();
+            UI.EndTabItem();
+        }
+        UI.EndTabBar();
+    }
+
+    private void DrawConsole()
     {
         // Switching to the console tab (it was not drawn a moment ago) puts the
         // cursor in the input line, so typing never falls through to the game.
@@ -58,6 +80,8 @@ public sealed class ConsoleMod : CoreMod
     public override void OnShutdown()
     {
         foreach (var (b, a) in _hooks.Values) { b.Dispose(); a.Dispose(); }
+        _gameDrawing?.Dispose();
+        _inspector?.Release();
         Config.Set("history", string.Join('\n', _history.TakeLast(100)));
     }
 
@@ -101,6 +125,14 @@ public sealed class ConsoleMod : CoreMod
             case "globals": GlobalsCmd(arg); return true;
             case "hook": Hook(arg); return true;
             case "unhook": Unhook(arg); return true;
+            case "inspect": Inspect(arg); return true;
+            case "code": CodeCmd(arg); return true;
+            case "callers": Callers(arg); return true;
+            case "dump":
+                if (_inspector == null) return true;
+                if (arg.Length > 0) Inspect(arg);
+                _inspector.DumpToFile();
+                return true;
             case "hooks":
                 Print(_hooks.Count == 0 ? "no hooks" : string.Join(", ", _hooks.Keys));
                 return true;
@@ -125,6 +157,11 @@ public sealed class ConsoleMod : CoreMod
             "  vars <obj>[n]      every variable of an instance, e.g. vars oSys  /  vars o_enemy 2",
             "  globals [filter]   global variables and their values",
             "  hook <script>      print each call's arguments and result;  unhook <script|all>;  hooks",
+            "  inspect            click an instance in the game, then see it in the Inspector tab",
+            "  inspect <obj> [n]  inspect an object's n-th live instance (variables, events, dump)",
+            "  dump [<obj> [n]]   write the inspected instance (variables, events) to Mods/Console/dumps",
+            "  code <function>    what a script or event calls and the strings it uses (read-only)",
+            "  callers <function> every script and event that calls it (scans all code)",
             "  clear              Up/Down in the input line walks history",
         })
             Print(l, 0.7f, 0.8f, 0.9f);
@@ -215,6 +252,54 @@ public sealed class ConsoleMod : CoreMod
         Print($"hooked {symbol}");
     }
 
+    private void Inspect(string arg)
+    {
+        if (_inspector == null) return;
+        var p = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (p.Length == 0)
+        {
+            _inspector.Pick();
+            Print("click an instance in the game (right click cancels); it opens in the Inspector tab");
+            return;
+        }
+        int n = p.Length > 1 && int.TryParse(p[1], out var k) ? k : 0;
+        _inspector.Select(p[0], n);
+        Print($"inspecting {p[0]}[{n}] - see the Inspector tab");
+    }
+
+    private void CodeCmd(string symbol)
+    {
+        if (symbol.Length == 0) throw new ConsoleError("code <script or event>");
+        var info = CoreLoader.Code.Describe(symbol);
+        if (info == null)
+        {
+            nint b = CoreLoader.Code.BuiltinAddress(symbol);
+            if (b == 0) throw new ConsoleError($"{symbol} is not a compiled function or a builtin");
+            Print($"builtin {symbol}: native code at 0x{b:X}, {Game.BuiltinArity(symbol)} argument(s) " +
+                  "(use 'callers' to see which scripts and events call it)", 0.6f, 0.85f, 1f);
+            return;
+        }
+        Print($"{info.Name}  0x{info.Address:X}, up to {info.Size:N0} bytes" +
+              (info.ArgumentCount > 0 ? $", reads {info.ArgumentCount} argument(s)" : ""), 0.6f, 0.85f, 1f);
+        Print($"  calls ({info.Calls.Count}):");
+        foreach (var c in info.Calls.Take(80)) Print("    " + (c.StartsWith("gml_", StringComparison.Ordinal) ? c : "builtin " + c));
+        if (info.Calls.Count > 80) Print($"    ... {info.Calls.Count - 80} more (see the Inspector's code view)");
+        Print($"  strings ({info.Strings.Count}):");
+        foreach (var s in info.Strings.Take(40)) Print("    \"" + s + "\"", 0.7f, 0.7f, 0.75f);
+        _inspector?.ShowCode(info.Name);
+    }
+
+    private void Callers(string symbol)
+    {
+        if (symbol.Length == 0) throw new ConsoleError("callers <script, event or builtin>");
+        var target = CoreLoader.Code.Describe(symbol)?.Name ?? symbol;
+        int cursor = 0;
+        var found = CoreLoader.Code.FindCallers(target, ref cursor, int.MaxValue);
+        Print($"{found.Count} caller(s) of {target}:", 0.6f, 0.85f, 1f);
+        foreach (var c in found.Take(100)) Print("  " + c);
+        if (found.Count > 100) Print($"  ... and {found.Count - 100} more");
+    }
+
     private void Unhook(string symbol)
     {
         var targets = symbol == "all" ? _hooks.Keys.ToList() : new List<string> { symbol };
@@ -239,7 +324,7 @@ public sealed class ConsoleMod : CoreMod
         _scrollToEnd = true;
     }
 
-    private static string Format(RValue v) => Format(v, 0);
+    internal static string Format(RValue v) => Format(v, 0);
 
     // Depth-limited: GML arrays are references and can contain themselves, and
     // unbounded recursion would end in a StackOverflow nothing can catch.
@@ -258,6 +343,10 @@ public sealed class ConsoleMod : CoreMod
                 int n = Gml.ArrayLength(v);
                 var items = Enumerable.Range(0, Math.Min(n, 8)).Select(i => Format(Gml.ArrayGet(v, i), depth + 1));
                 return $"[{string.Join(", ", items)}{(n > 8 ? $", … ({n})" : "")}]";
+            // Newer runtimes hand out typed references (instances, assets) whose
+            // string() is just "<ref>"; the index in the low half is what matters.
+            case RValueKind.Reference:
+                return $"ref {v.Int32}";
             default:
                 if (v.IsNumber) return v.AsReal.ToString("G15", System.Globalization.CultureInfo.InvariantCulture);
                 var t = Gml.TypeOf(v);

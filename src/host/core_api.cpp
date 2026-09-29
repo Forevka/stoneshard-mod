@@ -4,10 +4,12 @@
 #include "gml.h"
 #include "hookengine.h"
 #include "log.h"
+#include "overlay.h"
 #include "symbols.h"
 
 #include <windows.h>
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
@@ -91,13 +93,27 @@ void* ApiSymbolFind(const char* name) { return name ? sym::Find(name) : nullptr;
 
 // -------------------------------------------------------------- GML bridge
 
-std::int32_t ApiGmlReady()    { return gml::Ready() ? 1 : 0; }
+// The runtime is single-threaded: a GML call, a string or a reference count
+// touched from another thread races the game and corrupts it silently. The
+// managed side already refuses; this also covers native plugins and any path
+// that slips past it. Logged a few times, then quietly.
+bool GameThreadOnly(const char* what) {
+    if (gml::OnGameThread()) return true;
+    static std::atomic<int> reported{0};
+    if (reported.fetch_add(1) < 8)
+        Logf("[!] core api: %s called off the game thread (thread %lu); refused", what,
+             static_cast<unsigned long>(GetCurrentThreadId()));
+    return false;
+}
+
+std::int32_t ApiGmlReady()   { return gml::Ready() ? 1 : 0; }
 std::int32_t ApiAbiProven()   { return gml::AbiProven() ? 1 : 0; }
 void*        ApiCurrentSelf() { return gml::CurrentSelf(); }
 
 std::int32_t ApiCallScript(void* func, void* self, void* other, CoreRValue* result,
                            CoreRValue* args, std::int32_t argc) {
     if (!func || !result || argc < 0 || (argc > 0 && !args)) return 0;
+    if (!GameThreadOnly("call_script")) return 0;
 
     // Scripts take an array of POINTERS; the managed side hands a flat array.
     std::vector<gml::RValue*> ptrs(static_cast<std::size_t>(argc));
@@ -111,13 +127,14 @@ std::int32_t ApiCallScript(void* func, void* self, void* other, CoreRValue* resu
 }
 
 std::int32_t ApiCallEvent(void* func, void* self, void* other) {
-    if (!func || !self) return 0;
+    if (!func || !self || !GameThreadOnly("call_event")) return 0;
     return gml::CallEvent(func, self, other) ? 1 : 0;
 }
 
 std::int32_t ApiCallBuiltin(const char* name, CoreRValue* result, CoreRValue* args,
                             std::int32_t argc, void* self, void* other) {
     if (!name || !result || argc < 0 || (argc > 0 && !args)) return 0;
+    if (!GameThreadOnly("call_builtin")) return 0;
     // Builtins read `self` even when they ignore it; borrow a live instance.
     if (!self) self = gml::CurrentSelf();
     return builtins::Call(name, Gml(result), Gml(args), argc, self, other) ? 1 : 0;
@@ -126,12 +143,12 @@ std::int32_t ApiCallBuiltin(const char* name, CoreRValue* result, CoreRValue* ar
 std::int32_t ApiBuiltinCount() { return static_cast<std::int32_t>(builtins::Count()); }
 
 std::int32_t ApiSetString(CoreRValue* value, const char* text) {
-    if (!value || !text) return 0;
+    if (!value || !text || !GameThreadOnly("set_string")) return 0;
     return gml::SetString(*Gml(value), text) ? 1 : 0;
 }
 
 std::int32_t ApiToString(const CoreRValue* value, char* buffer, std::int32_t capacity) {
-    if (!value) return 0;
+    if (!value || !GameThreadOnly("to_string")) return 0;
     const std::string s = gml::ToString(*Gml(value));
     if (buffer && capacity > 0) {
         const std::size_t n = std::min<std::size_t>(s.size(), static_cast<std::size_t>(capacity) - 1);
@@ -151,12 +168,12 @@ const char* InternName(const char* name) {
 }
 
 std::int32_t ApiVarGet(void* instance, const char* name, CoreRValue* out) {
-    if (!instance || !name || !out) return 0;
+    if (!instance || !name || !out || !GameThreadOnly("var_get")) return 0;
     return builtins::GetVar(builtins::SelfHandle(instance), InternName(name), Gml(out)) ? 1 : 0;
 }
 
 std::int32_t ApiVarSet(void* instance, const char* name, const CoreRValue* value) {
-    if (!instance || !name || !value) return 0;
+    if (!instance || !name || !value || !GameThreadOnly("var_set")) return 0;
     return builtins::SetVar(builtins::SelfHandle(instance), InternName(name), *Gml(value)) ? 1 : 0;
 }
 
@@ -178,7 +195,7 @@ std::int32_t ApiHookSetManaged(std::int32_t id, std::int32_t managed) {
 std::int32_t ApiHookCount() { return hk::Count(); }
 
 std::int32_t ApiHookCallOriginal(const CoreHookCall* call, CoreRValue* result) {
-    if (!call || !result) return 0;
+    if (!call || !result || !GameThreadOnly("hook_call_original")) return 0;
     return hk::CallOriginal(reinterpret_cast<const hk::Call*>(call), Gml(result)) ? 1 : 0;
 }
 
@@ -191,11 +208,11 @@ std::int32_t ApiHookEnable(std::int32_t id, std::int32_t enabled) {
 }
 
 std::int32_t ApiValueFree(CoreRValue* value) {
-    return value && gml::FreeValue(*Gml(value)) ? 1 : 0;
+    return value && GameThreadOnly("value_free") && gml::FreeValue(*Gml(value)) ? 1 : 0;
 }
 
 std::int32_t ApiValueCopy(CoreRValue* dst, const CoreRValue* src) {
-    return dst && src && gml::CopyValue(*Gml(dst), *Gml(src)) ? 1 : 0;
+    return dst && src && GameThreadOnly("value_copy") && gml::CopyValue(*Gml(dst), *Gml(src)) ? 1 : 0;
 }
 
 const char* ApiBuiltinName(std::int32_t index) {
@@ -286,6 +303,27 @@ int HistoryCallback(ImGuiInputTextCallbackData* data) {
     return 0;
 }
 
+void ApiInputPickArm(std::int32_t armed) { OverlaySetPick(armed != 0); }
+
+std::int32_t ApiInputPickTake(std::int32_t* x, std::int32_t* y, std::int32_t* w, std::int32_t* h,
+                              std::int32_t* button) {
+    int px = 0, py = 0, pw = 0, ph = 0, pb = 0;
+    if (!OverlayTakePick(&px, &py, &pw, &ph, &pb)) return 0;
+    if (x) *x = px;
+    if (y) *y = py;
+    if (w) *w = pw;
+    if (h) *h = ph;
+    if (button) *button = pb;
+    return 1;
+}
+
+std::int32_t UiTreeNode(const char* label) { return ImGui::TreeNode(label ? label : "") ? 1 : 0; }
+void UiTreePop()                           { ImGui::TreePop(); }
+void UiSetClipboard(const char* text)      { ImGui::SetClipboardText(text ? text : ""); }
+
+void* ApiBuiltinAddress(const char* name) { return name ? builtins::Find(name).fn : nullptr; }
+const char* ApiBuiltinNameAt(std::int32_t index) { return builtins::NameAt(index); }
+
 std::int32_t UiInputHistory(const char* label, char* buf, std::int32_t cap,
                             const char* const* history, std::int32_t count, std::int32_t* cursor) {
     if (!buf || cap <= 0 || !cursor) return 0;
@@ -366,6 +404,13 @@ CoreApi Build() {
     a.ui_get_scroll_max_y        = &UiGetScrollMaxY;
     a.ui_input_history           = &UiInputHistory;
     a.memory_read                = &ApiMemoryRead;
+    a.input_pick_arm             = &ApiInputPickArm;
+    a.input_pick_take            = &ApiInputPickTake;
+    a.ui_tree_node               = &UiTreeNode;
+    a.ui_tree_pop                = &UiTreePop;
+    a.ui_set_clipboard           = &UiSetClipboard;
+    a.builtin_address            = &ApiBuiltinAddress;
+    a.builtin_name_at            = &ApiBuiltinNameAt;
     return a;
 }
 

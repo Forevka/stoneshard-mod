@@ -51,10 +51,76 @@ public static unsafe class Values
             if (Pool[i].Pointer == v.Pointer && Pool[i].Kind == v.Kind)
             {
                 Pool.RemoveAt(i);
+                if (v.Kind == RValueKind.Object) Root(v);
                 return v;
             }
         }
         return Copy(v);
+    }
+
+    // Structs are garbage-collected, not reference-counted: a pointer held in
+    // C# is invisible to the collector, which frees the struct as soon as GML
+    // stops using it. A kept struct is therefore also pushed into a GML array
+    // held in a global, where the collector sees it; Free takes it out again.
+    private const string RootsName = "__coreloader_roots";
+    private static bool? _canRoot;
+
+    private static bool CanRoot => _canRoot ??=
+        Game.BuiltinArity("array_push") != null && Game.BuiltinArity("array_delete") != null &&
+        Game.BuiltinArity("array_create") != null;
+
+    private static RValue Roots(bool create)
+    {
+        if (Game.CallBuiltin("variable_global_exists", RootsName).AsBool)
+        {
+            var r = Game.CallBuiltin("variable_global_get", RootsName);
+            if (r.Kind == RValueKind.Array) return r;
+        }
+        if (!create) return RValue.Undefined;
+        Game.CallBuiltin("variable_global_set", RootsName, Game.CallBuiltin("array_create", 0));
+        return Game.CallBuiltin("variable_global_get", RootsName);
+    }
+
+    private static void Root(RValue v)
+    {
+        if (!CanRoot) return;
+        try
+        {
+            var roots = Roots(create: true);
+            if (roots.Kind == RValueKind.Array) Game.CallBuiltin("array_push", roots, v);
+        }
+        catch (GmlException ex)
+        {
+            Loader.Log(LogLevel.Warning, "CoreLoader", $"could not root a kept struct: {ex.Message}");
+        }
+    }
+
+    private static void Unroot(RValue v)
+    {
+        if (!CanRoot) return;
+        try
+        {
+            var roots = Roots(create: false);
+            if (roots.Kind != RValueKind.Array) return;
+            for (int i = Gml.ArrayLength(roots) - 1; i >= 0; i--)
+            {
+                if (Gml.ArrayGet(roots, i).Pointer != v.Pointer) continue;
+                Game.CallBuiltin("array_delete", roots, i, 1);
+                return;
+            }
+        }
+        catch (GmlException) { }
+    }
+
+    /// <summary>Number of kept structs rooted for the collector (diagnostics).</summary>
+    public static int RootedStructs
+    {
+        get
+        {
+            if (!CanRoot) return 0;
+            var roots = Roots(create: false);
+            return roots.Kind == RValueKind.Array ? Gml.ArrayLength(roots) : 0;
+        }
     }
 
     /// <summary>Releases a value obtained with <see cref="Keep"/> (or <see cref="Copy"/>).</summary>
@@ -62,6 +128,7 @@ public static unsafe class Values
     {
         Loader.EnsureGameThread();
         if (!HoldsReference(v)) { v = RValue.Undefined; return; }
+        if (v.Kind == RValueKind.Object) Unroot(v);
         fixed (RValue* p = &v) Loader.Api->ValueFree(p);
         v = RValue.Undefined;
     }
@@ -77,6 +144,7 @@ public static unsafe class Values
         if (!CanCopy) throw new GmlException("this runtime's copy helper was not found");
         RValue dst = RValue.Undefined;
         if (Loader.Api->ValueCopy(&dst, &src) == 0) throw new GmlException("copying the value failed");
+        if (dst.Kind == RValueKind.Object) Root(dst);
         return dst;
     }
 
