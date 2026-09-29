@@ -22,7 +22,7 @@ namespace Reliquary;
 /// Activation is hover-and-key: an inventory item under the mouse has
 /// inmouse = true, and vanilla offers passive items no "Use" entry to hang one on.
 /// </remarks>
-public sealed class ReliquaryMod : CoreMod
+public sealed class ReliquaryMod : CoreMod, IRelicHost
 {
     // A scan walks the carriers and the player's gear; every two seconds keeps
     // a dropped, sold or loaded relic from going unnoticed for long.
@@ -69,6 +69,8 @@ public sealed class ReliquaryMod : CoreMod
         Scripts.scr_atr_calc.After(OnStatsCalculated);
         Scripts.scr_global_turn_end.After(OnTurnEnd);
         Scripts.scr_save_damage_received.After(OnDamage);
+
+        foreach (var relic in _relics) Guard(relic, "install", () => relic.Install(this));
 
         if (TestHost.Enabled) RegisterCommands();
         Log.Info($"{_relics.Count} relics ready; activate with [{ActivateKeyName}] over a relic in the inventory");
@@ -207,6 +209,30 @@ public sealed class ReliquaryMod : CoreMod
             var victim = new InstanceRef(victimId);
             foreach (var item in Active())
                 Guard(item.Relic, "damage dealt", () => item.Relic.OnEnemyDamaged(item, player, victim, amount));
+        }
+    }
+
+    // ------------------------------------------------------------ IRelicHost
+
+    RelicItem? IRelicHost.Active(Relic relic) => Active().FirstOrDefault(i => i.Relic == relic);
+
+    void IRelicHost.Guard(Relic relic, string what, Action action) => Guard(relic, what, action);
+
+    void IRelicHost.Before(Relic relic, ScriptRef script, HookHandler handler) =>
+        script.Before(c => Guarded(relic, script, handler, c));
+
+    void IRelicHost.After(Relic relic, ScriptRef script, HookHandler handler) =>
+        script.After(c => Guarded(relic, script, handler, c));
+
+    void IRelicHost.Log(string text) => Log.Info(text);
+
+    // A relic's own hook, run so that a throw costs a log line, not the mod.
+    private void Guarded(Relic relic, ScriptRef script, HookHandler handler, HookCall c)
+    {
+        try { handler(c); }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            Log.Warning($"{relic.Name} ({script.Symbol}): {ex.GetType().Name}: {ex.Message}");
         }
     }
 

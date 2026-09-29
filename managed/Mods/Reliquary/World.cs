@@ -20,7 +20,7 @@ namespace Reliquary;
 ///     it in the unit's `buffs` list (stone and stun both behave);
 ///   * scr_actionsLogAddMessage(text) appends a line to the game's own log.
 /// </remarks>
-internal static class World
+internal static partial class World
 {
     public const double Tile = 26;
 

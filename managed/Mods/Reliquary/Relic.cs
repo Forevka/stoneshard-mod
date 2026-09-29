@@ -36,6 +36,13 @@ internal abstract class Relic
     /// <summary>Fresh item: set up its state keys.</summary>
     public virtual void Init(RelicItem item) { }
 
+    /// <summary>
+    /// Once, from OnInitialize: a relic that needs a hook beyond the three the
+    /// mod installs (eating, sleeping, trading...) registers it here, through
+    /// <paramref name="host"/> so it is guarded and can find its active item.
+    /// </summary>
+    public virtual void Install(IRelicHost host) { }
+
     /// <summary>Once per player turn, for every relic item the last scan found (check item.Carried).</summary>
     public virtual void OnTurn(RelicItem item, InstanceRef player) { }
 
@@ -69,6 +76,26 @@ internal abstract class Relic
 
     /// <summary>A live line about an effect that lives on the character, for the panel; "" for none.</summary>
     public virtual string PlayerStatus(InstanceRef player) => "";
+}
+
+/// <summary>What a relic's own hooks (see <see cref="Relic.Install"/>) can ask of the mod.</summary>
+internal interface IRelicHost
+{
+    /// <summary>The copy of this relic that counts (the first carried one), or null when none is carried.</summary>
+    RelicItem? Active(Relic relic);
+
+    /// <summary>Runs a relic's code so that a throw is logged against it instead of faulting the mod.</summary>
+    void Guard(Relic relic, string what, Action action);
+
+    /// <summary>
+    /// Registers a hook on a script or event, run through Guard. Use the
+    /// interop: <c>host.After(this, Scripts.scr_x, c => ...)</c>.
+    /// </summary>
+    void Before(Relic relic, ScriptRef script, HookHandler handler);
+
+    void After(Relic relic, ScriptRef script, HookHandler handler);
+
+    void Log(string text);
 }
 
 /// <summary>A live relic item: the carrier instance and its data map.</summary>
