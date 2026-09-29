@@ -77,6 +77,13 @@ struct ErrorProbe {
 // thread, with `self` a live instance for those builtin calls.
 const char* ExplainFailure(unsigned long code, void* self);
 
+// From a guard's __except filter, when it is about to handle the exception
+// (pass GetExceptionInformation()). Records which thrown object reached the
+// guard: handling a C++ throw with __except skips the thrown object's
+// destructor, so ExplainFailure releases its value instead - but only when the
+// object the probe decoded is this one.
+void NoteHandled(const void* exceptionPointers);
+
 // Value lifetime, through the runtime's own helpers (located at Init). A
 // string, array or struct value holds a reference; FreeValue drops it and
 // leaves v undefined, CopyValue makes dst an additional owner of src's value.

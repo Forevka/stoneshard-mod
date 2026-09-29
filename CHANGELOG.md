@@ -23,7 +23,8 @@ bump may break the mod API or the native CoreApi table; each version says so und
   `Clear`, `Items()`).
 - **`Hooks.NextBefore` / `Hooks.NextAfter`:** run code once, inside the next call of a script or event
   that a predicate accepts, with a timeout checked every frame and an optional timeout handler. The
-  request belongs to the calling mod; `Dispose()` cancels it.
+  request belongs to the calling mod; `Dispose()` cancels it. The timeout handler always runs between
+  frames, never inside the game's hooked call.
 - **`ObjectTable`:** the object table (index, name, parent), built once over frames within a small
   time budget (`Start`, `Ready`, `Progress`, `Status`, `Complete`). `GmlObject.All()` now uses it, so
   only the first call walks the asset indices.
@@ -49,17 +50,30 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - The item catalogue is read from the live object table and from the game exe's own CSV rows.
   - The save folder is backed up once per session, to `<game>\CoreLoader\save-backups`, before the first cheat.
 - **Mod analyzer (`CoreLoader.Analyzers`):** compile-time warnings for value-lifetime mistakes. CL0001 is
-  an `RValue` kept in a field or auto-property. CL0002 is an `Instance` or `HookCall` kept in one, or a
-  `HookCall` captured by a stored or queued lambda. CL0003 is `Values.Free` on a hook argument or result.
+  an `RValue` kept in a field or auto-property. CL0002 is an `Instance` or `HookCall` kept in one.
+  A lambda that is stored, queued or registered as a callback (`Hooks.Before`/`After`/`NextBefore`/
+  `NextAfter`, `TestHost.Register`, `GameDraw.OnGui`, `Game.RunOnGameThread`) and captures an `RValue`
+  (CL0001) or an `Instance` or `HookCall` (CL0002) is reported the same way. CL0003 is `Values.Free` on
+  a hook argument or result.
   - Repo mods, tests and examples get it through their `Directory.Build.props`. `deploy-coreloader.ps1`
     installs it to `<game>\CoreLoader\Analyzers\`, where template mods pick it up. The game never loads it.
 - `tools\game-saves.ps1`: backs up, restores and hash-verifies a game's save folder around a test run.
+  Backups go to `.omc\save-backups` in the repo (or `CORELOADER_BACKUP_ROOT`). Restore puts each
+  backed-up character folder back exactly, and refuses (unless `-Force`) a folder without the backup
+  marker, or one with no character folders while the save folder has some.
 - `tools\run-game.ps1`: restarts a test game (optionally deploying first) and waits for its mods to load
   and for an optional log pattern.
 - **Test host (development only):** with `CORELOADER_TEST=1`, the loader serves a named pipe
   (`coreloader-<pid>`, current user only; the name is written to `CoreLoader\Logs\testhost.pipe`) that
   takes line-delimited JSON commands and runs them on the game thread. It replaces the removed remote
   command file.
+  - Clients connecting over the network are refused (.NET does not create the pipe with
+    `PIPE_REJECT_REMOTE_CLIENTS`, so each client is checked on connect). Request lines are capped at 1M
+    characters.
+  - A request not started by a second before its `timeout` is dropped unrun; the client waits two
+    seconds past the timeout, so it never reports a command that ran as dropped.
+  - Results show an `Instance` as its hex pointer and a `GmlObject`'s parent by name.
+  - `TestHost.Register` does nothing when the host is off.
   - Built-in commands: `ping`, `status`, `log`, `mods`, `reload`, `call`, `builtin`, `global-get`/`-set`,
     `instance-get`/`-set`, `object-count`, `wait-frames`, `list-commands`.
   - `TestHost.Register(name, handler, help)` lets a mod add commands; they belong to the mod and go when it
@@ -94,8 +108,11 @@ bump may break the mod API or the native CoreApi table; each version says so und
 ### Fixed
 - **StoneshardCheats, Items → "To inventory"** works. It never did, natively either: `scr_inventory_add_weapon`
   takes the inventory as its self, not the player (the game calls it inside `with (o_inventory)`). It now
-  runs as the `o_inventory` instance through `InstanceRef.CallScript`. The recovered GML error
-  ("invalid with reference" in `scr_inventory_get_containers`) is what pointed at it.
+  runs as the `o_inventory` instance itself (not a child object's instance), with the player as other,
+  as `with (o_inventory)` does. The recovered GML error ("invalid with reference" in
+  `scr_inventory_get_containers`) is what pointed at it.
+- A GML call that failed with a thrown error no longer leaks the thrown value: the guard that catches it
+  skips its destructor, so the loader releases it once after reading the message.
 - The test host's `cheats.potion` answered the wrong build number when the bottle's alarm ran during the
   give itself, so a client waiting for the result timed out.
 

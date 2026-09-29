@@ -440,7 +440,7 @@ bool GuardedCall(TRoutine fn, gml::RValue* result, void* self, void* other, int 
     __try {
         fn(result, self, other, argc, args);
         return true;
-    } __except (*code = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) {
+    } __except (*code = GetExceptionCode(), gml::NoteHandled(GetExceptionInformation()), EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
 }

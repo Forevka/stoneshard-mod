@@ -96,6 +96,51 @@ public class LifetimeAnalyzerTests
     }
 
     [Theory]
+    // Registered callbacks keep the lambda, and so the captured call, for later frames.
+    [InlineData("Hooks.Before(\"scr_x\", other => { var n = c.ArgCount; });")]
+    [InlineData("Hooks.After(\"scr_x\", other => other.SetArg(0, c.GetArg(0)));")]
+    [InlineData("Hooks.NextBefore(\"scr_x\", null, other => { var n = c.ArgCount; }, TimeSpan.FromSeconds(1));")]
+    [InlineData("Hooks.NextAfter(\"scr_x\", x => x.ArgCount == c.ArgCount, other => { }, TimeSpan.FromSeconds(1));")]
+    [InlineData("TestHost.Register(\"t\", args => c.ArgCount);")]
+    [InlineData("GameDraw.OnGui(() => Console.WriteLine(c.ArgCount));")]
+    public async Task CallbackCapturingHookCall_IsReported(string statement)
+    {
+        Assert.Equal(["CL0002"], await Run("class M { void H(HookCall c) { " + statement + " } }"));
+    }
+
+    [Theory]
+    [InlineData("var v = c.GetArg(0); Game.RunOnGameThread(() => Console.WriteLine(v.AsReal));")]
+    [InlineData("var v = c.GetArg(0); Hooks.Before(\"scr_x\", other => other.SetArg(0, v));")]
+    [InlineData("RValue[] vs = [c.GetArg(0)]; TestHost.Register(\"t\", args => vs.Length);")]
+    [InlineData("var v = c.GetArg(0); _later = () => v;")]
+    public async Task StoredLambdaCapturingRValue_IsReported(string statement)
+    {
+        var src = "class M { Func<object>? _later; void H(HookCall c) { " + statement + " } }";
+        Assert.Equal(["CL0001"], await Run(src));
+    }
+
+    [Theory]
+    [InlineData("GameDraw.OnGui(() => Console.WriteLine(i.Pointer));")]
+    [InlineData("Hooks.After(\"scr_x\", call => Console.WriteLine(i.Pointer));")]
+    [InlineData("Instance? maybe = i; Game.RunOnGameThread(() => Console.WriteLine(maybe));")]
+    public async Task StoredLambdaCapturingInstance_IsReported(string statement)
+    {
+        Assert.Equal(["CL0002"], await Run("class M { void H(Instance i) { " + statement + " } }"));
+    }
+
+    [Theory]
+    // The handler's own arguments, and values it reads for itself.
+    [InlineData("Hooks.Before(\"scr_x\", call => { var v = call.GetArg(0); Console.WriteLine(v.AsReal); });")]
+    // A C# copy of the value, not the value.
+    [InlineData("double d = r.AsReal; GameDraw.OnGui(() => Console.WriteLine(d));")]
+    // Run on the spot, not kept.
+    [InlineData("var n = new[] { 1 }.Select(x => r.AsReal + x).Sum();")]
+    public async Task CallbackNotKeepingFrameValues_IsClean(string statement)
+    {
+        Assert.Empty(await Run("class M { void H(RValue r) { " + statement + " } }"));
+    }
+
+    [Theory]
     [InlineData("var a = c.GetArg(0); Values.Free(ref a);")]
     [InlineData("RValue r; r = c.Result; Values.Free(ref r);")]
     [InlineData("var a = (c.GetArg(1)); Values.Free(ref a);")]

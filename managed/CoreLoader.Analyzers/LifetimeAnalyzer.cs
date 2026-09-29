@@ -97,8 +97,10 @@ public sealed class LifetimeAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    // CL0002: a lambda that captures a HookCall and is kept for later - stored
-    // in a field or collection, or queued to run after the handler returned.
+    // A lambda kept for later - stored in a field or collection, queued, or
+    // registered as a callback - that captures a frame-bound value: an RValue
+    // (CL0001), or an Instance or HookCall (CL0002). The capture lives as long
+    // as the lambda, exactly as a field would.
     private static void AnalyzeLambda(SyntaxNodeAnalysisContext c, CoreTypes types)
     {
         var lambda = (AnonymousFunctionExpressionSyntax)c.Node;
@@ -115,11 +117,30 @@ public sealed class LifetimeAnalyzer : DiagnosticAnalyzer
                 _ => null,
             };
             // Only variables from outside: the lambda's own parameters are its to use.
-            if (type is null || !SymbolEqualityComparer.Default.Equals(type, types.HookCall)) continue;
-            if (IsDeclaredInside(captured, lambda)) continue;
-            c.ReportDiagnostic(Diagnostic.Create(Rules.StoredTransient, lambda.GetLocation(),
-                captured.Name, "CoreLoader.HookCall", "the lambda is kept after the handler returns, and " + Rules.HookCallWhy));
+            if (type is null || IsDeclaredInside(captured, lambda)) continue;
+            const string kept = "the lambda is kept after the code that made it returns, and ";
+            if (Contains(type, types.RValue))
+                c.ReportDiagnostic(Diagnostic.Create(Rules.StoredRValue, lambda.GetLocation(), captured.Name));
+            else if (Contains(type, types.Instance))
+                c.ReportDiagnostic(Diagnostic.Create(Rules.StoredTransient, lambda.GetLocation(),
+                    captured.Name, "CoreLoader.Instance", kept + Rules.InstanceWhy));
+            else if (Contains(type, types.HookCall))
+                c.ReportDiagnostic(Diagnostic.Create(Rules.StoredTransient, lambda.GetLocation(),
+                    captured.Name, "CoreLoader.HookCall", kept + Rules.HookCallWhy));
         }
+    }
+
+    // CoreLoader methods that keep the delegate they are given and call it on
+    // later frames: hook handlers, one-shot hooks, test commands, GUI drawers.
+    private static bool IsCallbackRegistration(IMethodSymbol m, CoreTypes types)
+    {
+        var owner = m.ContainingType;
+        if (owner is null) return false;
+        if (SymbolEqualityComparer.Default.Equals(owner, types.Hooks))
+            return m.Name is "Before" or "After" or "NextBefore" or "NextAfter";
+        if (SymbolEqualityComparer.Default.Equals(owner, types.TestHost)) return m.Name == "Register";
+        if (SymbolEqualityComparer.Default.Equals(owner, types.GameDraw)) return m.Name == "OnGui";
+        return false;
     }
 
     private static bool IsDeclaredInside(ISymbol symbol, SyntaxNode node) =>
@@ -145,6 +166,7 @@ public sealed class LifetimeAnalyzer : DiagnosticAnalyzer
                 if (model.GetSymbolInfo(call, ct).Symbol is not IMethodSymbol m) return false;
                 // Queued or deferred: runs after the handler has returned.
                 if (SymbolEqualityComparer.Default.Equals(m.ContainingType, types.Game) && m.Name == "RunOnGameThread") return true;
+                if (IsCallbackRegistration(m, types)) return true;
                 var ns = m.ContainingType?.ContainingNamespace?.ToDisplayString();
                 if (ns == "System.Threading.Tasks" && m.Name is "Run" or "StartNew" or "ContinueWith") return true;
                 if (ns == "System.Threading" && m.Name == "QueueUserWorkItem") return true;
@@ -222,6 +244,9 @@ public sealed class LifetimeAnalyzer : DiagnosticAnalyzer
         public INamedTypeSymbol HookCall = null!;
         public INamedTypeSymbol? Values;
         public INamedTypeSymbol? Game;
+        public INamedTypeSymbol? Hooks;
+        public INamedTypeSymbol? TestHost;
+        public INamedTypeSymbol? GameDraw;
 
         public static CoreTypes? From(Compilation compilation)
         {
@@ -236,6 +261,9 @@ public sealed class LifetimeAnalyzer : DiagnosticAnalyzer
                 HookCall = hookCall,
                 Values = compilation.GetTypeByMetadataName("CoreLoader.Values"),
                 Game = compilation.GetTypeByMetadataName("CoreLoader.Game"),
+                Hooks = compilation.GetTypeByMetadataName("CoreLoader.Hooks"),
+                TestHost = compilation.GetTypeByMetadataName("CoreLoader.TestHost"),
+                GameDraw = compilation.GetTypeByMetadataName("CoreLoader.GameDraw"),
             };
         }
     }

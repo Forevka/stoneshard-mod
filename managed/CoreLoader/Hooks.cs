@@ -203,7 +203,9 @@ public static unsafe class Hooks
     /// most once even if the action throws or makes the game call the symbol
     /// again. The timeout is checked every frame as well as on each call, so
     /// <paramref name="onTimeout"/> runs on time even if the symbol is never
-    /// called; an exception from it faults the mod too.
+    /// called. It always runs between frames (at most a frame after the
+    /// deadline), never inside the game's hooked call, and not at all once the
+    /// request is disposed; an exception from it faults the mod too.
     /// </remarks>
     public static NextCall NextBefore(string symbol, Func<HookCall, bool>? match, HookHandler action,
                                       TimeSpan timeout, Action? onTimeout = null) =>
@@ -224,6 +226,10 @@ public static unsafe class Hooks
     // The armed one-shot requests, for the per-frame timeout check.
     private static readonly List<NextCall> Requests = new();
 
+    // Requests that timed out and whose timeout handler has yet to run (at the
+    // next TickRequests).
+    private static readonly List<NextCall> TimedOut = new();
+
     private static NextCall Next(string symbol, Func<HookCall, bool>? match, HookHandler action,
                                  TimeSpan timeout, Action? onTimeout, bool after)
     {
@@ -240,7 +246,10 @@ public static unsafe class Hooks
             if (!req.IsPending) return;
             if (Environment.TickCount64 > req.Deadline)
             {
-                Expire(req);
+                // Disarmed now, but its timeout handler waits for the next
+                // frame: here it would run inside the game's hooked call.
+                Finish(req);
+                if (req.OnTimeout != null) TimedOut.Add(req);
                 return;
             }
             if (match != null && !match(call)) return;
@@ -258,9 +267,11 @@ public static unsafe class Hooks
         if (req.Hook != null) Remove(req.Hook);
     }
 
-    private static void Expire(NextCall req)
+    // Runs the timeout handler of a request that is already finished. From
+    // TickRequests only, between frames, so the handler never runs inside a
+    // hooked call of the game.
+    private static void RunTimeout(NextCall req)
     {
-        Finish(req);
         if (req.OnTimeout is not { } onTimeout) return;
         if (req.Owner == null)
         {
@@ -281,15 +292,24 @@ public static unsafe class Hooks
             return;
         }
         if (req.IsPending) Finish(req);
+        TimedOut.Remove(req);   // timed out this frame: its handler has not run yet, and now will not
     }
 
     /// <summary>Called every frame on the game thread: drops the requests whose time is up.</summary>
     internal static void TickRequests()
     {
-        if (Requests.Count == 0) return;
+        if (Requests.Count == 0 && TimedOut.Count == 0) return;
         long now = Environment.TickCount64;
         foreach (var req in Requests.ToList())
-            if (req.IsPending && now > req.Deadline) Expire(req);
+        {
+            if (!req.IsPending || now <= req.Deadline) continue;
+            Finish(req);
+            TimedOut.Add(req);
+        }
+        // Handlers may arm new requests; those are checked next frame.
+        var due = TimedOut.ToList();
+        TimedOut.Clear();
+        foreach (var req in due) RunTimeout(req);
     }
 
     private static HookHandle Add(string symbol, HookHandler handler, bool after) =>
@@ -346,6 +366,7 @@ public static unsafe class Hooks
             req.IsPending = false;
             Requests.Remove(req);
         }
+        TimedOut.RemoveAll(r => r.Owner == owner);
 
         foreach (var (id, list) in ById.ToList())
         {

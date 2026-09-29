@@ -2,10 +2,12 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using CoreLoader.Runtime;
+using Microsoft.Win32.SafeHandles;
 
 namespace CoreLoader;
 
@@ -18,8 +20,14 @@ namespace CoreLoader;
 /// <remarks>
 /// The protocol is one JSON object per line each way. A request is
 /// <c>{"id":1,"cmd":"call","args":["scr_foo",1,"a"]}</c>, optionally with
-/// <c>"as"</c>; the response is <c>{"id":1,"ok":true,"result":...}</c> or
-/// <c>{"id":1,"ok":false,"error":"..."}</c>. The pipe is
+/// <c>"as"</c> and <c>"timeout"</c> (seconds, 1 to 600, default 30); the
+/// response is <c>{"id":1,"ok":true,"result":...}</c> or
+/// <c>{"id":1,"ok":false,"error":"..."}</c>. A request the game thread has not
+/// started by a second before its timeout is dropped unrun and answered as
+/// expired; a client should wait a little past the timeout it sends
+/// (tools\coreloader.ps1 waits two seconds more) so it never mistakes a request
+/// that ran just in time for a dropped one. A request line is at most 1M
+/// characters. The pipe is
 /// <c>\\.\pipe\coreloader-&lt;pid&gt;</c>, readable and writable by the current
 /// user only, and its name is written to <c>CoreLoader\Logs\testhost.pipe</c>.
 ///
@@ -28,7 +36,7 @@ namespace CoreLoader;
 /// that needs time (<c>wait-frames</c>) is parked and answered on a later
 /// frame, and anything longer is polled from the client.
 /// </remarks>
-public static class TestHost
+public static partial class TestHost
 {
     private static readonly Logger Log = new("TestHost");
 
@@ -63,6 +71,8 @@ public static class TestHost
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(handler);
         if (BuiltIn.ContainsKey(name)) throw new ArgumentException($"'{name}' is a built-in test command", nameof(name));
+        // Nothing can call it: no pipe, and no command kept for a session without one.
+        if (!Enabled) return;
         var owner = ModManager.OwnerOf(handler);
         lock (Commands)
         {
@@ -101,9 +111,11 @@ public static class TestHost
         public required JsonElement[] Args;
         public JsonElement? As;
         public long DueFrame;
-        // When the client stops waiting. A request still queued by then (the
-        // game stopped presenting frames) is dropped rather than run late, so a
-        // command the client already reported as failed cannot change the game.
+        // The last moment the request may start: a second before the client's
+        // timeout, while the client waits two seconds past it. A request still
+        // queued by then (the game stopped presenting frames) is dropped rather
+        // than run late, and one that did start is answered before the client
+        // gives up, so a command the client reported as dropped never ran.
         public DateTime Deadline;
         public readonly TaskCompletionSource<string> Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -116,6 +128,15 @@ public static class TestHost
 
     // A client that asked for more than this is waiting on something else.
     private const int MaxWaitFrames = 60 * 60 * 10;
+
+    // A request line longer than this (in characters) is refused unread: every
+    // command fits in a few hundred, and the reader must not buffer without end.
+    private const int MaxRequestChars = 1 << 20;
+
+    // Start requests this long before the client's timeout (see Request.Deadline),
+    // but always give the game thread at least MinStartWindow to reach one.
+    private static readonly TimeSpan StartMargin = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MinStartWindow = TimeSpan.FromMilliseconds(500);
 
     // The loader's log lives beside the pipe file. SSMOD_DATA_DIR moves both,
     // as it moves the log on the native side.
@@ -172,6 +193,13 @@ public static class TestHost
                     NamedPipeServerStream.MaxAllowedServerInstances, PipeTransmissionMode.Byte,
                     PipeOptions.CurrentUserOnly);
                 server.WaitForConnection();
+                if (!IsLocalClient(server))
+                {
+                    Log.Warning("refused a test client connecting over the network (the test host is local only)");
+                    server.Dispose();
+                    server = null;
+                    continue;
+                }
                 var connected = server;
                 server = null;
                 new Thread(() => Serve(connected)) { IsBackground = true, Name = "CoreLoader test client" }.Start();
@@ -185,6 +213,26 @@ public static class TestHost
         }
     }
 
+    // NamedPipeServerStream does not create its pipe with
+    // PIPE_REJECT_REMOTE_CLIENTS (checked on .NET 10: a client dialling
+    // \\<this machine>\pipe\... over SMB connects, even with CurrentUserOnly,
+    // which only sets the ACL). So each client is checked once connected, and
+    // before anything is read: the call fails with ERROR_PIPE_LOCAL for a local
+    // client and names the computer for a remote one. Any other outcome is
+    // treated as remote.
+    private const int ErrorPipeLocal = 229;
+
+    private static unsafe bool IsLocalClient(NamedPipeServerStream pipe)
+    {
+        char* name = stackalloc char[256];
+        if (GetNamedPipeClientComputerName(pipe.SafePipeHandle, name, 256 * sizeof(char))) return false;
+        return Marshal.GetLastPInvokeError() == ErrorPipeLocal;
+    }
+
+    [LibraryImport("kernel32.dll", EntryPoint = "GetNamedPipeClientComputerNameW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static unsafe partial bool GetNamedPipeClientComputerName(SafePipeHandle pipe, char* name, uint nameBytes);
+
     // One client, one request at a time: each line is answered before the next is read.
     private static void Serve(NamedPipeServerStream pipe)
     {
@@ -195,8 +243,14 @@ public static class TestHost
             using (var reader = new StreamReader(pipe, utf8))
             using (var writer = new StreamWriter(pipe, utf8) { AutoFlush = true, NewLine = "\n" })
             {
-                while (reader.ReadLine() is { } line)
+                var buffer = new StringBuilder();
+                while (ReadRequest(reader, buffer, out bool tooLarge) is { } line)
                 {
+                    if (tooLarge)
+                    {
+                        writer.WriteLine(Reply(null, false, null, $"request too large (over {MaxRequestChars} characters)"));
+                        continue;
+                    }
                     if (line.Trim().Length == 0) continue;
                     writer.WriteLine(Handle(line));
                 }
@@ -208,6 +262,30 @@ public static class TestHost
         {
             Log.Warning($"test client dropped: {ex.Message}");
         }
+    }
+
+    // ReadLine with a cap: the next line, or null at the end of the stream. A
+    // line past MaxRequestChars is read to its end and dropped, and reported
+    // through tooLarge, so the connection stays in step with the client.
+    private static string? ReadRequest(StreamReader reader, StringBuilder line, out bool tooLarge)
+    {
+        line.Clear();
+        tooLarge = false;
+        int c;
+        while ((c = reader.Read()) >= 0)
+        {
+            if (c == '\n') return tooLarge ? "" : line.ToString().TrimEnd('\r');
+            if (tooLarge) continue;
+            if (line.Length >= MaxRequestChars)
+            {
+                tooLarge = true;
+                line.Clear();
+                continue;
+            }
+            line.Append((char)c);
+        }
+        // The stream ended; a last line without its newline still counts.
+        return tooLarge ? "" : line.Length > 0 ? line.ToString().TrimEnd('\r') : null;
     }
 
     // Background thread: parse, queue for the game thread, wait for its answer.
@@ -234,7 +312,7 @@ public static class TestHost
                 Cmd = cmdEl.GetString()!,
                 Args = args,
                 As = root.TryGetProperty("as", out var asEl) ? asEl.Clone() : null,
-                Deadline = DateTime.UtcNow.AddSeconds(
+                Deadline = DateTime.UtcNow + StartWindow(
                     root.TryGetProperty("timeout", out var toEl) && toEl.ValueKind == JsonValueKind.Number
                         ? Math.Clamp(toEl.GetDouble(), 1, 600) : 30),
             };
@@ -250,6 +328,12 @@ public static class TestHost
         return req.Done.Task.Wait(TimeSpan.FromMinutes(10))
             ? req.Done.Task.Result
             : Reply(req.Id, false, null, "no answer from the game thread (is the game still presenting frames?)");
+    }
+
+    private static TimeSpan StartWindow(double clientTimeoutSeconds)
+    {
+        var window = TimeSpan.FromSeconds(clientTimeoutSeconds) - StartMargin;
+        return window < MinStartWindow ? MinStartWindow : window;
     }
 
     // Game text (item names, log lines) stays readable on the wire; nothing
@@ -360,7 +444,12 @@ public static class TestHost
         ["mods"] = new("mods: every loaded mod with its state and fault", _ => ModList()),
         ["reload"] = new("reload <mod|all>: reloads a mod by name or file name, as the Loader tab does", r => Reload(Str(r.Args, 0, "mod"))),
         ["call"] = new("call <script> [args...] (\"as\":\"current\" runs as the current self): calls a script",
-            r => Game.CallScriptAs(Self(r), Self(r), Str(r.Args, 0, "script"), Rest(r.Args, 1))),
+            r =>
+            {
+                // Resolved once: self and other are the same instance.
+                var self = Self(r);
+                return Game.CallScriptAs(self, self, Str(r.Args, 0, "script"), Rest(r.Args, 1));
+            }),
         ["builtin"] = new("builtin <name> [args...] (\"as\":\"current\" runs as the current self): calls a builtin",
             r => Game.CallBuiltinAs(Self(r), Str(r.Args, 0, "name"), Rest(r.Args, 1))),
         ["global-get"] = new("global-get <name>: a global variable", r => Globals.Get(Str(r.Args, 0, "name"))),
@@ -535,6 +624,18 @@ public static class TestHost
             case JsonElement e: return JsonNode.Parse(e.GetRawText());
             case RValue v: return FromRValue(v, depth);
             case InstanceRef r: return FromRValue(r.Id, depth);
+            // A raw pointer, shown as one: its properties would read the game
+            // through a pointer that may no longer be an instance.
+            case Instance inst: return JsonValue.Create($"0x{inst.Pointer:X}");
+            // Its parent by name only: walking Parent would dump the whole chain.
+            case GmlObject go:
+                return new JsonObject
+                {
+                    ["Index"] = go.Index,
+                    ["Name"] = go.Name,
+                    ["Parent"] = go.Parent?.Name,
+                    ["InstanceCount"] = go.InstanceCount,
+                };
             case string s: return JsonValue.Create(s);
             case bool b: return JsonValue.Create(b);
             case char c: return JsonValue.Create(c.ToString());

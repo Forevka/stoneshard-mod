@@ -165,12 +165,23 @@ internal sealed class ItemsTab : Tab
     /// </summary>
     public static RValue AddToInventory(string displayName, int rarity)
     {
-        var inventory = GmlObject.Find("o_inventory") is { InstanceCount: > 0 } inv
-            ? inv.Instance(0)
-            : throw new InvalidOperationException("no o_inventory instance: load a save first");
         if (!Game.CanResolveInstances)
             throw new InvalidOperationException("this runtime cannot run scripts as an instance by id");
-        return inventory.CallScript("scr_inventory_add_weapon", displayName, rarity);
+        var obj = GmlObject.Find("o_inventory") ?? throw new InvalidOperationException("the game has no o_inventory object");
+        // instance_find includes children of o_inventory (other containers);
+        // `with (o_inventory)` in the game's caller means the object itself.
+        InstanceRef? found = null;
+        foreach (var candidate in obj.Instances())
+        {
+            if (Game.CallBuiltin("object_get_name", candidate.Get("object_index")).ToString() != "o_inventory") continue;
+            found = candidate;
+            break;
+        }
+        var inventory = (found ?? throw new InvalidOperationException("no o_inventory instance: load a save first")).Resolve()
+                        ?? throw new InvalidOperationException("the o_inventory instance is gone");
+        // Self is the inventory, other the player: what `with (o_inventory)`
+        // inside the player's code gives the script.
+        return Game.CallScriptAs(inventory, Player.Require(), "scr_inventory_add_weapon", displayName, rarity);
     }
 
     /// <summary>

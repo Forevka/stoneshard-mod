@@ -7,12 +7,21 @@
            <BackupRoot>\save-backup-<timestamp>) and prints the path.
   restore  copies a backup back over the save folder. Character folders
            (character_N) that exist now but not in the backup - the ones a test
-           run created - are removed; nothing else is ever deleted.
+           run created - are removed, and so are files inside a backed-up
+           character folder that the backup lacks, so each character comes
+           back exactly. Nothing outside character folders is ever deleted.
   verify   hash-compares the save folder with a backup and prints every
            difference. Exit code 1 if there is any.
 
   Refuses to restore while the game is running: it would write the saves back
-  on exit. Add a game to $Games below to support it.
+  on exit. Also refuses, unless -Force, a folder this script did not write (no
+  coreloader-backup.txt marker), and a backup with no character folders while
+  the save folder has some: both mean -From points at the wrong folder, and
+  restoring it would delete every character. Add a game to $Games below to
+  support it.
+
+  Backups go under -BackupRoot, by default $env:CORELOADER_BACKUP_ROOT or else
+  <repo>\.omc\save-backups (git-ignored).
 
 .EXAMPLE
   $b = tools\game-saves.ps1 backup -Game Stoneshard
@@ -24,9 +33,11 @@ param(
     [string] $Game = "Stoneshard",
     [string] $From,
     [string] $To,
-    [string] $BackupRoot = "D:\projects\coreloader-test",
+    [string] $BackupRoot,
     # Overrides the save folder from $Games (e.g. a copy, for trying the script out).
-    [string] $SaveDir
+    [string] $SaveDir,
+    # Restores a folder without the backup marker, or with no character folders.
+    [switch] $Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,7 +57,23 @@ $Games = @{
 if (-not $Games.ContainsKey($Game)) { throw "unknown game '$Game' (known: $($Games.Keys -join ', '))" }
 $cfg = $Games[$Game]
 if (-not $SaveDir) { $SaveDir = $cfg.SaveDir }
+if (-not $BackupRoot) {
+    $BackupRoot = if ($env:CORELOADER_BACKUP_ROOT) { $env:CORELOADER_BACKUP_ROOT }
+                  else { Join-Path (Split-Path -Parent $PSScriptRoot) ".omc\save-backups" }
+}
 $marker = "coreloader-backup.txt"
+
+# The character folders directly under each slot parent of $root, as paths
+# relative to $root (".\character_1", "characters_v1\character_2").
+function Get-SlotFolders([string] $root) {
+    foreach ($parent in $cfg.SlotParents) {
+        $dir = Join-Path $root $parent
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+        Get-ChildItem -LiteralPath $dir -Directory -Force |
+            Where-Object { $_.Name -match $cfg.SlotPattern } |
+            ForEach-Object { Join-Path $parent $_.Name }
+    }
+}
 
 function Get-FileHashes([string] $root) {
     $map = @{}
@@ -66,6 +93,11 @@ function Assert-Backup([string] $path) {
     if (Test-Path -LiteralPath $m) {
         $owner = (Get-Content -LiteralPath $m -TotalCount 1).Trim()
         if ($owner -ne $Game) { throw "$path is a $owner backup, not $Game" }
+    }
+    # Verify only reads, so any folder can be compared; restore deletes, so it
+    # takes only what backup wrote.
+    elseif ($Action -eq "restore" -and -not $Force) {
+        throw "$path has no $marker, so this script did not write it; check -From, or add -Force to restore it anyway"
     }
 }
 
@@ -102,17 +134,28 @@ switch ($Action) {
         if (Get-Process -Name $cfg.Process -ErrorAction SilentlyContinue) {
             throw "$($cfg.Process) is running: close it first (it writes its saves on exit)"
         }
+        $liveSlots = @(Get-SlotFolders $SaveDir)
+        $backupSlots = @(Get-SlotFolders $From)
+        if ($backupSlots.Count -eq 0 -and $liveSlots.Count -gt 0 -and -not $Force) {
+            throw "$From holds no character folders but $SaveDir has $($liveSlots.Count); restoring would delete them all. Check -From, or add -Force"
+        }
         New-Item -ItemType Directory -Force -Path $SaveDir | Out-Null
-        # Character folders a test run created. Only these are ever deleted.
-        foreach ($parent in $cfg.SlotParents) {
-            $live = Join-Path $SaveDir $parent
-            if (-not (Test-Path -LiteralPath $live -PathType Container)) { continue }
-            Get-ChildItem -LiteralPath $live -Directory -Force |
-                Where-Object { $_.Name -match $cfg.SlotPattern } |
-                Where-Object { -not (Test-Path -LiteralPath (Join-Path (Join-Path $From $parent) $_.Name)) } |
+        # Character folders a test run created, and files a test run added
+        # inside a backed-up character folder. Only these are ever deleted.
+        foreach ($slot in $liveSlots) {
+            $live = Join-Path $SaveDir $slot
+            $saved = Join-Path $From $slot
+            if (-not (Test-Path -LiteralPath $saved -PathType Container)) {
+                Write-Host "removing $live (not in the backup)"
+                Remove-Item -LiteralPath $live -Recurse -Force
+                continue
+            }
+            $base = (Resolve-Path -LiteralPath $live).Path.TrimEnd('\') + '\'
+            Get-ChildItem -LiteralPath $live -Recurse -File -Force |
+                Where-Object { -not (Test-Path -LiteralPath (Join-Path $saved $_.FullName.Substring($base.Length)) -PathType Leaf) } |
                 ForEach-Object {
                     Write-Host "removing $($_.FullName) (not in the backup)"
-                    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+                    Remove-Item -LiteralPath $_.FullName -Force
                 }
         }
         Get-ChildItem -LiteralPath $From -Force |

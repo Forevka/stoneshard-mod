@@ -669,12 +669,17 @@ thread_local char  g_lastError[512] = {};
 // vectored handler, so only plain data and fault-guarded reads.
 struct Thrown {
     bool   valid = false;
+    std::uintptr_t object = 0;  // the thrown object (ExceptionInformation[1])
     char   type[96] = {};       // most-derived type, demangled ("YYGMLException")
     bool   hasValue = false;    // a YYGMLException: `value` is its RValue
     RValue value{};
     char   what[256] = {};      // a std::exception: what()
 };
 thread_local Thrown t_thrown;
+
+// The thrown object that last reached one of our guards' handlers (0 for a
+// fault that was not a C++ throw). Set by NoteHandled from the filter.
+thread_local std::uintptr_t t_handledObject = 0;
 
 bool ReadableString(const char* p, std::size_t minLen) {
     if (!p) return false;
@@ -717,11 +722,16 @@ void Demangle(const char* decorated, char* out, std::size_t cap) {
 // Everything is read through SafeRead: the parameters come from whoever threw,
 // and a malformed record must cost nothing but the message.
 void DecodeThrow(const EXCEPTION_RECORD* er) {
-    if (er->NumberParameters < 4) return;   // x64 throws carry the image base
+    Thrown& t = t_thrown;
+    // A throw this cannot decode must not leave an earlier one's record to be
+    // read (or released) as if it were this one's.
+    if (er->NumberParameters < 4) { t.valid = false; return; }   // x64 throws carry the image base
     const auto obj  = static_cast<std::uintptr_t>(er->ExceptionInformation[1]);
     const auto info = static_cast<std::uintptr_t>(er->ExceptionInformation[2]);
     const auto base = static_cast<std::uintptr_t>(er->ExceptionInformation[3]);
-    if (!obj || !info || !base) return;   // a rethrow (`throw;`) keeps what the first throw recorded
+    if (!obj && !info) return;   // a rethrow (`throw;`) keeps what the first throw recorded
+    t.valid = false;
+    if (!obj || !info || !base) return;
 
     std::int32_t ctaRva = 0, count = 0;
     if (!SafeRead(reinterpret_cast<const void*>(info + 12), &ctaRva, 4) || ctaRva <= 0) return;
@@ -730,8 +740,7 @@ void DecodeThrow(const EXCEPTION_RECORD* er) {
 
     // Written in place: a throw from deep recursion reaches this handler with
     // little stack left, so no copy of the record lives on it.
-    Thrown& t = t_thrown;
-    t.valid = false;
+    t.object = obj;
     t.type[0] = '\0';
     t.hasValue = false;
     t.what[0] = '\0';
@@ -785,9 +794,10 @@ thread_local int t_managedDepth = 0;
 //     between (it must never unwind through .NET frames);
 //   * everything else - access violations, stack overflow, a GML exception
 //     with nobody to catch it - is handled here and the call reports failure.
-int GuardFilter(DWORD code) {
+int GuardFilter(DWORD code, EXCEPTION_POINTERS* info) {
     if (code == kCppException && hk::DispatchDepth() > 0 && t_managedDepth == 0)
         return EXCEPTION_CONTINUE_SEARCH;
+    NoteHandled(info);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -804,7 +814,7 @@ bool GuardedScript(ScriptFn fn, void* self, void* other, RValue* result, int arg
     __try {
         fn(self, other, result, argc, args);
         return true;
-    } __except (GuardFilter(*code = GetExceptionCode())) {
+    } __except (GuardFilter(*code = GetExceptionCode(), GetExceptionInformation())) {
         return false;
     }
 }
@@ -813,7 +823,7 @@ bool GuardedEvent(EventFn fn, void* self, void* other, DWORD* code) {
     __try {
         fn(self, other);
         return true;
-    } __except (GuardFilter(*code = GetExceptionCode())) {
+    } __except (GuardFilter(*code = GetExceptionCode(), GetExceptionInformation())) {
         return false;
     }
 }
@@ -871,7 +881,17 @@ ErrorProbe::ErrorProbe() {
     std::call_once(g_vehOnce, [] { AddVectoredExceptionHandler(1, &ExceptionProbe); });
     g_lastError[0] = '\0';
     t_thrown.valid = false;
+    t_handledObject = 0;
     ++g_inCall;
+}
+
+// Runs inside an __except filter: plain reads only.
+void NoteHandled(const void* exceptionPointers) {
+    const auto* info = static_cast<const EXCEPTION_POINTERS*>(exceptionPointers);
+    const EXCEPTION_RECORD* er = info ? info->ExceptionRecord : nullptr;
+    t_handledObject = er && er->ExceptionCode == kCppException && er->NumberParameters >= 2
+                          ? static_cast<std::uintptr_t>(er->ExceptionInformation[1])
+                          : 0;
 }
 
 ErrorProbe::~ErrorProbe() { --g_inCall; }
@@ -879,8 +899,10 @@ ErrorProbe::~ErrorProbe() { --g_inCall; }
 const char* ExplainFailure(unsigned long code, void* self) {
     // Taken before anything else runs: reading a struct member is itself a
     // guarded call, and its probe starts by clearing what was recorded.
-    const Thrown thrown = t_thrown;
+    Thrown thrown = t_thrown;
     t_thrown.valid = false;
+    const std::uintptr_t handled = t_handledObject;
+    t_handledObject = 0;
 
     std::string text;
     if (code == kCppException && thrown.valid) {
@@ -894,6 +916,14 @@ const char* ExplainFailure(unsigned long code, void* self) {
         if (text.empty() && thrown.what[0]) text = thrown.what;
         if (text.empty()) text = std::string(thrown.type[0] ? thrown.type : "a C++ exception") + ", no message recovered";
         else if (!thrown.hasValue) text = std::string(thrown.type) + ": " + text;
+        // Our guard's __except handled the throw, so the YYGMLException's
+        // destructor never ran and nobody else will release its value: this
+        // stands in for it, once. Only when the object that reached the guard
+        // is the one decoded - after a rethrow, or when the probe missed the
+        // throw, the record belongs to another object whose destructor may
+        // already have run, and it is left alone.
+        if (thrown.hasValue && thrown.object != 0 && thrown.object == handled) FreeValue(thrown.value);
+
     } else {
         char buf[96];
         std::snprintf(buf, sizeof(buf), "%s 0x%08lX, no message recovered", Describe(code), code);

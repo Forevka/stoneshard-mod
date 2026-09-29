@@ -110,7 +110,11 @@ function Invoke-CoreLoader {
         }
     }
 
-    $cts = [System.Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($TimeoutSec))
+    # Two seconds past the timeout sent: the server stops starting the request
+    # a second before it, so an answer to one that did start (it ran just before
+    # its deadline) still arrives in time and a run command is never reported
+    # as dropped.
+    $cts = [System.Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($TimeoutSec + 2))
     try {
         $utf8 = [System.Text.UTF8Encoding]::new($false)
         $writer = [System.IO.StreamWriter]::new($client, $utf8)
@@ -120,7 +124,7 @@ function Invoke-CoreLoader {
         $writer.WriteLine($json)
         try { $line = $reader.ReadLineAsync($cts.Token).AsTask().GetAwaiter().GetResult() }
         catch [System.OperationCanceledException] {
-            throw [System.TimeoutException]::new("no answer to '$Command' within $TimeoutSec s")
+            throw [System.TimeoutException]::new("no answer to '$Command' within $($TimeoutSec + 2) s")
         }
         if ($null -eq $line) { throw [System.IO.IOException]::new("the game closed the pipe without answering '$Command'") }
     }

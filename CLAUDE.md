@@ -56,7 +56,9 @@ Testing notes:
   start later: wait for `starting mods` or your own line). `-Stop` only kills it.
 - `$b = tools\game-saves.ps1 backup -Game Stoneshard` (prints the backup path); afterwards
   `tools\game-saves.ps1 restore -From $b` and `verify -From $b` (exit 1 on any difference). Restore
-  deletes only `character_N` folders missing from the backup.
+  deletes only inside `character_N` folders (ones missing from the backup, and files the backup's
+  copy lacks), and refuses a folder without its marker or without characters unless `-Force`.
+  Backups go to `.omc\save-backups` (or `$env:CORELOADER_BACKUP_ROOT`).
 - **Drive the game through the test host, not the mouse.** `tools\run-game.ps1 ... -TestHost` starts the
   game with `CORELOADER_TEST=1`; then `tools\coreloader.ps1 -Game Stoneshard|Dwarf <cmd> [args]` (exit 0
   ok, 1 command failed, 2 game unreachable, 3 no answer in time), or dot-source it for `Invoke-CoreLoader` / `Wait-CoreLoader`.

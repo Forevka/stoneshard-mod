@@ -137,8 +137,8 @@ only catch as a crash. The `Mods/`, `Tests/` and `Examples/` projects here get i
 
 | Rule | Reports | Why |
 |---|---|---|
-| CL0001 | A field or auto-property that holds an `RValue` (or an array, collection or tuple of them) | Strings, arrays and structs from the game are pooled and released at the end of the frame. Keep C# data (`AsReal`, `AsString`), or own the value with `Values.Keep` and release it with `Values.Free` |
-| CL0002 | A field or auto-property that holds an `Instance` or a `HookCall`, or a lambda that captures a `HookCall` and is stored or queued (`Game.RunOnGameThread`, `Task.Run`, a field, a collection) | An `Instance` is a raw pointer that dangles once the instance is destroyed: hold an `InstanceRef`. A `HookCall` is valid only inside its handler |
+| CL0001 | A field or auto-property that holds an `RValue` (or an array, collection or tuple of them), or a stored, queued or registered lambda that captures one | Strings, arrays and structs from the game are pooled and released at the end of the frame. Keep C# data (`AsReal`, `AsString`), or own the value with `Values.Keep` and release it with `Values.Free` |
+| CL0002 | A field or auto-property that holds an `Instance` or a `HookCall`, or a lambda that captures one and is stored, queued or registered (`Game.RunOnGameThread`, `Task.Run`, a field, a collection, `Hooks.Before`/`After`/`NextBefore`/`NextAfter`, `TestHost.Register`, `GameDraw.OnGui`) | An `Instance` is a raw pointer that dangles once the instance is destroyed: hold an `InstanceRef`. A `HookCall` is valid only inside its handler |
 | CL0003 | `Values.Free` on a local read from `HookCall.GetArg` or `HookCall.Result` | The game lends hook arguments and results; freeing one releases the caller's reference |
 
 Keeping a value on purpose (a number, or one owned with `Values.Keep`) is fine: suppress the warning
@@ -237,7 +237,7 @@ Game.CallBuiltin("instance_create_depth", x, y, 0, bottleIndex);
 
 The action runs at most once; the request is disarmed before it runs. It belongs to your mod and
 goes when the mod unloads. The timeout is checked every frame, so `onTimeout` runs on time even if
-the event never fires. An exception from `match`, `action` or `onTimeout` faults the mod like any
+the event never fires; it runs between frames, never inside the game's call. An exception from `match`, `action` or `onTimeout` faults the mod like any
 hook, so catch inside them to report a failure yourself.
 
 ### The object table and hierarchy
