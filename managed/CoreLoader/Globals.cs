@@ -132,6 +132,24 @@ public readonly record struct InstanceRef(RValue Id)
 {
     public bool Exists => !Id.IsUndefined && Game.CallBuiltin("instance_exists", Id).AsBool;
 
+    /// <summary>
+    /// The live instance this id names, for calls that need one (scripts run
+    /// as an instance). Null when it no longer exists or is deactivated, or when
+    /// this runtime's id lookup is unavailable (<see cref="Game.CanResolveInstances"/>).
+    /// Resolve again each frame rather than keeping the result: an Instance is a
+    /// pointer, and it dangles once the instance is destroyed.
+    /// </summary>
+    public unsafe Instance? Resolve()
+    {
+        Loader.EnsureGameThread();
+        var id = Id;
+        nint p = Loader.Api->InstanceFromId(&id);
+        return p == 0 ? null : new Instance(p);
+    }
+
+    /// <summary>Calls a script as this instance (self and other). See <see cref="Game.CallScriptAs(InstanceRef, string, RValue[])"/>.</summary>
+    public RValue CallScript(string name, params RValue[] args) => Game.CallScriptAs(this, name, args);
+
     public RValue Get(string variable) => Game.CallWithName(default, "variable_instance_get", 1, variable, Id);
 
     public void Set(string variable, RValue value) => Game.CallWithName(default, "variable_instance_set", 1, variable, Id, value);

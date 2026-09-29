@@ -51,9 +51,31 @@ bool        Init();
 bool        Ready();
 const char* Status();
 
-// Text of the last GML runtime error, when the game rejected a call rather
-// than faulting. Empty if nothing was recovered.
+// Why the last guarded call into the game failed on this thread: the GML
+// error's message when the runtime threw one (e.g. "Variable ... not set
+// before reading it."), otherwise the exception's type or code followed by
+// "no message recovered". Only meaningful right after a call that failed
+// (a nested call that failed inside one that succeeded leaves its text).
 const char* LastError();
+// For a call refused before it reached the game: no stale reason from an
+// earlier failure may be reported for it.
+void        ClearLastError();
+
+// Around a guarded call into the game (scripts, events, builtins): clears the
+// thread's last error and records what the game throws while it runs. RAII,
+// so it must not share a function with a __try.
+struct ErrorProbe {
+    ErrorProbe();
+    ~ErrorProbe();
+    ErrorProbe(const ErrorProbe&) = delete;
+    ErrorProbe& operator=(const ErrorProbe&) = delete;
+};
+
+// After a guarded call failed with exception `code`: turns what the probe
+// recorded into LastError()'s text and returns it. For a GML error this reads
+// the thrown struct's members through the runtime, so it runs on the game
+// thread, with `self` a live instance for those builtin calls.
+const char* ExplainFailure(unsigned long code, void* self);
 
 // Value lifetime, through the runtime's own helpers (located at Init). A
 // string, array or struct value holds a reference; FreeValue drops it and
@@ -138,5 +160,20 @@ void ClearObservedSelf();
 
 // Whether this runtime exposes a current-self global (older runtimes do).
 bool HasSelfGlobal();
+
+// Instance ids -> CInstance*. GML hands out ids (numbers, or kind-15 instance
+// references on newer runtimes); scripts need the instance itself. The
+// runtime's id table is located at Init by pattern, then proven on the game
+// thread: the current self's own `id` must look up to that very pointer, and
+// a bogus id to nothing. Until proven, InstanceFromId returns null.
+//
+// VerifyInstanceLookup is safe to call every frame; it retries while no
+// instance is available to prove with, and settles once proven or refuted.
+void        VerifyInstanceLookup();
+bool        InstanceLookupProven();
+const char* InstanceLookupStatus();
+// A live, active instance for `id`, or null (no such instance, destroyed,
+// deactivated, not an instance id, or the lookup is not proven). Game thread.
+void*       InstanceFromId(const RValue& id);
 
 } // namespace mod::gml

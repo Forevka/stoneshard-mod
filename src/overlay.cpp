@@ -327,6 +327,8 @@ void OverlayRender(IDXGISwapChain* swapChain) {
         gml::AbiSelfTest();
         // Runs once the registry resolves and the game has run some GML.
         builtins::SelfTest();
+        // Proves the id -> instance lookup once an instance is at hand.
+        gml::VerifyInstanceLookup();
     }
 
     // Before any mod runs: prove the value free/copy helpers on a probe string

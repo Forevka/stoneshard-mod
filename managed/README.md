@@ -134,8 +134,8 @@ public override void OnInitialize()
 |---|---|
 | `CoreMod` | `OnInitialize`, `OnUpdate` (every frame), `OnGUI` (the mod's own tab), `OnShutdown`, plus `Log`, `Config`, `Directory` |
 | `Hooks` | `Before`/`After` on any `gml_Script_*` or `gml_Object_*`, or the `[HookBefore]`/`[HookAfter]` attributes. The `HookCall` passed to a handler exposes `Self`, `Other`, `GetArg`/`SetArg`, `Result`, `SkipOriginal()` and `CallOriginal()` |
-| `Game` | `Name`, `Symbols`, `CallScript`, `CallEvent`, `CallBuiltin`, `BuiltinArity`, `CurrentSelf`, `RunOnGameThread` |
-| `Globals`, `GmlObject`, `InstanceRef` | Read and write global and instance variables by name, list objects and live instances |
+| `Game` | `Name`, `Symbols`, `CallScript`, `CallScriptAs` (as an `Instance`, or as the instance an `InstanceRef` names), `CallEvent`, `CallBuiltin`, `BuiltinArity`, `CurrentSelf`, `CanResolveInstances`, `RunOnGameThread`. A call the game rejects throws `GmlException` with the GML error's message, e.g. `call to scr_x failed: Variable ... not set before reading it. (in gml_Script_scr_x, line 12)` |
+| `Globals`, `GmlObject`, `InstanceRef` | Read and write global and instance variables by name, list objects and live instances. `InstanceRef.Resolve()` turns an id into the live `Instance` (null if it is gone, or if this runtime's id lookup could not be proven), and `InstanceRef.CallScript` runs a script as it |
 | `Gml` | `TypeOf`, arrays and structs through the runtime's own builtins |
 | `UI` | ImGui widgets for your tab: text, buttons, inputs, sliders, combos, selectable rows, progress bars, disabled blocks, text colour, tooltips, scrolling regions, clipped long lists (`UI.Clipped`) and a history-aware input line. Scopes are tracked, so a mistake can't corrupt the overlay |
 | `RValue` | The runtime's 16-byte value, laid out identically. Converts implicitly from double, int, bool and string |

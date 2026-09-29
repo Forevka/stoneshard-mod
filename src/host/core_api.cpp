@@ -114,6 +114,7 @@ void*        ApiCurrentSelf() { return gml::CurrentSelf(); }
 
 std::int32_t ApiCallScript(void* func, void* self, void* other, CoreRValue* result,
                            CoreRValue* args, std::int32_t argc) {
+    gml::ClearLastError();   // a refusal below must not report an older failure's reason
     if (!func || !result || argc < 0 || (argc > 0 && !args)) return 0;
     if (!GameThreadOnly("call_script")) return 0;
 
@@ -146,12 +147,14 @@ std::int32_t ApiCallScript(void* func, void* self, void* other, CoreRValue* resu
 }
 
 std::int32_t ApiCallEvent(void* func, void* self, void* other) {
+    gml::ClearLastError();
     if (!func || !self || !GameThreadOnly("call_event")) return 0;
     return gml::CallEvent(func, self, other) ? 1 : 0;
 }
 
 std::int32_t ApiCallBuiltin(const char* name, CoreRValue* result, CoreRValue* args,
                             std::int32_t argc, void* self, void* other) {
+    gml::ClearLastError();
     if (!name || !result || argc < 0 || (argc > 0 && !args)) return 0;
     if (!GameThreadOnly("call_builtin")) return 0;
     // Builtins read `self` even when they ignore it; borrow a live instance.
@@ -160,6 +163,19 @@ std::int32_t ApiCallBuiltin(const char* name, CoreRValue* result, CoreRValue* ar
 }
 
 std::int32_t ApiBuiltinCount() { return static_cast<std::int32_t>(builtins::Count()); }
+
+// Thread-local on the native side, so any thread may ask; only the game thread
+// ever makes calls that set it.
+const char* ApiLastGmlError() { return gml::LastError(); }
+
+void* ApiInstanceFromId(const CoreRValue* id) {
+    if (!GameThreadOnly("instance_from_id")) return nullptr;
+    if (!id) {
+        gml::VerifyInstanceLookup();
+        return gml::InstanceLookupProven() ? reinterpret_cast<void*>(1) : nullptr;
+    }
+    return gml::InstanceFromId(*Gml(id));
+}
 
 std::int32_t ApiSetString(CoreRValue* value, const char* text) {
     if (!value || !text || !GameThreadOnly("set_string")) return 0;
@@ -233,6 +249,7 @@ std::int32_t ApiHookSetManaged(std::int32_t id, std::int32_t managed) {
 std::int32_t ApiHookCount() { return hk::Count(); }
 
 std::int32_t ApiHookCallOriginal(const CoreHookCall* call, CoreRValue* result) {
+    gml::ClearLastError();
     if (!call || !result || !GameThreadOnly("hook_call_original")) return 0;
     return hk::CallOriginal(reinterpret_cast<const hk::Call*>(call), Gml(result)) ? 1 : 0;
 }
@@ -545,6 +562,8 @@ CoreApi Build() {
     a.ui_clipper_step        = &UiClipperStep;
     a.ui_clipper_end         = &UiClipperEnd;
     a.ui_is_item_deactivated_after_edit = &UiIsItemDeactivatedAfterEdit;
+    a.last_gml_error                    = &ApiLastGmlError;
+    a.instance_from_id                  = &ApiInstanceFromId;
     return a;
 }
 

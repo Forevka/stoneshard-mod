@@ -90,9 +90,36 @@ public static unsafe class Game
         fixed (RValue* a = args)
         {
             if (Loader.Api->CallScript(fn, self.Pointer, other.Pointer, &result, a, args.Length) == 0)
-                throw new GmlException($"call to {name} failed (see the loader log)");
+                throw GmlException.CallFailed($"call to {name}");
         }
         return Values.Track(result);
+    }
+
+    /// <summary>
+    /// Calls a script as the instance <paramref name="self"/> names (self and
+    /// other are both that instance). Throws if the instance no longer exists,
+    /// or if this runtime's id lookup is unavailable (see <see cref="CanResolveInstances"/>).
+    /// </summary>
+    public static RValue CallScriptAs(InstanceRef self, string name, params RValue[] args)
+    {
+        var instance = self.Resolve() ?? throw new GmlException(CanResolveInstances
+            ? $"call to {name} failed: the instance does not exist (destroyed or deactivated)"
+            : $"call to {name} failed: this runtime's instance lookup is unavailable (see the loader log)");
+        return CallScriptAs(instance, instance, name, args);
+    }
+
+    /// <summary>
+    /// Whether instance ids can be turned into instances here (<see cref="InstanceRef.Resolve"/>).
+    /// The runtime's id table is found by pattern and proven on the live game;
+    /// this stays false until that proof has passed (it needs a live instance).
+    /// </summary>
+    public static bool CanResolveInstances
+    {
+        get
+        {
+            Loader.EnsureGameThread();
+            return Loader.Api->InstanceFromId(null) != 0;
+        }
     }
 
     /// <summary>Runs an object event (e.g. "gml_Object_o_x_Step_0") as <paramref name="self"/>.</summary>
@@ -101,7 +128,7 @@ public static unsafe class Game
         Loader.EnsureGameThread();
         var fn = Resolve(name, "gml_Object_");
         if (Loader.Api->CallEvent(fn, self.Pointer, other.Pointer) == 0)
-            throw new GmlException($"event {name} failed (see the loader log)");
+            throw GmlException.CallFailed($"event {name}");
     }
 
     /// <summary>
@@ -160,7 +187,7 @@ public static unsafe class Game
         fixed (RValue* a = args)
         {
             if (Loader.Api->CallBuiltin(n, &result, a, args.Length, self.Pointer, 0) == 0)
-                throw new GmlException($"builtin {name} failed (see the loader log)");
+                throw GmlException.CallFailed($"builtin {name}");
         }
         return Values.Track(result);
     }

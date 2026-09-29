@@ -89,7 +89,7 @@ public readonly unsafe struct HookCall
     {
         RValue r = RValue.Undefined;
         if (Loader.Api->HookCallOriginal(_p, &r) == 0)
-            throw new GmlException($"re-running {_symbol} failed (see the loader log)");
+            throw GmlException.CallFailed($"re-running {_symbol}");
         return Values.Track(r);
     }
 
