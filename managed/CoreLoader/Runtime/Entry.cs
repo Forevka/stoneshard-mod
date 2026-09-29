@@ -39,6 +39,7 @@ internal static unsafe class Entry
                      $"game '{Game.Name}', {api->SymbolCount()} GML functions");
 
             ModManager.DiscoverAndLoad();
+            TestHost.Start();
 
             exports->Frame = &Frame;
             exports->Gui = &Gui;
@@ -115,6 +116,7 @@ internal static unsafe class Entry
             // mod code is on the stack.
             if (_initialisedMods) Stage("hot reload", ModManager.PollChanges);
             Stage("queued actions", () => Game.DrainPending(Log));
+            Stage("test host", TestHost.Tick);
             Stage("hook request timeouts", Hooks.TickRequests);
             Stage("object table", ObjectTable.Tick);
             Stage("interop", InteropGenerator.Tick);
@@ -237,6 +239,7 @@ internal static unsafe class Entry
             ModManager.ForEach(nameof(CoreMod.OnShutdown), mod => mod.OnShutdown());
             ModConfig.FlushAll();
             VarHarvest.Flush();
+            TestHost.Stop();
             Log.Info("shut down");
         }
         catch (Exception ex)
