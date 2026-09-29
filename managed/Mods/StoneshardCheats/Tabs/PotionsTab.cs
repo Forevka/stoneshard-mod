@@ -193,8 +193,9 @@ internal sealed class PotionsTab : Tab
     private void BuildPotion(List<string> tags)
     {
         // The object's own asset index, looked up by name rather than a constant.
-        int index = GmlObject.Find(BottleObject)?.Index
-                    ?? throw new InvalidOperationException($"{BottleObject} is not in the object table");
+        var bottle = GmlObject.Find(BottleObject)
+                     ?? throw new InvalidOperationException($"{BottleObject} is not in the object table");
+        int index = bottle.Index;
 
         // Arm first, give the bottle second: the alarm fires on a later step, and
         // the hook does the building then - inside the event frame, the only
@@ -206,7 +207,7 @@ internal sealed class PotionsTab : Tab
         // synchronously (no new instance, or more than one), the request stays
         // unaimed and the first bottle alarm within the timeout is built - the
         // same behaviour as before the aiming existed.
-        var before = BottleIds(index);
+        var before = BottleIds(bottle);
         _wantTags = tags;
         _armedId = -1;
         _outcomeNew = false;
@@ -221,7 +222,7 @@ internal sealed class PotionsTab : Tab
             throw;
         }
 
-        var added = BottleIds(index);
+        var added = BottleIds(bottle);
         added.ExceptWith(before);
         if (added.Count == 1) _armedId = added.First();
         Actions.Log.Info(added.Count == 1
@@ -230,13 +231,12 @@ internal sealed class PotionsTab : Tab
     }
 
     // The ids of every live bottle, as numbers comparable across frames.
-    private static HashSet<long> BottleIds(int index)
+    private static HashSet<long> BottleIds(GmlObject bottle)
     {
         var ids = new HashSet<long>();
-        int n = (int)Game.CallBuiltin("instance_number", index).AsReal;
-        for (int i = 0; i < n; i++)
+        foreach (var r in bottle.Instances())
         {
-            long id = IdKey(Game.CallBuiltin("instance_find", index, i));
+            long id = IdKey(r.Id);
             if (id >= 0) ids.Add(id);
         }
         return ids;
@@ -265,7 +265,7 @@ internal sealed class PotionsTab : Tab
 
         if (_hookError != null)
         {
-            UI.TextColored(0.95f, 0.4f, 0.4f, $"Bottle recorder not installed: {_hookError}");
+            UI.TextColored(0.95f, 0.4f, 0.4f, $"Potion building is unavailable: {_hookError}");
             return;
         }
 

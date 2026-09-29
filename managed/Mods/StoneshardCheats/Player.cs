@@ -7,17 +7,24 @@ namespace StoneshardCheats;
 /// </summary>
 /// <remarks>
 /// GML hands out the player only as an id (instance_find), and scripts need the
-/// instance itself as their self, so the pointer is taken from o_player's own
-/// Step event. It is trusted only while that event keeps running: after
-/// quitting to the menu, or across a save load, the instance can be destroyed
-/// and its memory reused, and a remembered pointer would then run character
-/// scripts as some other object.
+/// instance itself as their self. Where the runtime's id lookup works
+/// (<see cref="Game.CanResolveInstances"/>), the id is resolved on every use:
+/// exact, and available while the game is paused, when no Step runs.
+///
+/// Otherwise the pointer is taken from o_player's own Step event. It is trusted
+/// only while that event keeps running: after quitting to the menu, or across a
+/// save load, the instance can be destroyed and its memory reused, and a
+/// remembered pointer would then run character scripts as some other object.
+/// The hook stays installed either way, since the lookup is only proven once a
+/// live instance exists and may not be there yet.
 /// </remarks>
 internal static class Player
 {
     // Half a second without a step: the game is paused, in a menu, or the
     // player is gone. Every use re-checks, nothing caches the Instance.
     private const long StaleAfterMs = 500;
+
+    private const string PlayerObject = "o_player";
 
     private static Instance _self;
     private static RValue _id = RValue.Undefined;
@@ -48,15 +55,28 @@ internal static class Player
         }
     }
 
-    /// <summary>The live player, or null while it is not stepping.</summary>
+    /// <summary>
+    /// The live player, or null when there is none (or, without the id lookup,
+    /// while it is not stepping).
+    /// </summary>
     public static Instance? Current
     {
         get
         {
+            if (Game.CanResolveInstances) return Resolved();
             if (_self.IsNull || Environment.TickCount64 - _seenAt > StaleAfterMs) return null;
             if (!Game.CallBuiltin("instance_exists", _id).AsBool) return null;
             return _self;
         }
+    }
+
+    // The player's object is a CHILD of o_player - the character's class, e.g.
+    // o_woodward - never o_player itself, so the first instance of o_player
+    // (which includes its children) is the player.
+    private static Instance? Resolved()
+    {
+        if (GmlObject.Find(PlayerObject) is not { InstanceCount: > 0 } o) return null;
+        return o.Instance(0).Resolve();
     }
 
     public static bool Available => Current != null;

@@ -6,7 +6,7 @@
 namespace mod {
 
 // Writes coreloader.log into paths::DataDir(): <game>\CoreLoader\Logs when
-// installed, the build workspace in development, or SSMOD_DATA_DIR.
+// installed, the build workspace in development, or CORELOADER_DATA_DIR.
 void LogInit();
 void LogShutdown();
 void Logf(const char* fmt, ...);

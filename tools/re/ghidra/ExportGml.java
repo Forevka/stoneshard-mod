@@ -2,7 +2,7 @@
 // decompiles the game-logic ones to one .c file per function.
 //
 // Headless:
-//   analyzeHeadless <projDir> <projName> -process StoneShard.exe -readOnly -noanalysis
+//   analyzeHeadless <projDir> <projName> -process <Game>.exe -readOnly -noanalysis
 //     -scriptPath tools/re/ghidra -postScript ExportGml.java <symtab.json> <builtins.json> <outDir>
 //
 // symtab.json   {"gml_Script_foo": "0x140001000", ...}   (relib.table())
@@ -11,7 +11,7 @@
 // Optional 4th argument: per-function decompile timeout in seconds (default 120);
 // delete the "// decompile failed" files and rerun with a larger one.
 // Optional 5th argument "seq": decompile one function at a time instead of in parallel.
-//@category Stoneshard
+//@category CoreLoader
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;

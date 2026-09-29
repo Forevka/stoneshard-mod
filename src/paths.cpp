@@ -15,8 +15,12 @@ std::once_flag g_once;
 // (imgui.ini), so the resolution itself has to be safe to race.
 void Resolve() {
     std::call_once(g_once, [] {
-        char        buf[MAX_PATH * 4];
-        const DWORD n = GetEnvironmentVariableA("SSMOD_DATA_DIR", buf, sizeof(buf));
+        char  buf[MAX_PATH * 4];
+        DWORD n = GetEnvironmentVariableA("CORELOADER_DATA_DIR", buf, sizeof(buf));
+        // The variable's old name, still honoured for one release so existing
+        // launch scripts keep working. Remove after the next release.
+        if (n == 0 || n >= sizeof(buf))
+            n = GetEnvironmentVariableA("SSMOD_DATA_DIR", buf, sizeof(buf));
         if (n > 0 && n < sizeof(buf)) {
             g_dir = buf;
             while (!g_dir.empty() && (g_dir.back() == '\\' || g_dir.back() == '/'))

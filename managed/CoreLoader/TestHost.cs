@@ -156,10 +156,13 @@ public static partial class TestHost
     private static readonly TimeSpan StartMargin = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MinStartWindow = TimeSpan.FromMilliseconds(500);
 
-    // The loader's log lives beside the pipe file. SSMOD_DATA_DIR moves both,
-    // as it moves the log on the native side.
+    // The loader's log lives beside the pipe file. CORELOADER_DATA_DIR moves both,
+    // as it moves the log on the native side; SSMOD_DATA_DIR is its old name,
+    // still read as a fallback for one release.
     private static string LogDirectory =>
-        Environment.GetEnvironmentVariable("SSMOD_DATA_DIR") is { Length: > 0 } d ? d : Path.Combine(Game.LoaderDirectory, "Logs");
+        Environment.GetEnvironmentVariable("CORELOADER_DATA_DIR") is { Length: > 0 } d ? d
+        : Environment.GetEnvironmentVariable("SSMOD_DATA_DIR") is { Length: > 0 } old ? old
+        : Path.Combine(Game.LoaderDirectory, "Logs");
 
     /// <summary>From Entry.Init: starts the pipe if the session asked for it, and says so either way.</summary>
     internal static void Start()

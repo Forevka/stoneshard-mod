@@ -29,7 +29,11 @@ public static unsafe class Game
     /// <summary>The runtime helpers were found, so calls and strings work.</summary>
     public static bool IsGmlReady => Loader.Api->GmlReady() != 0;
 
-    /// <summary>The calling-convention self-test passed this session.</summary>
+    /// <summary>
+    /// The native ABI self-test passed this session: a string built through the game's own allocator
+    /// read back unchanged. It does not prove script calls; calls into the game are only checked by the
+    /// builtins self-test, which reports to the log.
+    /// </summary>
     public static bool IsAbiProven => Loader.Api->AbiProven() != 0;
 
     /// <summary>Number of GameMaker builtins resolved (0 until the registry is found).</summary>
@@ -72,6 +76,13 @@ public static unsafe class Game
     }
 
     /// <summary>An instance the game is currently running code as, if any.</summary>
+    /// <remarks>
+    /// Only meaningful inside a hook or event: between events (and on 2024
+    /// runtimes, which have no current-self global) it may be empty or stale.
+    /// To run code as a particular instance, hold its <see cref="InstanceRef"/>
+    /// and call <see cref="InstanceRef.Resolve"/> (or <see cref="InstanceRef.CallScript"/>)
+    /// when needed.
+    /// </remarks>
     public static Instance CurrentSelf => new(Loader.Api->CurrentSelf());
 
     /// <summary>

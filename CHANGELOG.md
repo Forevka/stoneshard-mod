@@ -104,6 +104,35 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - StoneshardCheats: an action's result lines now appear under its echo in the panel.
 - Native GML calls with no explicit self use the current self only. The self captured by the remote
   command file is gone.
+- The data-dir environment variable is `CORELOADER_DATA_DIR`. `SSMOD_DATA_DIR` is still read as a
+  fallback for this release.
+- The native ABI self-test is the string round-trip in every game; the Stoneshard script probes are gone.
+  The builtins self-test logs "self-test", not "phase A".
+- The CMake project and target are `coreloader`. The output is still `build\version.dll`.
+- `tools/re` takes the game exe from `--exe` or `RE_GAME_EXE` (then `STONESHARD_DIR`) instead of
+  assuming Stoneshard. Its caches go to `tools/re/cache/<exe name>/` (or `RELIB_CACHE`), so one game's
+  tables are never read for another.
+- **Console:** freezes live in one shared list (globals and any number of instances) and survive a
+  change of the Inspector's selection. New Objects tab (object browser with live counts, instance
+  paging, and a search of every live instance for a variable name) and Globals tab (edit and freeze),
+  and the `where`, `frozen` and `unfreeze all` commands.
+- The interop generator and the variable harvest share the cached `ObjectTable`: one object scan per
+  session, spread over frames. The table starts as soon as the runtime asks for it once the game's
+  assets are loaded, even before mods start, and interop waits for it without spending its wait while
+  the table cannot progress. The scan is only finished in one frame as a fallback (the table still not
+  done after ~10 s of work, or a minute overall), or when a mod calls `GmlObject.All`/`Children` or
+  `ObjectTable.Complete` before it is ready.
+- **Console:** `where` answers "object table not ready" until the table is built, instead of scanning
+  in one frame. The Objects tab drops its selection when a pick or `inspect` selects another instance.
+  Selecting an instance resets the variable filter unless a search set it. A frozen global the game
+  removed is listed as inactive. A variable search skips instances and variables the game refuses to
+  read.
+- StoneshardCheats resolves the player by id where the runtime's lookup is proven, so cheats keep
+  working while the game is paused; the o_player Step hook remains the fallback.
+- `deploy-coreloader.ps1 -Live` installs into a running game: locked files are renamed to `*.old` (a
+  timestamped `*.old` while an earlier one is still locked), and the new build is used from the next
+  launch. Mods it copies are hot-reloaded at once, as before. The runtime is installed before
+  `version.dll`, and without `-Live` a running game stops the deploy before anything is copied.
 
 ### Removed
 - **The native Stoneshard tools.** `version.dll` no longer contains any game-specific code.
@@ -114,6 +143,13 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - The remote command file (`CORELOADER_REMOTE`, `debug-cmd.txt`) is removed.
   - The player tracker, the weapon recorder, and self-test phase B (which needed the player) are removed.
   - zlib is no longer a build dependency.
+- The `InstanceInspector` and `GlobalsEditor` mods: their features are in the Console mod.
+- The `ReflectionProbe`, `VarProbeMod` and `CoexistProbe` test mods.
+- The CMake `deploy` and `deploy-live` targets, the `STONESHARD_DIR` option and `tools/deploy.ps1`
+  (replaced by `deploy-coreloader.ps1 -Live`).
+- Dead native code: the native hook-subscriber API, `gml::Call`/`CallByName`/`IsEventSymbol`,
+  `sym::FindScript` and `builtins::SelfTestPassed`.
+- `tools/savepeek.py` and 20 one-off or duplicate reverse-engineering scripts in `tools/re`.
 
 ### Fixed
 - **Games that rebuild their swap chain no longer fail to start.** The overlay kept its back-buffer view

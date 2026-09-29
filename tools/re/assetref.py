@@ -73,7 +73,7 @@ def report(name, index):
                 funcs=len(allf), named_funcs=len(named), named=named)
 
 if __name__ == '__main__':
-    objt = json.load(open('objt_indexed.json'))
+    objt = json.load(open(R.cache_path('objt_indexed.json')))
     targets = sys.argv[1:] or ['o_player']
     for t in targets:
         i = objt.index(t)

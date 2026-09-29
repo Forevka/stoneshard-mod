@@ -12,13 +12,13 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 
 | Path | What |
 |---|---|
-| `src/` | Native loader. `dllmain.cpp` (init thread), `symbols.cpp` (gml_* table), `gml.cpp` (runtime bridge: strings, calls, value free/copy, self-tests), `builtins.cpp` (builtin registry), `hookengine.cpp` (thunk detours shared by native and managed users), `overlay.cpp` (ImGui, WndProc, pick mode, per-frame tick), `host/` (.NET hosting, `core_api.h/.cpp` = the C ABI), `hooks.cpp` (D3D11 Present hook), `proxy.cpp`, `paths.cpp`, `log.cpp` |
+| `src/` | Native loader. `dllmain.cpp` (init thread), `symbols.cpp` (gml_* table), `gml.cpp` (runtime bridge: strings, calls, value free/copy, self-tests), `builtins.cpp` (builtin registry), `hookengine.cpp` (thunk detours for managed hooks and the loader's own self observers), `overlay.cpp` (ImGui, WndProc, pick mode, per-frame tick), `host/` (.NET hosting, `core_api.h/.cpp` = the C ABI), `hooks.cpp` (D3D11 Present hook), `proxy.cpp`, `paths.cpp`, `log.cpp` |
 | `managed/CoreLoader/` | The runtime mods reference: `Game`, `Hooks`, `Values`, `RValue`, `Globals`/`GmlObject`/`InstanceRef`, `ObjectTable`, `DsMap`/`DsList`, `UI`, `Content`, `GameDraw`, `Input`, `Code`, `ModConfig`; `Runtime/` = entry points, mod manager (hot reload), interop generator |
-| `managed/Mods/` | Shipped mods (Console + Inspector, ScriptSpy, GlobalsEditor, InstanceInspector, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost, StoneshardCheats) |
-| `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, CoexistProbe, FaultyGuiMod, ReflectionProbe, VarProbeMod, WidgetProbe (every UI widget, and scope unwind under faults) |
+| `managed/Mods/` | Shipped mods (Console + Inspector/Objects/Globals, ScriptSpy, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost, StoneshardCheats) |
+| `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, FaultyGuiMod, WidgetProbe (every UI widget, and scope unwind under faults) |
 | `managed/Examples/`, `managed/Templates/CoreLoaderMod/` | HelloMod, InteropExample; the `dotnet new coreloader-mod` template |
 | `managed/CoreLoader.Analyzers/` (+ `.Tests`) | Roslyn analyzer every mod compiles with: CL0001-CL0003 lifetime rules (see `managed/README.md#analyzers`) |
-| `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, `run-game.ps1`, `game-saves.ps1`, `coreloader.ps1` (test-host client), `smoke-*.ps1`, RE scripts |
+| `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, `run-game.ps1`, `game-saves.ps1`, `coreloader.ps1` (test-host client), `smoke-*.ps1`, `checkcksum.py`; `re/` = static RE toolkit over any game's exe (`relib.py` and friends, `--exe <game.exe>` or `RE_GAME_EXE`; `ghidra/ExportGml.java`) |
 
 ## Build, deploy, run
 
@@ -30,8 +30,10 @@ $vs='C:\Program Files\Microsoft Visual Studio\18\Community'
 cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul 2>nul && `"$vs\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe`" --build build --config Release"
 # managed (managed\bin\Release\...)
 dotnet build managed\CoreLoader.sln -c Release
-# install (game must be closed: it locks version.dll); -CleanMods removes other mod dlls first
+# install (game closed); -CleanMods removes other mod dlls first
 tools\deploy-coreloader.ps1 -GameDir "<game>" -Mods Console,DwarfBoost -CleanMods
+# into a RUNNING game: locked files are renamed to *.old and the new ones take effect on next launch
+tools\deploy-coreloader.ps1 -GameDir "<game>" -Live
 # one-time per machine: lets interop-based projects build and navigate in VS (opens CoreLoader.Dev.sln)
 tools\setup-dev.ps1 -GameDir "<extra game folder>"
 ```
@@ -47,6 +49,8 @@ Test games:
   VM-compiled: the loader must stand down cleanly there ("not a YYC game").
 
 Log: `<game>\CoreLoader\Logs\coreloader.log`; the previous run's is `coreloader.prev.log`.
+`CORELOADER_DATA_DIR` moves the log (and imgui.ini) per process; `SSMOD_DATA_DIR` is its old name,
+still read as a fallback for one release.
 
 **Validate every change in both games.** Their runtimes differ:
 - 2024 has static string initialisers.

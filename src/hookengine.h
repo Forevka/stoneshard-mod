@@ -9,8 +9,8 @@ namespace mod::hk {
 // A generic detour engine for compiled GML.
 //
 // MinHook needs a distinct detour function per target and gives it no context,
-// which is why the older modules instantiate templates into a fixed number of
-// slots. Here each hooked target gets a small thunk emitted at runtime that
+// which would force a fixed number of template-instantiated slots. Here each
+// hooked target gets a small thunk emitted at runtime that
 // carries a pointer to its own record into ONE shared dispatcher, so the number
 // of hooks is bounded only by the thunk arena.
 //
@@ -65,23 +65,6 @@ bool CallOriginal(const Call* call, gml::RValue* result);
 // The loader's own use: when the runtime has no current-self global (2024+),
 // watch a spread of Step events so a live instance is always known.
 void InstallSelfObservers(int maxEvents);
-
-// ---------------------------------------------------------------- native users
-//
-// C++ subscribers, for the loader's own tools. They share the one detour per
-// target with managed mods, so a mod can hook a function the loader also
-// watches. `before` may set call->skip; `after` always runs (even when the
-// original was skipped). Up to kMaxNative per hook.
-using NativeHandler = void (*)(Call* call, void* ctx);
-constexpr int kMaxNative = 4;
-
-// Hooks `target` if needed and adds the handlers. Returns the hook id or -1.
-int  AddNative(void* target, Kind kind, NativeHandler before, NativeHandler after, void* ctx);
-void RemoveNative(int id, NativeHandler before, NativeHandler after, void* ctx);
-
-// Inside a handler: the game code that made the hooked call (its return
-// address), for "who called this" diagnostics.
-const void* CurrentCaller();
 
 // How many hook dispatches are active on this thread (0 outside game code).
 int DispatchDepth();

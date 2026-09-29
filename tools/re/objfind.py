@@ -6,7 +6,10 @@ Indices are what instance_create_depth and object_get_parent take.
 import json
 import sys
 
-OBJT = json.load(open('objt_indexed.json'))
+# The per-game cache datawin.py writes; takes --exe / RE_GAME_EXE like the others.
+from gamepath import cache_path
+
+OBJT = json.load(open(cache_path('objt_indexed.json')))
 BY_NAME = {n: i for i, n in enumerate(OBJT) if n}
 
 

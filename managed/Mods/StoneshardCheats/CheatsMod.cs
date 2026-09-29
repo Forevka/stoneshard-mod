@@ -45,7 +45,7 @@ public sealed class CheatsMod : CoreMod
     {
         if (!Game.IsGmlReady || !Game.IsAbiProven)
         {
-            UI.TextColored(0.95f, 0.4f, 0.4f, "Disabled: the GML bridge is not proven in this session.");
+            UI.TextColored(0.95f, 0.4f, 0.4f, "Disabled: the GML bridge's string round-trip has not passed in this session.");
             return;
         }
 

@@ -44,7 +44,7 @@ Builtin Find(const std::string& name);
 //                   int argc, RValue* args)
 // The result is the FIRST parameter and `args` is a CONTIGUOUS array, not an array of
 // pointers. Passing the script-style layout dereferences argument values as pointers
-// and crashes, so this must never route through gml::Call.
+// and crashes, so this must never route through gml::CallAs.
 bool Call(const std::string& name, gml::RValue* result,
           gml::RValue* args, int argc, void* self, void* other = nullptr);
 
@@ -80,7 +80,6 @@ bool StructGet(const gml::RValue& structValue, const char* name, gml::RValue* ou
 // The ABI gate that everything calling builtins depends on. MUST run on the
 // game thread. Runs once; safe to call every frame.
 void        SelfTest();
-bool        SelfTestPassed();
 const char* SelfTestReport();
 
 } // namespace mod::builtins

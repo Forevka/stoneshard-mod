@@ -19,7 +19,6 @@
 #include "symbols.h"
 
 #include <windows.h>
-#include <malloc.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -541,9 +540,9 @@ namespace {
 bool        g_abiDone = false, g_abiOk = false;
 std::string g_report = "not run";
 
-// Phase A: the three-call ABI gate. Needs no character, so it runs at the menu.
-void PhaseA(void* self) {
-    Logf("builtins: --- self-test phase A (ABI) ---");
+// The three-call ABI gate. Needs no character, so it runs at the menu.
+void RunSelfTest(void* self) {
+    Logf("builtins: --- self-test (ABI) ---");
     int passed = 0;
 
     gml::RValue mk[3]{};
@@ -584,12 +583,11 @@ void PhaseA(void* self) {
     }
 
     g_abiOk = passed >= 2;
-    Logf("builtins: --- phase A %s (%d/3) ---", g_abiOk ? "PASSED" : "FAILED", passed);
+    Logf("builtins: --- self-test %s (%d/3) ---", g_abiOk ? "PASSED" : "FAILED", passed);
 }
 
 } // namespace
 
-bool        SelfTestPassed() { return g_abiOk; }
 const char* SelfTestReport() { return g_report.c_str(); }
 
 void SelfTest() {
@@ -603,7 +601,7 @@ void SelfTest() {
 
     if (!g_abiDone) {
         g_abiDone = true;
-        PhaseA(self);
+        RunSelfTest(self);
         g_report = g_abiOk ? "abi=ok" : "abi=FAIL";
     }
 }

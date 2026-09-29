@@ -1,8 +1,13 @@
-"""Extract every Builtin_Add(name, func, nargs, flag) registration statically."""
+"""Extract every Builtin_Add(name, func, nargs, flag) registration statically.
+
+builtins.py [--exe <game.exe>] [<Builtin_Add address, hex>]
+"""
 import sys; sys.path.insert(0,'.')
 import relib as R, idx, struct, json, re
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
-BUILTIN_ADD = 0x14529d2c0
+# Address of the runner's Builtin_Add in the game under study, as the first argument
+# (hex). The default is Stoneshard's; find another game's from its registration calls.
+BUILTIN_ADD = int(sys.argv[1], 16) if len(sys.argv) > 1 else 0x14529d2c0
 md = Cs(CS_ARCH_X86, CS_MODE_64)
 
 W32 = {'eax':'rax','ecx':'rcx','edx':'rdx','ebx':'rbx','esi':'rsi','edi':'rdi','ebp':'rbp','esp':'rsp'}
@@ -75,4 +80,4 @@ if __name__ == '__main__':
     from collections import Counter
     print('failure kinds:', Counter(k for k,_ in fails))
     json.dump({k:{'func':hex(v['func']),'nargs':v['nargs'],'flag':v['flag'],'site':hex(v['site']),'name_va':hex(v['name_va'])}
-               for k,v in out.items()}, open('builtin_table.json','w'), indent=0)
+               for k,v in out.items()}, open(R.cache_path('builtin_table.json'),'w'), indent=0)

@@ -39,11 +39,8 @@ const char* HealthMessage();
 
 std::size_t Count();
 
-// Exact lookup, e.g. "gml_Script_scr_console_sethp".
+// Exact lookup, e.g. "gml_Script_player_move".
 void* Find(const std::string& name);
-
-// Convenience: prepends "gml_Script_".
-void* FindScript(const std::string& shortName);
 
 // Case-insensitive substring filter over all names.
 std::vector<const Entry*> Search(const std::string& needle, std::size_t limit);

@@ -5,20 +5,20 @@ _deps/
 # Runtime artifacts the mod writes into its own workspace
 *.log
 imgui.ini
-
-# Copies of the player's save data, taken before the first cheat
-save-backups/
-
-# Per-process mod data dirs (SSMOD_DATA_DIR)
+# Per-process CORELOADER_DATA_DIR roots from test runs
 run/
+# Save backups made by the legacy native tools; player data, never commit it
+save-backups/
 
 # OMC operational state, and Python caches from tools/re
 .omc/
 __pycache__/
 *.pyc
-# Derived RE caches. relib.py rebuilds all of these from StoneShard.exe and
-# data.win on demand, and call_idx.npy alone is 29 MB - they are build output,
-# not source.
+# Derived RE caches, one folder per game (tools/re/cache/<exe stem>/). relib.py
+# rebuilds all of these from the game's exe and data.win on demand, and
+# call_idx.npy alone is 29 MB - they are build output, not source. The lines
+# after it cover caches written beside the tools before they moved per game.
+tools/re/cache/
 tools/re/*.npy
 tools/re/script_table.json
 tools/re/objt_indexed.json

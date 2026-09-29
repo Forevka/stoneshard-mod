@@ -61,8 +61,9 @@ internal static unsafe class Entry
         Loader.MarkGameThread();
         if (_initialisedMods) return;
         // The native side proves the value helpers on the first frame, before
-        // this runs: pick up the verdict at once - the loader's own tools call
-        // the game while mods are still waiting, and must release what they get.
+        // this runs: pick up the verdict at once - the runtime's own work (interop
+        // generation, variable harvest) calls the game while mods are still
+        // waiting, and must release what it gets.
         if (!_probed)
         {
             _probed = true;

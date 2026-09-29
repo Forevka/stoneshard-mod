@@ -124,12 +124,8 @@ bool        SetString(RValue& v, const char* text);
 const char* Intern(const std::string& text);
 std::string ToString(const RValue& v);
 
-// Calls a YYC script:
+// Calls a YYC script with an explicit instance context:
 //   RValue* f(CInstance* self, CInstance* other, RValue* result, int argc, RValue** args)
-// `self`/`other` default to the game's current-instance global when null.
-bool Call(void* func, RValue* result, RValue** args, int argc);
-
-// Same, but with an explicit instance context.
 bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, void* other);
 
 // Object events compile to a SMALLER signature than scripts:
@@ -137,12 +133,11 @@ bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, voi
 // Calling one with the 5-argument script signature corrupts the stack, so
 // anything named gml_Object_* must go through here instead.
 bool CallEvent(void* func, void* self, void* other);
-bool IsEventSymbol(const std::string& symbol);
-bool CallByName(const std::string& symbol, RValue* result, RValue** args, int argc);
 
-// Proves the ABI end to end by calling zero-argument *_help scripts, which just
-// return a string. MUST be invoked from the game's own thread (the Present
-// hook), never from our init thread. Runs once; safe to call every frame.
+// Proves the string ABI end to end: a string built through the game's own
+// allocator must read back unchanged. MUST be invoked from the game's own
+// thread (the Present hook), never from our init thread.
+// Runs once; safe to call every frame.
 void AbiSelfTest();
 bool AbiProven();
 

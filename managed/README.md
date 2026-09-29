@@ -16,7 +16,7 @@ It has been verified on two games, five years of GameMaker runtime apart:
 ## Installing
 
 1. Build: `cmake --build build` (native loader) and `dotnet build managed\CoreLoader.sln -c Release`.
-2. Install into a game: `tools\deploy-coreloader.ps1 -GameDir "<game folder>" -Mods ScriptSpy,GlobalsEditor`.
+2. Install into a game: `tools\deploy-coreloader.ps1 -GameDir "<game folder>" -Mods Console,ScriptSpy`.
 
 The game folder ends up with:
 
@@ -61,7 +61,9 @@ times a second is written a few times, then summarised.
 
    With the game running, the build is **hot-reloaded**: CoreLoader watches `Mods\`, and a rebuilt
    mod is swapped in between frames. The old copy gets `OnShutdown`, and its hooks and config are
-   released. The Loader tab also has Reload buttons.
+   released. The Loader tab also has Reload buttons. The same goes for a mod that
+   `tools\deploy-coreloader.ps1 -Mods` copies into a running game: it is reloaded at once, against the
+   runtime already running. `-Live` defers only `version.dll` and the runtime to the next launch.
 
 ### Working in this repository with Visual Studio
 
@@ -330,10 +332,8 @@ commands bad input on purpose. A faulted mod's commands answer with its fault. T
 
 | Mod | Game | What it does |
 |---|---|---|
-| Console | any | In-game console. Evaluates GML-style expressions against the live game: `instance_number(o_enemy)`, `oSys.gold += 1e6`, `global.x`, `obj[2].hp = 1`, `scr_foo(1, "a")`. Also `find`, `objects`, `vars`, `globals`, `hook`/`unhook` for live call logging, and history. Its **Inspector** tab lets you click any instance in the game (`inspect`) and see its object and parents, every variable (edit with any GML expression, freeze, expand arrays and structs), and read-only code: what each of its events calls and which strings it uses, and who calls those. `code <fn>`, `callers <fn>` and `dump` do the same from the console |
+| Console | any | In-game console. Evaluates GML-style expressions against the live game: `instance_number(o_enemy)`, `oSys.gold += 1e6`, `global.x`, `obj[2].hp = 1`, `scr_foo(1, "a")`. Also `find`, `objects`, `vars`, `globals`, `hook`/`unhook` for live call logging, and history. Its **Inspector** tab lets you click any instance in the game (`inspect`) and see its object and parents, every variable (edit with any GML expression, freeze, expand arrays and structs), and read-only code: what each of its events calls and which strings it uses, and who calls those. `code <fn>`, `callers <fn>` and `dump` do the same from the console. The **Objects** tab lists every object with its live instance count, pages through an object's instances with the same variable table, and searches every live instance for a variable name (`where <text>` in the console). The **Globals** tab lists, edits and freezes global variables. Freezes hold across any number of instances and globals until lifted (`frozen`, `unfreeze all`) |
 | ScriptSpy | any | Hook any function by name and watch its arguments and results live. Also logs them; `ScriptSpy.txt` lists watches to start with the game |
-| GlobalsEditor | any | Browse, edit and freeze global variables |
-| InstanceInspector | any | Objects, live instances and their variables: edit and freeze them, and search every instance for a variable name |
 | SpeedControl | any | Run the game faster or slower (`game_set_speed`) |
 | ContentDemo | any | Runtime content. It loads a spinning coin sprite from a PNG strip and draws it in the game's GUI layer, plays a chime from an OGG file, and can reskin any game sprite by name. Its files ship in `Mods/ContentDemo/assets` |
 | DwarfBoost | Dwarf Eats Mountain | Gold income and unit damage multipliers, resource editor |
@@ -343,18 +343,16 @@ commands bad input on purpose. A faulted mod's commands answer with its fault. T
 
 `Tests/` holds regression mods for the loader itself:
 - a UI-fault mod;
-- a GC-safety variable probe;
-- a reflection probe;
 - an XP probe;
 - a value-lifetime probe (memory stays flat while it creates about 3,000 strings a frame);
-- a struct probe (a struct kept from C# survives forced garbage collections, and its root is released afterwards);
-- a hook-coexistence probe (C# and the loader's own tools on the same event).
+- a struct probe (a struct kept from C# survives forced garbage collections, and its root is released afterwards).
 
 ## Finding things to mod
 
-1. Start the game with **ScriptSpy**, **GlobalsEditor** and **InstanceInspector**.
-2. InstanceInspector's search, e.g. "gold" or "damage", finds where the state lives: in Dwarf Eats
-   Mountain it found `oSys.gold` and each unit's `damage`.
+1. Start the game with **Console** and **ScriptSpy**.
+2. The Console's **Objects** tab search (or `where <name>` in the console), e.g. "gold" or "damage",
+   finds where the state lives: in Dwarf Eats Mountain it found `oSys.gold` and each unit's `damage`.
+   Its **Globals** tab covers state kept in globals.
 3. ScriptSpy on a candidate function shows what its arguments mean at runtime.
 4. For the full picture, `tools/re/ghidra/ExportGml.java` decompiles every script and event into
    one `.c` file each, named by symbol.

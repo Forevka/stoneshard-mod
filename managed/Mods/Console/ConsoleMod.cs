@@ -19,6 +19,9 @@ public sealed class ConsoleMod : CoreMod
     private readonly Dictionary<string, (HookHandle Before, HookHandle After)> _hooks = new(StringComparer.Ordinal);
     private readonly Evaluator _eval = new();
     private Inspector? _inspector;
+    private Freezer? _freezer;
+    private ObjectsTab? _objects;
+    private VariableTable? _globals;
     private IDisposable? _gameDrawing;
     private string _input = "";
     private int _historyCursor = -1;
@@ -29,7 +32,13 @@ public sealed class ConsoleMod : CoreMod
     {
         _history.AddRange(Config.Get("history", "").Split('\n', StringSplitOptions.RemoveEmptyEntries));
         Print($"CoreLoader console - {Game.Name}. Type 'help'.", 0.6f, 0.8f, 1f);
-        _inspector = new Inspector(_eval, Print, () => Path.Combine(Directory, "Console", "dumps"));
+        // The Objects tab needs the object table: built a slice per frame from
+        // now, it is ready long before anyone opens the tab.
+        ObjectTable.Start();
+        _freezer = new Freezer(m => Print(m, 0.6f, 0.8f, 1f));
+        _inspector = new Inspector(_eval, _freezer, Print, () => Path.Combine(Directory, "Console", "dumps"));
+        _objects = new ObjectsTab(_inspector, _freezer);
+        _globals = new VariableTable(_eval, _freezer, Print, globals: true);
         _gameDrawing = GameDraw.OnGui(_inspector.DrawGame);
         if (TestHost.Enabled)
             TestHost.Register("console", args => RunForTest(string.Join(' ', args.Select(a =>
@@ -58,6 +67,8 @@ public sealed class ConsoleMod : CoreMod
     public override void OnUpdate()
     {
         _inspector?.Update();
+        // After the game's own Step: what the game changed this frame is set back.
+        _freezer?.Update();
         try { AdvanceCallers(); }
         catch (Exception ex) { Print($"callers search stopped: {ex.Message}", 1f, 0.5f, 0.45f); _callersOf = null; }
     }
@@ -77,7 +88,25 @@ public sealed class ConsoleMod : CoreMod
             _inspector?.Draw();
             UI.EndTabItem();
         }
+        if (UI.BeginTabItem("Objects"))
+        {
+            _objects?.Draw();
+            UI.EndTabItem();
+        }
+        if (UI.BeginTabItem("Globals"))
+        {
+            DrawGlobals();
+            UI.EndTabItem();
+        }
         UI.EndTabBar();
+    }
+
+    private void DrawGlobals()
+    {
+        if (_globals == null || _freezer == null) return;
+        // Reads the game live, like the Inspector: errors show in the tab.
+        UI.Guarded(() => { _freezer.Draw(); _globals.Draw(); },
+            ex => UI.TextColored(1f, 0.5f, 0.45f, $"{ex.GetType().Name}: {ex.Message}"));
     }
 
     private void DrawConsole()
@@ -109,6 +138,7 @@ public sealed class ConsoleMod : CoreMod
         foreach (var (b, a) in _hooks.Values) { b.Dispose(); a.Dispose(); }
         _gameDrawing?.Dispose();
         _inspector?.Release();
+        _freezer?.Clear();
         _eval.Release();
         Config.Set("history", string.Join('\n', _history.TakeLast(100)));
     }
@@ -151,6 +181,9 @@ public sealed class ConsoleMod : CoreMod
             case "objects": Objects(arg); return true;
             case "vars": Vars(arg); return true;
             case "globals": GlobalsCmd(arg); return true;
+            case "where": Where(arg); return true;
+            case "frozen": Frozen(); return true;
+            case "unfreeze": Unfreeze(arg); return true;
             case "hook": Hook(arg); return true;
             case "unhook": Unhook(arg); return true;
             case "inspect": Inspect(arg); return true;
@@ -183,7 +216,9 @@ public sealed class ConsoleMod : CoreMod
             "  find <text>        scripts, events and builtins containing text",
             "  objects [filter]   objects with live instances (all matching with a filter)",
             "  vars <obj>[n]      every variable of an instance, e.g. vars oSys  /  vars o_enemy 2",
-            "  globals [filter]   global variables and their values",
+            "  globals [filter]   global variables and their values (the Globals tab edits and freezes them)",
+            "  where <text>       live instances with a variable named like text (also in the Objects tab)",
+            "  frozen             variables held by a freeze;  unfreeze all",
             "  hook <script>      print each call's arguments and result;  unhook <script|all>;  hooks",
             "  inspect            click an instance in the game, then see it in the Inspector tab",
             "  inspect <obj> [n]  inspect an object's n-th live instance (variables, events, dump)",
@@ -252,6 +287,35 @@ public sealed class ConsoleMod : CoreMod
             if (++shown > 100) { Print("  ... add a filter"); break; }
             Print($"  global.{name} = {Format(v)}");
         }
+    }
+
+    private void Where(string text)
+    {
+        if (text.Length < 2) throw new ConsoleError("where needs at least 2 characters");
+        // Searching before the table is built would scan every object in this
+        // frame, a visible hitch; the table finishes within seconds of startup.
+        if (!ObjectTable.Ready)
+        {
+            ObjectTable.Start();
+            throw new ConsoleError($"object table not ready: {ObjectTable.Status}");
+        }
+        var hits = ObjectsTab.FindVariable(text, 60);
+        foreach (var (o, name, value) in hits) Print($"  {o.Name}[0].{name} = {Format(value)}");
+        Print(hits.Count == 0 ? "no live instance has a variable like that" : $"{hits.Count} match(es)", 0.6f, 0.6f, 0.65f);
+    }
+
+    private void Frozen()
+    {
+        if (_freezer == null || _freezer.Count == 0) { Print("nothing frozen"); return; }
+        foreach (var l in _freezer.Describe()) Print("  " + l);
+    }
+
+    private void Unfreeze(string arg)
+    {
+        if (arg != "all") throw new ConsoleError("unfreeze all  (a single freeze is lifted in the Inspector, Objects or Globals tab)");
+        int n = _freezer?.Count ?? 0;
+        _freezer?.Clear();
+        Print($"unfroze {n} variable(s)");
     }
 
     private void Hook(string symbol)

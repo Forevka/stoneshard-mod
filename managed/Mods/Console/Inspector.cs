@@ -14,34 +14,15 @@ internal sealed class Inspector
 {
     private const int All = -3;   // GML's `all`
 
-    // Built-in instance variables: not listed by variable_instance_get_names,
-    // but often the first thing worth looking at.
-    private static readonly string[] BuiltinVars =
-    {
-        "id", "object_index", "x", "y", "xstart", "ystart", "xprevious", "yprevious",
-        "hspeed", "vspeed", "speed", "direction", "friction", "gravity", "gravity_direction",
-        "sprite_index", "image_index", "image_speed", "image_number", "image_xscale", "image_yscale",
-        "image_angle", "image_alpha", "image_blend", "mask_index", "depth", "layer",
-        "visible", "persistent", "solid", "bbox_left", "bbox_top", "bbox_right", "bbox_bottom",
-    };
-
-    private readonly Evaluator _eval;
     private readonly Action<string, float, float, float> _print;
     private readonly Func<string> _dumpDir;
+    private readonly VariableTable _vars;
 
     private InstanceRef? _target;
     private string _targetObject = "";
     private string _targetLabel = "";
     private readonly List<(InstanceRef Ref, string Label)> _under = new();
-    private List<(string Name, string Type, string Text, bool Container)> _rows = new();
-    private long _rowsAt;
-    private string _filter = "";
-    private bool _showBuiltins = true;
-    private string? _editing;
-    private string _editText = "";
     private string _message = "";
-    // Frozen variables and the (kept) value they are held at.
-    private readonly Dictionary<string, RValue> _frozen = new(StringComparer.Ordinal);
 
     private string? _code;
     private readonly Stack<string> _codeBack = new();
@@ -50,12 +31,15 @@ internal sealed class Inspector
     private readonly List<string> _callers = new();
     private Dictionary<string, List<string>>? _eventsByObject;
 
-    public Inspector(Evaluator eval, Action<string, float, float, float> print, Func<string> dumpDir)
+    public Inspector(Evaluator eval, Freezer freezer, Action<string, float, float, float> print, Func<string> dumpDir)
     {
-        _eval = eval;
         _print = print;
         _dumpDir = dumpDir;
+        _vars = new VariableTable(eval, freezer, print, globals: false);
     }
+
+    /// <summary>What is selected, e.g. "o_enemy (id 100012)"; empty when nothing is.</summary>
+    public string TargetLabel => _target == null ? "" : _targetLabel;
 
     // ------------------------------------------------------------- picking
 
@@ -73,17 +57,25 @@ internal sealed class Inspector
         Select(o.Instance(n));
     }
 
-    public void Select(InstanceRef r)
+    /// <summary>Selects an instance; <paramref name="filter"/> narrows its variables to a name.</summary>
+    public void Select(InstanceRef r, string? filter = null)
     {
         Release(keepPicking: true);
         _target = new InstanceRef(Values.Keep(r.Id));
         _targetObject = ObjectName(r);
-        _targetLabel = $"{_targetObject} (id {ConsoleMod.Format(r.Get("id"))})";
-        _editing = null;
-        Refresh();
+        string id = ConsoleMod.Format(r.Get("id"));
+        _targetLabel = $"{_targetObject} (id {id})";
+        _vars.Show(_target, $"{_targetObject} {id}", filter ?? "");
+        SelectionVersion++;
     }
 
-    /// <summary>Once a frame: takes a pick click, re-applies frozen values, advances a caller search.</summary>
+    /// <summary>
+    /// Changes whenever the selection does, from anywhere (a pick, <c>inspect</c>,
+    /// another tab), so a view that chose an instance can tell it was replaced.
+    /// </summary>
+    public int SelectionVersion { get; private set; }
+
+    /// <summary>Once a frame: takes a pick click, advances a caller search.</summary>
     public void Update()
     {
         try { UpdateUnguarded(); }
@@ -100,19 +92,6 @@ internal sealed class Inspector
         {
             if (click.RightButton) _message = "pick cancelled";
             else TakePick(click.RoomX, click.RoomY);
-        }
-
-        if (_target is { } t && _frozen.Count > 0)
-        {
-            if (!t.Exists) { Unfreeze(null); _message = "the instance is gone; freezes dropped"; }
-            else
-            {
-                foreach (var (name, value) in _frozen.ToList())
-                {
-                    try { t.Set(name, value); }
-                    catch (GmlException ex) { Unfreeze(name); _message = $"unfroze {name}: {ex.Message}"; }
-                }
-            }
         }
 
         if (_callersOf != null && _callerCursor >= 0)
@@ -186,21 +165,10 @@ internal sealed class Inspector
 
     private static List<string> Parents(string obj)
     {
-        var chain = new List<string>();
         // An unresolved name would send GmlObject.Find into a full object scan
         // every couple of seconds, from a tab drawn every frame.
-        if (obj.Length == 0 || obj == "?") return chain;
-        var o = GmlObject.Find(obj);
-        for (int guard = 0; o is { } cur && guard < 32; guard++)
-        {
-            var p = Game.CallBuiltin("object_get_parent", cur.Index);
-            int idx = p.IsNumber ? (int)p.AsReal : p.Kind == RValueKind.Reference ? p.Int32 : -1;
-            if (idx < 0) break;
-            string name = Game.CallBuiltin("object_get_name", idx).ToString();
-            chain.Add(name);
-            o = new GmlObject(idx, name);
-        }
-        return chain;
+        if (obj.Length == 0 || obj == "?") return new List<string>();
+        return GmlObject.Find(obj) is { } o ? o.Ancestors().Select(a => a.Name).ToList() : new List<string>();
     }
 
     private IReadOnlyList<string> Events(string obj)
@@ -235,61 +203,33 @@ internal sealed class Inspector
         return map;
     }
 
-    private void Refresh()
-    {
-        _rowsAt = Environment.TickCount64;
-        var rows = new List<(string, string, string, bool)>();
-        if (_target is not { } t || !t.Exists) { _rows = rows; return; }
-
-        var names = t.VariableNames().OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
-        if (_showBuiltins) names = BuiltinVars.Concat(names).ToList();
-        foreach (var n in names)
-        {
-            if (_filter.Length > 0 && !n.Contains(_filter, StringComparison.OrdinalIgnoreCase)) continue;
-            RValue v;
-            try { v = t.Get(n); } catch (GmlException) { continue; }
-            string type = SafeType(v);
-            bool container = v.Kind is RValueKind.Array || type == "struct";
-            rows.Add((n, type, ConsoleMod.Format(v) + AssetName(n, v), container));
-        }
-        _rows = rows;
-    }
-
-    // The asset behind the index-valued built-ins, by name.
-    private static string AssetName(string variable, RValue v)
-    {
-        string? fn = variable switch
-        {
-            "object_index" => "object_get_name",
-            "sprite_index" or "mask_index" => "sprite_get_name",
-            "layer" => "layer_get_name",
-            _ => null,
-        };
-        if (fn == null || !(v.IsNumber || v.Kind == RValueKind.Reference)) return "";
-        if (v.IsNumber && v.AsReal < 0) return "";
-        try { return $"  ({Game.CallBuiltin(fn, v)})"; }
-        catch (GmlException) { return ""; }
-    }
-
-    private static string SafeType(RValue v)
-    {
-        try { return Gml.TypeOf(v); } catch (GmlException) { return v.Kind.ToString(); }
-    }
-
     // ------------------------------------------------------------------ UI
 
     public void Draw()
     {
         // The tab reads the game live; whatever it trips over is reported in
         // the tab, with any scopes it left open closed.
-        UI.Guarded(DrawUnguarded, ex => UI.TextColored(1f, 0.5f, 0.45f, $"{ex.GetType().Name}: {ex.Message}"));
+        UI.Guarded(DrawUnguarded, ReportError);
+    }
+
+    private static void ReportError(Exception ex) => UI.TextColored(1f, 0.5f, 0.45f, $"{ex.GetType().Name}: {ex.Message}");
+
+    /// <summary>Only the selection's variable table (the Objects tab shows it under its browser).</summary>
+    public void DrawVariables()
+    {
+        UI.Guarded(() =>
+        {
+            if (_target is not { } t) UI.TextDisabled("Nothing selected.");
+            else if (!t.Exists) UI.TextColored(1f, 0.6f, 0.4f, $"{_targetLabel} no longer exists.");
+            else _vars.Draw();
+        }, ReportError);
     }
 
     private void DrawUnguarded()
     {
         if (UI.Button(Input.IsPicking ? "Waiting for a click...##pick" : "Pick in game")) Pick();
         UI.SameLine();
-        if (UI.Button("Refresh")) Refresh();
+        if (UI.Button("Refresh")) _vars.Refresh();
         if (_target != null)
         {
             UI.SameLine();
@@ -311,7 +251,7 @@ internal sealed class Inspector
 
         if (_target is not { } t)
         {
-            UI.TextDisabled("Nothing selected. Pick in game, or type 'inspect <object> [n]' in the console.");
+            UI.TextDisabled("Nothing selected. Pick in game, use the Objects tab, or type 'inspect <object> [n]' in the console.");
             return;
         }
         if (!t.Exists)
@@ -320,9 +260,6 @@ internal sealed class Inspector
             return;
         }
 
-        // Values change while the game runs: the table re-reads twice a second.
-        if (Environment.TickCount64 - _rowsAt > 500) Refresh();
-
         var parents = Parents(_targetObject);
         UI.TextColored(0.6f, 0.85f, 1f, _targetLabel + (parents.Count > 0 ? "  <  " + string.Join("  <  ", parents) : ""));
 
@@ -330,7 +267,7 @@ internal sealed class Inspector
         {
             if (UI.BeginTabItem("Variables"))
             {
-                DrawVariables(t);
+                _vars.Draw();
                 UI.EndTabItem();
             }
             if (UI.BeginTabItem("Code (read-only)"))
@@ -340,98 +277,6 @@ internal sealed class Inspector
             }
             UI.EndTabBar();
         }
-    }
-
-    private void DrawVariables(InstanceRef t)
-    {
-        if (UI.InputText("filter##insp_filter", ref _filter, 64)) Refresh();
-        UI.SameLine();
-        if (UI.Checkbox("built-ins", ref _showBuiltins)) Refresh();
-        UI.TextDisabled($"{_rows.Count} variable(s); edit takes any GML expression (Enter applies); freeze re-applies it every frame");
-
-        UI.BeginChild("##insp_vars", 0f, border: true);
-        foreach (var (name, type, text, container) in _rows)
-        {
-            UI.PushId(name);
-            bool frozen = _frozen.ContainsKey(name);
-            if (UI.Button(_editing == name ? "x" : "edit")) { _editing = _editing == name ? null : name; _editText = type == "string" ? text : StripEllipsis(text); }
-            UI.SameLine();
-            if (container)
-            {
-                // "###": the value is display only; the node's identity is the
-                // name, so a value that changes does not collapse it.
-                if (UI.TreeNode($"{name}  [{type}]  {text}###{name}"))
-                {
-                    try { DrawChildren(t.Get(name), 1); } catch (GmlException ex) { UI.TextDisabled(ex.Message); }
-                    UI.TreePop();
-                }
-            }
-            else if (frozen) UI.TextColored(0.5f, 0.8f, 1f, $"{name} = {text}  [{type}, frozen]");
-            else UI.Text($"{name} = {text}  [{type}]");
-
-            if (_editing == name)
-            {
-                bool enter = UI.InputTextEnter("##edit", ref _editText, 512);
-                bool apply = UI.Button("apply");
-                UI.SameLine();
-                bool freeze = UI.Button(frozen ? "unfreeze" : "freeze");
-                if (enter || apply || freeze) Apply(t, name, freezeToggle: freeze);
-            }
-            UI.PopId();
-        }
-        UI.EndChild();
-    }
-
-    private void Apply(InstanceRef t, string name, bool freezeToggle)
-    {
-        try
-        {
-            if (freezeToggle && _frozen.ContainsKey(name)) { Unfreeze(name); _message = $"unfroze {name}"; return; }
-            var v = _eval.Run(_editText);
-            t.Set(name, v);
-            if (freezeToggle) _frozen[name] = Values.Keep(v);
-            _message = $"{name} = {ConsoleMod.Format(v)}{(freezeToggle ? " (frozen)" : "")}";
-            _print($"inspect: {_targetObject}.{name} = {_editText}", 0.7f, 0.9f, 0.7f);
-            _editing = null;
-            Refresh();
-        }
-        catch (Exception ex)
-        {
-            // Whatever the expression did wrong is the user's to read, never a
-            // reason to disable the console.
-            _message = ex is ConsoleError or GmlException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
-        }
-    }
-
-    private static string StripEllipsis(string s) => s.Replace("…", "");
-
-    private static void DrawChildren(RValue v, int depth)
-    {
-        if (depth > 5) { UI.TextDisabled("…"); return; }
-        if (v.Kind == RValueKind.Array)
-        {
-            int n = Gml.ArrayLength(v);
-            for (int i = 0; i < n && i < 200; i++) DrawChild($"[{i}]", Gml.ArrayGet(v, i), depth);
-            if (n > 200) UI.TextDisabled($"… {n - 200} more");
-        }
-        else if (Gml.TypeOf(v) == "struct")
-        {
-            foreach (var m in Gml.StructNames(v).Take(200)) DrawChild(m, Gml.StructGet(v, m), depth);
-        }
-    }
-
-    private static void DrawChild(string label, RValue v, int depth)
-    {
-        string type = SafeType(v);
-        if (v.Kind == RValueKind.Array || type == "struct")
-        {
-            if (UI.TreeNode($"{label}  [{type}]  {ConsoleMod.Format(v)}###{label}"))
-            {
-                DrawChildren(v, depth + 1);
-                UI.TreePop();
-            }
-        }
-        else UI.Text($"{label} = {ConsoleMod.Format(v)}  [{type}]");
     }
 
     // ---------------------------------------------------------------- code
@@ -512,7 +357,7 @@ internal sealed class Inspector
         if (parents.Count > 0) sb.AppendLine("parents: " + string.Join(" < ", parents));
         sb.AppendLine();
         sb.AppendLine("## variables");
-        foreach (var n in BuiltinVars.Concat(t.VariableNames().OrderBy(x => x, StringComparer.OrdinalIgnoreCase)))
+        foreach (var n in VariableTable.BuiltinVars.Concat(t.VariableNames().OrderBy(x => x, StringComparer.OrdinalIgnoreCase)))
         {
             try { DumpValue(sb, n, t.Get(n), 0); } catch (GmlException ex) { sb.AppendLine($"{n} = <{ex.Message}>"); }
         }
@@ -535,7 +380,7 @@ internal sealed class Inspector
     private static void DumpValue(StringBuilder sb, string name, RValue v, int depth)
     {
         string pad = new(' ', depth * 2);
-        string type = SafeType(v);
+        string type = VariableTable.SafeType(v);
         if (depth < 3 && v.Kind == RValueKind.Array)
         {
             int n = Gml.ArrayLength(v);
@@ -629,22 +474,17 @@ internal sealed class Inspector
         Game.CallBuiltin("draw_text", x1, Math.Max(0, y1 - 16), label);
     }
 
-    private void Unfreeze(string? name)
-    {
-        foreach (var n in name == null ? _frozen.Keys.ToList() : new List<string> { name })
-        {
-            if (!_frozen.Remove(n, out var v)) continue;
-            Values.Free(ref v);
-        }
-    }
-
-    /// <summary>Drops the selection (and its freezes); cancels pick mode unless told not to.</summary>
+    /// <summary>
+    /// Drops the selection; cancels pick mode unless told not to. Its freezes
+    /// stay: they belong to the console's freezer, not to what is on screen.
+    /// </summary>
     public void Release(bool keepPicking = false)
     {
         if (!keepPicking && Input.IsPicking) Input.CancelPick();
-        Unfreeze(null);
+        _vars.Show(null, "");
         if (_target is { } t) { var id = t.Id; Values.Free(ref id); }
         _target = null;
+        SelectionVersion++;
     }
 
     internal static string Num(double d) => d.ToString("G15", CultureInfo.InvariantCulture);

@@ -17,7 +17,7 @@ SET = {v: k for k, v in R.table().items()}
 
 
 def main(names):
-    objt = json.load(open('objt_indexed.json'))
+    objt = json.load(open(R.cache_path('objt_indexed.json')))
     by_name = {n: i for i, n in enumerate(objt) if n}
 
     for name in names:

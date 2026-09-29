@@ -4,7 +4,6 @@
 #include "symbols.h"
 
 #include <windows.h>
-#include <intrin.h>
 #include <atomic>
 #include <cstring>
 #include <deque>
@@ -21,15 +20,7 @@ namespace {
 using ScriptFn = gml::RValue* (*)(void*, void*, gml::RValue*, int, gml::RValue**);
 using EventFn  = void (*)(void*, void*);
 
-struct NativeSub {
-    std::atomic<NativeHandler> before{nullptr};
-    std::atomic<NativeHandler> after{nullptr};
-    std::atomic<void*>         ctx{nullptr};
-};
-
 struct Hook {
-    NativeSub          natives[kMaxNative];
-    std::atomic<int>   nativeCount{0};
     int                id       = -1;
     Kind               kind     = Kind::Script;
     void*              target   = nullptr;
@@ -116,38 +107,12 @@ struct WritableArena {
 
 // ---- dispatch ----------------------------------------------------------------
 
-// The game code that made the call currently being dispatched (per thread, and
-// saved/restored around each dispatch because hooked calls nest).
-thread_local const void* g_caller = nullptr;
-
-// Restores g_caller however the dispatch ends - including a GML exception
-// unwinding through it to an enclosing try.
-struct CallerScope {
-    const void* saved;
-    explicit CallerScope(const void* now) : saved(g_caller) { g_caller = now; }
-    ~CallerScope() { g_caller = saved; }
-    CallerScope(const CallerScope&) = delete;
-    CallerScope& operator=(const CallerScope&) = delete;
-};
-
-void RunNatives(Hook* h, Call* c, bool after) {
-    const int n = h->nativeCount.load(std::memory_order_acquire);
-    for (int i = 0; i < n; ++i) {
-        NativeSub& s = h->natives[i];
-        NativeHandler fn = (after ? s.after : s.before).load(std::memory_order_acquire);
-        if (fn) fn(c, s.ctx.load(std::memory_order_relaxed));
-    }
-}
-
-// Natives run before managed handlers on the way in and after them on the way
-// out, so the loader's own bookkeeping always sees the game's view.
-void Phase(Hook* h, Call* c, ManagedDispatch managed, bool after) {
-    if (!after) RunNatives(h, c, false);
-    if (managed) {
-        gml::ManagedScope inManaged;   // no GML exception may cross these frames
-        managed(c);
-    }
-    if (after) RunNatives(h, c, true);
+// One phase (before or after) of a call: hands it to the managed dispatcher
+// when mods listen on this hook.
+void Phase(Call* c, ManagedDispatch managed) {
+    if (!managed) return;
+    gml::ManagedScope inManaged;   // no GML exception may cross these frames
+    managed(c);
 }
 
 // Nested dispatches on this thread. Past kMaxDepth (a handler calling the
@@ -243,7 +208,7 @@ gml::RValue* RunScriptOriginal(Hook* h, Call* c, ManagedDispatch managed) {
             ret = reinterpret_cast<ScriptFn>(h->original)(c->self, c->other, c->result, c->argc, c->args);
     } catch (...) {
         c->phase = kAfter;
-        Phase(h, c, managed, true);
+        Phase(c, managed);
         throw;
     }
     return ret;
@@ -254,7 +219,7 @@ void RunEventOriginal(Hook* h, Call* c, ManagedDispatch managed) {
         if (!c->skip) reinterpret_cast<EventFn>(h->original)(c->self, c->other);
     } catch (...) {
         c->phase = kAfter;
-        Phase(h, c, managed, true);
+        Phase(c, managed);
         throw;
     }
 }
@@ -264,11 +229,6 @@ gml::RValue* ScriptDispatch(void* self, void* other, gml::RValue* result, int ar
     // No NoteSelf here: a script's self can be a struct (a bound method, a
     // `with` over a struct), which is not a CInstance. Only object events,
     // whose self always is one, feed CurrentSelf().
-    //
-    // The thunk called us from inside its 0x38-byte frame, so the game's own
-    // return address sits just above ours plus that frame.
-    CallerScope scope(*reinterpret_cast<void* const*>(
-        static_cast<const char*>(_AddressOfReturnAddress()) + 8 + 0x38));
 
     DepthScope depth;
     if (t_depth > kMaxDepth) {
@@ -286,19 +246,17 @@ gml::RValue* ScriptDispatch(void* self, void* other, gml::RValue* result, int ar
     }
     Call c{self, other, result, args, argc, kBefore, 0, h->id};
     ActiveScope active(&c);
-    Phase(h, &c, managed, false);
+    Phase(&c, managed);
 
     gml::RValue* ret = RunScriptOriginal(h, &c, managed);
 
     c.phase = kAfter;
-    Phase(h, &c, managed, true);
+    Phase(&c, managed);
     return ret;
 }
 
 void EventDispatch(void* self, void* other, Hook* h) {
     gml::NoteSelf(self);
-    // The event thunk tail-jumped here, so our return address is the game's.
-    CallerScope scope(*static_cast<void* const*>(_AddressOfReturnAddress()));
 
     DepthScope depth;
     if (t_depth > kMaxDepth) {
@@ -310,12 +268,12 @@ void EventDispatch(void* self, void* other, Hook* h) {
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
     Call c{self, other, nullptr, nullptr, 0, kBefore, 0, h->id};
-    Phase(h, &c, managed, false);
+    Phase(&c, managed);
 
     RunEventOriginal(h, &c, managed);
 
     c.phase = kAfter;
-    Phase(h, &c, managed, true);
+    Phase(&c, managed);
 }
 
 void* EmitThunk(Hook* h) {
@@ -396,8 +354,8 @@ int InstallImpl(void* target, Kind kind, bool queued) {
 
     const MH_STATUS cs = MH_CreateHook(target, h.thunk, &h.original);
     if (cs != MH_OK) {
-        // MH_ERROR_ALREADY_CREATED means one of the older single-purpose
-        // detours owns this target; the engine cannot share it.
+        // MH_ERROR_ALREADY_CREATED means some other MinHook detour in this
+        // process already owns the target; the engine cannot share it.
         Logf("[!] hooks: MH_CreateHook(%p) failed: %s", target, MH_StatusToString(cs));
         g_hooks.pop_back();
         --g_used;
@@ -453,67 +411,6 @@ int Count() {
     std::lock_guard<std::mutex> lock(g_lock);
     return static_cast<int>(g_hooks.size());
 }
-
-int AddNative(void* target, Kind kind, NativeHandler before, NativeHandler after, void* ctx) {
-    const int id = Install(target, kind);
-    if (id < 0) return -1;
-    std::lock_guard<std::mutex> lock(g_lock);
-    Hook& h = g_hooks[id];
-    const int n = h.nativeCount.load(std::memory_order_relaxed);
-    bool placed = false;
-    // Reuse a slot freed by RemoveNative before growing.
-    for (int i = 0; i < n && !placed; ++i) {
-        NativeSub& s = h.natives[i];
-        if (!s.before.load() && !s.after.load()) {
-            s.ctx.store(ctx);
-            s.before.store(before, std::memory_order_release);
-            s.after.store(after, std::memory_order_release);
-            placed = true;
-        }
-    }
-    if (!placed) {
-        if (n >= kMaxNative) {
-            // Freed slots are reused first, so a full table means four live users.
-            Logf("[!] hooks: #%d already has %d native users", id, kMaxNative);
-            return -1;
-        }
-        NativeSub& s = h.natives[n];
-        s.ctx.store(ctx);
-        s.before.store(before);
-        s.after.store(after);
-        h.nativeCount.store(n + 1, std::memory_order_release);   // publish last
-    }
-    ++h.nativeUsers;
-    // Whichever path placed the handler, the detour must be attached: a hook
-    // detached when its previous users left would otherwise never fire again.
-    if (!h.enabled) {
-        if (MH_EnableHook(h.target) == MH_OK) h.enabled = true;
-        else Logf("[!] hooks: could not re-attach #%d", id);
-    }
-    return id;
-}
-
-void RemoveNative(int id, NativeHandler before, NativeHandler after, void* ctx) {
-    std::lock_guard<std::mutex> lock(g_lock);
-    Hook* h = ById(id);
-    if (!h) return;
-    const int n = h->nativeCount.load(std::memory_order_relaxed);
-    for (int i = 0; i < n; ++i) {
-        NativeSub& s = h->natives[i];
-        if (s.before.load() == before && s.after.load() == after && s.ctx.load() == ctx) {
-            s.before.store(nullptr, std::memory_order_release);
-            s.after.store(nullptr, std::memory_order_release);
-            // Nobody left - no loader tool and no mod: let the function run
-            // untouched again.
-            if (--h->nativeUsers == 0 && !h->managed.load() && h->enabled &&
-                MH_DisableHook(h->target) == MH_OK)
-                h->enabled = false;
-            return;
-        }
-    }
-}
-
-const void* CurrentCaller() { return g_caller; }
 
 int DispatchDepth() { return t_depth; }
 

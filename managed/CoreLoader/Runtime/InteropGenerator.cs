@@ -107,7 +107,8 @@ internal static unsafe class InteropGenerator
         if (_waitFrames < 1800)
         {
             if (Game.BuiltinCount == 0 || _waitFrames < 120) return;
-            if (_waitFrames % 30 != 0 || !Game.AssetsLoaded()) return;
+            // As mods' start asks it: a check that faults means "not yet".
+            if (_waitFrames % 30 != 0 || !Game.AssetsLoaded(whenUnsure: false)) return;
         }
         _done = true;
 
@@ -121,7 +122,7 @@ internal static unsafe class InteropGenerator
                 return;
             }
             _clock = System.Diagnostics.Stopwatch.StartNew();
-            _degraded = _waitFrames >= 1800 && !Game.AssetsLoaded();
+            _degraded = _waitFrames >= 1800 && !Game.AssetsLoaded(whenUnsure: false);
             Status = "collecting from the game...";
             _job = Collect().GetEnumerator();
             RunSlice();
@@ -142,6 +143,8 @@ internal static unsafe class InteropGenerator
             while (System.Diagnostics.Stopwatch.GetTimestamp() < deadline)
             {
                 if (!_job!.MoveNext()) { _job = null; return; }
+                // false: the job is waiting on something else's frames.
+                if (!_job.Current) return;
             }
         }
         catch (Exception ex)
@@ -178,7 +181,7 @@ internal static unsafe class InteropGenerator
     }
 
     // The game-thread part, as steps: every `yield` is a point where the frame
-    // may end and the rest continue next frame.
+    // may end and the rest continue next frame; `yield return false` ends it.
     private static IEnumerable<bool> Collect()
     {
         var snap = new Snapshot();
@@ -189,28 +192,34 @@ internal static unsafe class InteropGenerator
         snap.Starts = snap.Addresses.Values.Distinct().OrderBy(a => a).ToArray();
         yield return true;
 
-        // Objects: indices are dense from 0; stop after a run of misses.
-        int misses = 0;
-        for (int i = 0; misses < 64 && i < 100_000; i++)
+        // Objects come from the shared object table, so the session scans them
+        // once. It builds a slice per frame; wait for it (a frame at a time)
+        // rather than scanning here again. Only frames in which the table
+        // actually worked count toward the ~10 s allowance: it may still be
+        // waiting for the game's assets or for mods to start, and that wait
+        // must not use the allowance up and force the scan into one frame. A
+        // minute overall bounds a table that never gets going. Past either,
+        // GmlObject.All finishes the names on the spot, and an empty answer
+        // means the runtime could not list them: objects are then known only
+        // by their events, and the run is marked degraded.
+        ObjectTable.Start();
+        var working = new System.Diagnostics.Stopwatch();
+        var overall = System.Diagnostics.Stopwatch.StartNew();
+        while (!ObjectTable.Ready && working.Elapsed < TimeSpan.FromSeconds(10) &&
+               overall.Elapsed < TimeSpan.FromMinutes(1))
         {
-            bool exists;
-            string name = "";
-            try
-            {
-                exists = Game.CallBuiltin("object_exists", i).AsBool;
-                if (exists) name = Game.CallBuiltin("object_get_name", i).ToString();
-            }
-            catch (GmlException ex)
-            {
-                Log.Warning($"interop: object scan stopped: {ex.Message}");
-                _degraded = true;
-                break;
-            }
-            if (!exists) { misses++; continue; }
-            misses = 0;
-            snap.Objects[name] = new ObjectInfo(name, i, new());
-            if ((i & 127) == 0) yield return true;
+            // The table ticks before interop each frame, so this reflects the
+            // frame that just ran; the stopwatch runs across frames it worked in.
+            if (ObjectTable.Advancing) working.Start(); else working.Stop();
+            yield return false;
         }
+        var objects = GmlObject.All();
+        if (objects.Count == 0)
+        {
+            Log.Warning($"interop: the object table is empty ({ObjectTable.Status}); objects are listed from their events only");
+            _degraded = true;
+        }
+        foreach (var o in objects) snap.Objects[o.Name] = new ObjectInfo(o.Name, o.Index, new());
         foreach (var s in Game.Symbols.Where(s => s.IsObjectEvent))
         {
             if (!SplitEvent(s.Name, out var obj, out var member)) continue;

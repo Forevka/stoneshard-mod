@@ -105,6 +105,21 @@ dotnet build managed\CoreLoader.sln -c Release                 # runtime and mod
 tools\deploy-coreloader.ps1 -GameDir "<game folder>" -Mods Console,StoneshardCheats
 ```
 
+The game locks `version.dll` and the runtime while it runs. `-Live` installs anyway: each locked
+file is renamed to `*.old` (or `*.<timestamp>.old` while an earlier one is still locked) and the new
+one takes its place, to be picked up on the next launch. Leftover `*.old` files are deleted on the
+next deploy that can. The runtime is copied before `version.dll`, so a failed deploy never pairs a
+new `version.dll` with an old runtime; without `-Live`, a running game stops the deploy before it
+copies anything. `-Live` only defers the native and runtime files: mods copied into `Mods\` are
+hot-reloaded at once by the runtime already running, whatever its version.
+The loader writes its log to `<game>\CoreLoader\Logs`; set `CORELOADER_DATA_DIR` to move it.
+
+`tools\re\` holds the static reverse-engineering scripts used to study a game's exe offline
+(xref indexes, callers and callees, `data.win` assets, the builtin table, a Ghidra export). Point
+them at a game with `--exe "<game>\Game.exe"` or the `RE_GAME_EXE` variable; they need Python with
+`numpy` and `capstone`. Their derived caches (xref indexes, the script, object and builtin tables) go
+to `tools\re\cache\<exe name>\`, one folder per game, or to `RELIB_CACHE` if it is set.
+
 To uninstall, delete `version.dll` and the `CoreLoader` folder from the game directory. The cheat
 mods modify live game state: keep your own backups of characters you care about.
 

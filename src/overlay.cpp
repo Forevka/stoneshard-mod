@@ -1,4 +1,7 @@
-// ImGui lifecycle, the Hello World window, and the window-procedure hook.
+// The in-game overlay: ImGui lifecycle on the game's D3D11 swap chain, the
+// CoreLoader window (Mods, Symbols and Status tabs), pick mode, the per-frame
+// tick that runs the self-tests and the managed runtime, and the
+// window-procedure hook.
 //
 // The WndProc hook lives here rather than in hooks.cpp because it is tightly
 // coupled to the ImGui context it feeds.
@@ -227,10 +230,11 @@ void DrawStatusTab() {
     if (gml::Ready()) {
         if (gml::AbiProven())
             ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.45f, 1.0f),
-                               "GML bridge OK - ABI proven by live call");
+                               "GML bridge OK - string round-trip proven "
+                               "(game calls: see the builtins self-test in the log)");
         else
             ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f),
-                               "GML bridge resolved - ABI self-test pending/failed");
+                               "GML bridge resolved - string round-trip pending/failed");
     } else {
         ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
                            "GML bridge unavailable: %s", gml::Status());

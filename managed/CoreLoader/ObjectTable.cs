@@ -65,8 +65,8 @@ public static class ObjectTable
         : $"reading the object table ({_next} scanned)...";
 
     /// <summary>
-    /// Starts building the table over the coming frames (from the moment mods
-    /// start, if called earlier). Later calls do nothing.
+    /// Starts building the table over the coming frames, once the game has
+    /// loaded its assets (at the latest, when mods start). Later calls do nothing.
     /// </summary>
     public static void Start() => _wanted = true;
 
@@ -125,12 +125,32 @@ public static class ObjectTable
     internal static int AssetIndex(RValue v) =>
         v.IsNumber ? (int)v.AsReal : v.Kind == RValueKind.Reference ? (int)(v.Int64 & 0xFFFFFFFF) : -1;
 
+    /// <summary>
+    /// The last <see cref="Tick"/> worked on the table: it was requested and the
+    /// game can answer. False while it waits for the game's assets, so a caller
+    /// waiting on the table can tell a slow build from one that has not begun.
+    /// </summary>
+    internal static bool Advancing { get; private set; }
+
+    // Set once the game answered that its assets are loaded; never re-asked.
+    private static bool _assetsSeen;
+
     /// <summary>Called every frame on the game thread: one budgeted slice of the build.</summary>
     internal static void Tick()
     {
-        // Not before the game has its assets (mods start at the same moment):
-        // a table read too early comes back empty.
-        if (!_wanted || Ready || !ModManager.Started) return;
+        Advancing = false;
+        if (!_wanted || Ready) return;
+        // Not before the game has its assets: a table read too early comes
+        // back empty. Mods starting means they are (or the wait timed out);
+        // before that, the runtime's own users (interop) may ask, so the check
+        // is made here the way mods' start makes it, a fault counting as "not yet".
+        if (!ModManager.Started)
+        {
+            if (!_assetsSeen)
+                _assetsSeen = Game.IsGmlReady && Game.BuiltinCount > 0 && Game.AssetsLoaded(whenUnsure: false);
+            if (!_assetsSeen) return;
+        }
+        Advancing = true;
         Step(BudgetMs);
     }
 

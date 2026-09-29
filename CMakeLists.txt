@@ -3,22 +3,14 @@ cmake_minimum_required(VERSION 3.21)
 # Static MSVC runtime so the DLL has no VC++ redist dependency inside the game process.
 cmake_policy(SET CMP0091 NEW)
 
-project(stoneshard_mod LANGUAGES C CXX)   # C is needed for MinHook
+project(coreloader LANGUAGES C CXX)   # C is needed for MinHook
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-# Where the built version.dll gets deployed by the explicit `deploy` target.
-# Override on the command line for your own install:
-#     cmake -B build -DSTONESHARD_DIR="C:/path/to/Stoneshard"
-# or set the STONESHARD_DIR environment variable before configuring.
-if(DEFINED ENV{STONESHARD_DIR})
-    set(_ss_default "$ENV{STONESHARD_DIR}")
-else()
-    set(_ss_default "C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
-endif()
-set(STONESHARD_DIR "${_ss_default}" CACHE PATH "Stoneshard install directory")
+# Installing into a game is tools/deploy-coreloader.ps1's job (-Live while the
+# game runs); the build never touches a game folder.
 
 # ---------------------------------------------------------------- dependencies
 include(FetchContent)
@@ -59,7 +51,7 @@ set(IMGUI_SOURCES
 )
 
 # ---------------------------------------------------------------------- target
-add_library(stoneshard_mod SHARED
+add_library(coreloader SHARED
     src/dllmain.cpp
     src/proxy.cpp
     src/hooks.cpp
@@ -76,17 +68,17 @@ add_library(stoneshard_mod SHARED
     ${MINHOOK_SOURCES}
 )
 
-target_include_directories(stoneshard_mod PRIVATE
+target_include_directories(coreloader PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
     ${minhook_SOURCE_DIR}/include
 )
 
-target_link_libraries(stoneshard_mod PRIVATE d3d11 dxgi)
+target_link_libraries(coreloader PRIVATE d3d11 dxgi)
 
 # Log + imgui.ini live here, NEVER in the game folder.
-target_compile_definitions(stoneshard_mod PRIVATE
+target_compile_definitions(coreloader PRIVATE
     MOD_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     WIN32_LEAN_AND_MEAN
     NOMINMAX
@@ -95,37 +87,12 @@ target_compile_definitions(stoneshard_mod PRIVATE
 
 # The .def file maps the real version.dll export names onto our Proxy_* functions,
 # which sidesteps the dllimport/dllexport redefinition conflict with the SDK headers.
-target_link_options(stoneshard_mod PRIVATE
+target_link_options(coreloader PRIVATE
     "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/src/version.def"
 )
 
 # Must be named exactly version.dll to be picked up ahead of the system one.
-set_target_properties(stoneshard_mod PROPERTIES
+set_target_properties(coreloader PROPERTIES
     OUTPUT_NAME "version"
     PREFIX ""
-)
-
-# ---------------------------------------------------------------------- deploy
-# Deliberately a separate target, not a post-build step: the game folder is only
-# ever touched when you explicitly ask for it.
-add_custom_target(deploy
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:stoneshard_mod>
-            "${STONESHARD_DIR}/version.dll"
-    DEPENDS stoneshard_mod
-    COMMENT "Deploying version.dll -> ${STONESHARD_DIR}"
-    VERBATIM
-)
-# `deploy` fails while the game is running: Windows will not overwrite a loaded
-# DLL. `deploy-live` goes through tools/deploy.ps1, which moves the live file
-# aside instead - allowed even when locked - so a build can be staged at any
-# time and picked up on the next launch.
-add_custom_target(deploy-live
-    COMMAND powershell -NoProfile -ExecutionPolicy Bypass
-            -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/deploy.ps1"
-            -Source "$<TARGET_FILE:stoneshard_mod>"
-            -GameDir "${STONESHARD_DIR}"
-    DEPENDS stoneshard_mod
-    COMMENT "Staging version.dll -> ${STONESHARD_DIR} (safe while the game runs)"
-    VERBATIM
 )

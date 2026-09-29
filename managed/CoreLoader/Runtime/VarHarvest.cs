@@ -7,8 +7,8 @@ namespace CoreLoader.Runtime;
 ///
 /// A YYC exe does not record which variables an object has - they come into
 /// being as its code assigns them - so the only reliable source is live
-/// instances. The harvester walks the object list a slice per frame (never a
-/// hitch), reads the variable names of each object's first live instance, and
+/// instances. The harvester walks the shared object table (<see cref="ObjectTable"/>)
+/// a slice per frame (never a hitch), reads the variable names of each object's first live instance, and
 /// accumulates them across sessions in Interop/&lt;Game&gt;.vars.json. When it
 /// learns something new, the interop is marked stale so the next launch (or
 /// the Regenerate button) emits Objects.&lt;obj&gt;.Vars.&lt;name&gt; for it.
@@ -44,15 +44,14 @@ internal static class VarHarvest
 
         if (_objects == null)
         {
-            // The object table is fixed for the life of the game; list it once -
-            // but only a list that has something in it.
-            try
-            {
-                var all = GmlObject.All();
-                if (all.Count == 0) return;
-                _objects = all;
-            }
-            catch (GmlException) { return; }
+            // The shared object table, built a slice per frame: asking for it
+            // before it is done would finish the scan in this frame, a hitch.
+            // It is fixed for the life of the game, so it is taken once.
+            ObjectTable.Start();
+            if (!ObjectTable.Ready) return;
+            var all = GmlObject.All();
+            if (all.Count == 0) return;
+            _objects = all;
         }
 
         if (_cursor >= _objects.Count)

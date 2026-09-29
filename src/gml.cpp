@@ -24,7 +24,6 @@
 
 #include <windows.h>
 #include <intrin.h>
-#include <MinHook.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -933,13 +932,6 @@ const char* ExplainFailure(unsigned long code, void* self) {
     return g_lastError;
 }
 
-bool Call(void* func, RValue* result, RValue** args, int argc) {
-    // Borrow whatever instance the game last ran code as, since a null self
-    // would fault.
-    void* self = CurrentSelf();
-    return CallAs(func, result, args, argc, self, self);
-}
-
 bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, void* other) {
     if (!g_ready || !func || !result) return false;
 
@@ -960,29 +952,17 @@ bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, voi
     return false;
 }
 
-bool CallByName(const std::string& symbol, RValue* result, RValue** args, int argc) {
-    void* fn = sym::Find(symbol);
-    if (!fn) {
-        Logf("[!] gml: symbol not found: %s", symbol.c_str());
-        return false;
-    }
-    return Call(fn, result, args, argc);
-}
-
 namespace {
 bool g_abiTested = false;
 bool g_abiProven = false;
 } // namespace
 
-bool IsEventSymbol(const std::string& symbol) {
-    return symbol.rfind("gml_Object_", 0) == 0 || symbol.rfind("gml_RoomCC_", 0) == 0;
-}
-
 bool CallEvent(void* func, void* self, void* other) {
     if (!g_ready || !func) return false;
 
-    // No instance given: fall back the same way Call() does, since an event
-    // always runs as some instance and a null self would fault immediately.
+    // No instance given: borrow whatever instance the game last ran code as,
+    // since an event always runs as some instance and a null self would fault
+    // immediately.
     if (!self) self = CurrentSelf();
     if (!self) return false;
 
@@ -1071,67 +1051,24 @@ void AbiSelfTest() {
 
     Logf("gml: --- ABI self-test (self=%p) ---", CurrentSelf());
 
-    int passed = 0;
-    int ran    = 0;
-
-    // The two script probes are Stoneshard scripts. In another YYC game they
-    // simply do not exist, which is "not probed", not "failed" - the verdict
-    // is taken over the checks that could actually run.
-
-    // 1) Zero-argument call. Only probes that do not need a loaded character,
-    //    since at the main menu there is no player and game-state lookups fault.
-    if (sym::Find("gml_Script_scr_console_sethp_help")) {
-        ++ran;
-        RValue result{};
-        if (CallByName("gml_Script_scr_console_sethp_help", &result, nullptr, 0)) {
-            Logf("gml:   no-arg call        -> kind=%d (%s)",
-                 result.kind, ToString(result).c_str());
-            if (result.kind != kUnset) ++passed;
-        } else {
-            Logf("gml:   no-arg call        -> FAILED");
-        }
-    }
-
-    // 2) Argument marshalling, using a pure numeric helper so nothing in the
-    //    game's state is involved: approach(0, 10, 3) must return 3.
-    if (sym::Find("gml_Script_scr_approach")) {
-        ++ran;
-        RValue a{}, b{}, c{};
-        SetReal(a, 0.0);
-        SetReal(b, 10.0);
-        SetReal(c, 3.0);
-        RValue* args[3] = {&a, &b, &c};
-
-        RValue result{};
-        if (CallByName("gml_Script_scr_approach", &result, args, 3)) {
-            Logf("gml:   approach(0,10,3)   -> kind=%d value=%s",
-                 result.kind, ToString(result).c_str());
-            if (result.kind == kReal && result.real == 3.0) ++passed;
-        } else {
-            Logf("gml:   approach(0,10,3)   -> FAILED");
-        }
-    }
-
-    // 3) String construction round-trip through the game's own allocator.
+    // The string round-trip is the one check every game can run: it proves the
+    // game's allocator and string layout end to end. Calls into the game are
+    // proven separately by the builtins self-test.
+    bool passed = false;
     {
-        ++ran;
-        static const char kProbe[] = "stoneshard-mod";   // must outlive the call
+        static const char kProbe[] = "coreloader";   // must outlive the call
         RValue s{};
         if (SetString(s, kProbe)) {
             const std::string back = ToString(s);
             Logf("gml:   string round-trip  -> kind=%d value=\"%s\"", s.kind, back.c_str());
-            if (back == kProbe) ++passed;
+            passed = back == kProbe;
         } else {
             Logf("gml:   string round-trip  -> FAILED");
         }
     }
 
-    // Stoneshard keeps its old bar (two of three); with only the string check
-    // available, that one has to pass.
-    g_abiProven = ran >= 3 ? passed >= 2 : passed == ran;
-    Logf("gml: --- ABI self-test %s (%d/%d checks%s) ---",
-         g_abiProven ? "PASSED" : "FAILED", passed, ran,
-         ran < 3 ? "; script probes absent in this game" : "");
+    g_abiProven = passed;
+    Logf("gml: --- ABI self-test %s (%d/1 checks) ---", g_abiProven ? "PASSED" : "FAILED", passed ? 1 : 0);
 }
 
 // ------------------------------------------------------------ id -> instance

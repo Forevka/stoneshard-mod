@@ -8,17 +8,14 @@ namespace StoneshardCheats;
 /// is a walk over live instances (instance_number + instance_find) rather than a
 /// table of monster names, and cannot go out of date. That walk answers with
 /// instance references rather than CInstance pointers: enough to read and write
-/// fields and to destroy the instance, not enough to run a script as the enemy.
-/// The native tool also tracked pointers from o_enemy's Step event, but the only
-/// action left that needed one was the argument-less instance_destroy, and the
-/// id form does the same job without a hook that runs once per enemy per frame.
+/// fields and to destroy the instance, which is all the tab needs.
 /// </remarks>
 internal sealed class EnemiesTab : Tab
 {
     private const string ObjectName = "o_enemy";
 
-    // The probe dumps at most this many variables to the log, as the native
-    // Vars button did; the on-screen list is clipped instead, so it shows all.
+    // The probe logs at most this many variables; the on-screen list is
+    // clipped instead, so it shows all.
     private const int LogLimit = 300;
 
     /// <summary>

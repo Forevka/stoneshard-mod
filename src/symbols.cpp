@@ -206,10 +206,6 @@ void* Find(const std::string& name) {
     return it == g_index.end() ? nullptr : it->second;
 }
 
-void* FindScript(const std::string& shortName) {
-    return Find("gml_Script_" + shortName);
-}
-
 std::vector<const Entry*> Search(const std::string& needle, std::size_t limit) {
     std::string lower = needle;
     std::transform(lower.begin(), lower.end(), lower.begin(),

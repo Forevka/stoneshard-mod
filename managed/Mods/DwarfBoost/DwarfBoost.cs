@@ -11,8 +11,8 @@ namespace DwarfBoost;
 /// The game keeps its economy on the oSys controller (gold, mithril, soul) and
 /// every unit - miners, flamers, harpoons, cannons, all children of parDwarf -
 /// carries its own `damage`, recomputed by the game from baseDamage and its
-/// modifiers whenever an upgrade changes them. Found with the Instance Inspector
-/// and ReflectionProbe; nothing here is hardcoded to an address.
+/// modifiers whenever an upgrade changes them. Found with the Console's object
+/// search; nothing here is hardcoded to an address.
 ///
 ///  * Gold income multiplier: each frame's rise in oSys.gold is scaled. Drops
 ///    (spending) are left alone, so purchases cost what they say.

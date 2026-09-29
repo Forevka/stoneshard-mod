@@ -1,14 +1,12 @@
-import os
-"""data.win chunk reader that preserves asset INDEX alignment (no skipped slots)."""
-import struct, os, json, sys
+"""data.win chunk reader that preserves asset INDEX alignment (no skipped slots).
 
-# Game install. Override with the STONESHARD_DIR environment variable;
-# the default is the usual Steam location.
-_SS = os.environ.get("STONESHARD_DIR",
-                     r"C:/Program Files (x86)/Steam/steamapps/common/Stoneshard")
+datawin.py [--exe <game.exe>] [object name ...] -- lists the chunks, writes
+objt_indexed.json (object names by index) into the per-game cache, and prints the index of each name.
+"""
+import struct, json, sys
 
-
-P = os.path.join(_SS, "data.win")
+# The game under study: --exe <path> or RE_GAME_EXE (see gamepath.py).
+from gamepath import DATAWIN as P, cache_path
 d = open(P, 'rb').read()
 
 CH = {}
@@ -45,8 +43,7 @@ if __name__ == '__main__':
         ns = asset_names(c)
         print('%s: %d slots, %d named' % (c, len(ns), sum(1 for x in ns if x)))
     objt = asset_names('OBJT')
-    json.dump(objt, open('objt_indexed.json', 'w'), indent=0)
-    for want in ('o_player', 'o_player_AI', 'o_player_corpse', 'o_abstract_player',
-                 'c_player_turn_trigger', 'o_player_observer', 'o_pause', 'o_control'):
+    json.dump(objt, open(cache_path('objt_indexed.json'), 'w'), indent=0)
+    for want in sys.argv[1:]:
         idxs = [i for i, x in enumerate(objt) if x == want]
         print('   %-24s index %s' % (want, idxs))
