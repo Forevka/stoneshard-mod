@@ -149,10 +149,9 @@ void Execute(const std::string& line) {
         return;
     }
 
-    // Build the argument list. The string buffers must outlive the call, which
-    // is why `storage` is kept alive for the whole scope.
+    // Build the argument list. A script may keep a string argument (store it in
+    // a variable), so its characters are interned for the life of the process.
     const std::size_t argc = tokens.size() - 1;
-    std::vector<std::string> storage(argc);
     std::vector<gml::RValue> values(argc);
     std::vector<gml::RValue*> argv(argc);
 
@@ -164,8 +163,7 @@ void Execute(const std::string& line) {
         } else if (ParseNumber(tok, number)) {
             gml::SetReal(values[i], number);
         } else {
-            storage[i] = tok;
-            if (!gml::SetString(values[i], storage[i].c_str())) {
+            if (!gml::SetString(values[i], gml::Intern(tok))) {
                 Print(Line::Error, "could not build string argument %zu", i);
                 return;
             }

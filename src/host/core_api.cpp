@@ -115,14 +115,31 @@ std::int32_t ApiCallScript(void* func, void* self, void* other, CoreRValue* resu
     if (!func || !result || argc < 0 || (argc > 0 && !args)) return 0;
     if (!GameThreadOnly("call_script")) return 0;
 
-    // Scripts take an array of POINTERS; the managed side hands a flat array.
+    // A null self means "whatever the game last ran as" - never the debug
+    // console's captured context, which may be long gone.
+    if (!self) self = gml::CurrentSelf();
+    if (!other) other = self;
+    if (!self) {
+        Logf("[!] core api: call_script with no instance to run as; refused");
+        return 0;
+    }
+
+    // The script gets its own copies of the arguments: GML may assign to an
+    // argument slot, which releases what was there - and the caller's values
+    // belong to the caller (the managed pool frees them at the end of the
+    // frame). Scripts take an array of POINTERS; the managed side hands a flat one.
+    const bool copies = gml::CanCopyValues() && gml::CanFreeValues();
+    std::vector<gml::RValue> own(static_cast<std::size_t>(argc));
     std::vector<gml::RValue*> ptrs(static_cast<std::size_t>(argc));
-    for (std::int32_t i = 0; i < argc; ++i) ptrs[i] = Gml(&args[i]);
+    for (std::int32_t i = 0; i < argc; ++i) {
+        if (!copies || !gml::CopyValue(own[i], *Gml(&args[i]))) own[i] = *Gml(&args[i]);
+        ptrs[i] = &own[i];
+    }
 
     gml::RValue** argv = argc ? ptrs.data() : nullptr;
-    const bool ok = (self || other)
-        ? gml::CallAs(func, Gml(result), argv, argc, self, other)
-        : gml::Call(func, Gml(result), argv, argc);
+    const bool ok = gml::CallAs(func, Gml(result), argv, argc, self, other);
+    // Whatever the slots hold now is ours to release, as a compiled caller would.
+    if (copies) for (auto& v : own) gml::FreeValue(v);
     return ok ? 1 : 0;
 }
 
@@ -183,8 +200,27 @@ static_assert(sizeof(CoreHookCall) == sizeof(hk::Call), "hook call layouts must 
 static_assert(offsetof(CoreHookCall, skip) == offsetof(hk::Call, skip), "hook call layouts must match");
 static_assert(offsetof(CoreHookCall, hook_id) == offsetof(hk::Call, hookId), "hook call layouts must match");
 
+// Only the exact start of a known gml_* function, hooked with the calling
+// convention its name implies. A mid-function address would have MinHook
+// patch into the middle of code; the wrong kind makes the thunk read garbage
+// registers as result/args - and a handler write through them.
 std::int32_t ApiHookInstall(void* target, std::int32_t kind) {
     if (kind != 0 && kind != 1) return -1;
+    const char* name = sym::OwnerOf(target);
+    if (!name || sym::Find(name) != target) {
+        Logf("[!] core api: hook_install(%p) is not the start of a gml_* function; refused", target);
+        return -1;
+    }
+    // Scripts take (self, other, result, argc, args); object events, room
+    // creation code and 2.3+ global-script initialisers take (self, other).
+    const bool script = std::strncmp(name, "gml_Script_", 11) == 0;
+    const bool event  = std::strncmp(name, "gml_Object_", 11) == 0 || std::strncmp(name, "gml_RoomCC_", 11) == 0 ||
+                        std::strncmp(name, "gml_GlobalScript_", 17) == 0;
+    if ((kind == 0 && !script) || (kind == 1 && !event)) {
+        Logf("[!] core api: hook_install(%s) as %s does not match its calling convention; refused",
+             name, kind == 0 ? "a script" : "an event");
+        return -1;
+    }
     return hk::Install(target, kind == 0 ? hk::Kind::Script : hk::Kind::Event);
 }
 
@@ -216,12 +252,13 @@ std::int32_t ApiValueCopy(CoreRValue* dst, const CoreRValue* src) {
 }
 
 const char* ApiBuiltinName(std::int32_t index) {
+    if (!GameThreadOnly("builtin_name")) return nullptr;
     const auto& names = builtins::Names();
     return (index >= 0 && static_cast<std::size_t>(index) < names.size()) ? names[index] : nullptr;
 }
 
 std::int32_t ApiBuiltinArity(const char* name) {
-    if (!name) return -2;
+    if (!name || !GameThreadOnly("builtin_arity")) return -2;
     const builtins::Builtin b = builtins::Find(name);
     return b.fn ? b.argc : -2;
 }
@@ -321,8 +358,14 @@ std::int32_t UiTreeNode(const char* label) { return ImGui::TreeNode(label ? labe
 void UiTreePop()                           { ImGui::TreePop(); }
 void UiSetClipboard(const char* text)      { ImGui::SetClipboardText(text ? text : ""); }
 
-void* ApiBuiltinAddress(const char* name) { return name ? builtins::Find(name).fn : nullptr; }
-const char* ApiBuiltinNameAt(std::int32_t index) { return builtins::NameAt(index); }
+// The registry resolves lazily on first use and is rebuilt on the game thread;
+// lookups from anywhere else would race that.
+void* ApiBuiltinAddress(const char* name) {
+    return name && GameThreadOnly("builtin_address") ? builtins::Find(name).fn : nullptr;
+}
+const char* ApiBuiltinNameAt(std::int32_t index) {
+    return GameThreadOnly("builtin_name_at") ? builtins::NameAt(index) : nullptr;
+}
 
 std::int32_t UiInputHistory(const char* label, char* buf, std::int32_t cap,
                             const char* const* history, std::int32_t count, std::int32_t* cursor) {

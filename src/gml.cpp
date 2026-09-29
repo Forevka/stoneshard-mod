@@ -30,7 +30,9 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace mod::gml {
 namespace {
@@ -410,6 +412,24 @@ bool CopiesPlainValuesVerbatim() {
     return true;
 }
 
+// FREE's counterpart of the copy canary: freeing a number, bool, pointer or
+// undefined must not treat the payload as a pointer to a refcount. The payload
+// points at a canary; any write to it means the helper would corrupt memory
+// the first time a mod releases a plain value.
+bool FreesPlainValuesHarmlessly() {
+    static const std::int32_t kKinds[] = {kReal, kInt32, kInt64, kBool, kPtr, kUndefined};
+    alignas(16) std::int32_t canary[16] = {};
+    for (const std::int32_t kind : kKinds) {
+        RValue v{};
+        v.ptr   = canary;
+        v.flags = 0;
+        v.kind  = kind;
+        __try { g_free(&v); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        for (const std::int32_t c : canary) if (c != 0) return false;
+    }
+    return true;
+}
+
 std::atomic<DWORD> g_gameThread{0};
 } // namespace
 
@@ -419,9 +439,11 @@ void NoteGameThread() {
         Logf("gml: game thread is %lu", static_cast<unsigned long>(GetCurrentThreadId()));
 }
 
+// Fails closed: until the first Present names the game thread, nothing is
+// allowed to touch GML - there is no game code to call into yet anyway.
 bool OnGameThread() {
     const DWORD t = g_gameThread.load(std::memory_order_relaxed);
-    return t == 0 || t == GetCurrentThreadId();
+    return t != 0 && t == GetCurrentThreadId();
 }
 
 void VerifyValueLifetime() {
@@ -481,7 +503,16 @@ void VerifyValueLifetime() {
         __try { g_free(&b); } __except (EXCEPTION_EXECUTE_HANDLER) { fail("free faulted"); return; }
         if (RefCountOf(a) != 1) { fail("free did not release a reference"); return; }
     }
+    if (g_free && !FreesPlainValuesHarmlessly()) {
+        fail("FREE_RValue touches the payload of plain values");
+        return;
+    }
     if (g_free) {
+        // Never let the probe's count reach zero: that would be the first time
+        // the helper releases a string whose characters are OURS (static data),
+        // and "it honours the external flag" is exactly what is not proven yet.
+        // A spare reference keeps it alive; the 16-byte header simply leaks.
+        *reinterpret_cast<std::int32_t*>(static_cast<char*>(a.ptr) + 8) += 1;
         __try { g_free(&a); } __except (EXCEPTION_EXECUTE_HANDLER) { fail("free faulted"); return; }
     }
 
@@ -562,10 +593,19 @@ bool SetString(RValue& v, const char* text) {
     return v.kind == kString;
 }
 
+const char* Intern(const std::string& text) {
+    static std::mutex lock;
+    static std::unordered_set<std::string> pool;   // node-based: c_str() never moves
+    std::lock_guard<std::mutex> g(lock);
+    return pool.insert(text).first->c_str();
+}
+
 std::string ToString(const RValue& v) {
     switch (v.kind) {
     case kReal:   { char b[64]; std::snprintf(b, sizeof(b), "%g", v.real); return b; }
-    case kBool:   return v.i32 ? "true" : "false";
+    // Runtimes hold a bool as a 0.0/1.0 double; some have been seen to use the
+    // low int instead. A double that is exactly 0 or 1 settles which.
+    case kBool:   return (v.real == 1.0 || v.real == 0.0 ? v.real != 0.0 : v.i32 != 0) ? "true" : "false";
     case kInt32:  { char b[32]; std::snprintf(b, sizeof(b), "%d", v.i32); return b; }
     case kInt64:  { char b[32]; std::snprintf(b, sizeof(b), "%lld", static_cast<long long>(v.i64)); return b; }
     case kUndefined: return "<undefined>";
@@ -641,9 +681,61 @@ LONG CALLBACK ExceptionProbe(EXCEPTION_POINTERS* info) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-void* g_vehHandle = nullptr;
+std::once_flag g_vehOnce;
+
+thread_local int t_managedDepth = 0;
+
+// What a guarded call into the game does with an exception from it:
+//   * a GML exception (a C++ throw) is left to the game's own try/catch when
+//     one can be above us - inside a hook dispatch with only native frames
+//     between (it must never unwind through .NET frames);
+//   * everything else - access violations, stack overflow, a GML exception
+//     with nobody to catch it - is handled here and the call reports failure.
+int GuardFilter(DWORD code) {
+    if (code == kCppException && hk::DispatchDepth() > 0 && t_managedDepth == 0)
+        return EXCEPTION_CONTINUE_SEARCH;
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// After a handled stack overflow the guard page is gone; without it the next
+// overflow would kill the process without a trace.
+void AfterGuardedFault(DWORD code) {
+    if (code == EXCEPTION_STACK_OVERFLOW) _resetstkoflw();
+}
+
+// The fault guards live in functions of their own: __try cannot share a
+// function with objects that need unwinding (InCall below).
+bool GuardedScript(ScriptFn fn, void* self, void* other, RValue* result, int argc, RValue** args,
+                   DWORD* code) {
+    __try {
+        fn(self, other, result, argc, args);
+        return true;
+    } __except (GuardFilter(*code = GetExceptionCode())) {
+        return false;
+    }
+}
+
+bool GuardedEvent(EventFn fn, void* self, void* other, DWORD* code) {
+    __try {
+        fn(self, other);
+        return true;
+    } __except (GuardFilter(*code = GetExceptionCode())) {
+        return false;
+    }
+}
+
+struct InCall {
+    InCall()  { ++g_inCall; }
+    ~InCall() { --g_inCall; }
+    InCall(const InCall&) = delete;
+    InCall& operator=(const InCall&) = delete;
+};
 
 } // namespace
+
+ManagedScope::ManagedScope()  { ++t_managedDepth; }
+ManagedScope::~ManagedScope() { --t_managedDepth; }
+bool InManagedCode() { return t_managedDepth > 0; }
 
 const char* LastError() { return g_lastError; }
 
@@ -663,30 +755,27 @@ bool Call(void* func, RValue* result, RValue** args, int argc) {
 bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, void* other) {
     if (!g_ready || !func || !result) return false;
 
-    if (!g_vehHandle) g_vehHandle = AddVectoredExceptionHandler(1, &ExceptionProbe);
+    std::call_once(g_vehOnce, [] { AddVectoredExceptionHandler(1, &ExceptionProbe); });
     g_lastError[0] = '\0';
 
     result->ptr   = nullptr;
     result->flags = 0;
     result->kind  = kUnset;
 
-    auto fn = reinterpret_cast<ScriptFn>(func);
-
-    ++g_inCall;
-    __try {
-        fn(self, other, result, argc, args);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        --g_inCall;
-        const DWORD code = GetExceptionCode();
-        if (g_lastError[0])
-            Logf("[!] gml: %s rejected the call: %s",
-                 code == kCppException ? "the game" : "fault", g_lastError);
-        else
-            Logf("[!] gml: exception 0x%08lX calling %p (no message recovered)", code, func);
-        return false;
+    DWORD code = 0;
+    bool ok;
+    {
+        InCall scope;   // restored even if a GML exception passes through to the game
+        ok = GuardedScript(reinterpret_cast<ScriptFn>(func), self, other, result, argc, args, &code);
     }
-    --g_inCall;
-    return true;
+    if (ok) return true;
+    AfterGuardedFault(code);
+    if (g_lastError[0])
+        Logf("[!] gml: %s rejected the call: %s",
+             code == kCppException ? "the game" : "fault", g_lastError);
+    else
+        Logf("[!] gml: exception 0x%08lX calling %p (no message recovered)", code, func);
+    return false;
 }
 
 bool CallByName(const std::string& symbol, RValue* result, RValue** args, int argc) {
@@ -838,22 +927,20 @@ bool CallEvent(void* func, void* self, void* other) {
     }
     if (!self) return false;
 
-    if (!g_vehHandle) g_vehHandle = AddVectoredExceptionHandler(1, &ExceptionProbe);
+    std::call_once(g_vehOnce, [] { AddVectoredExceptionHandler(1, &ExceptionProbe); });
     g_lastError[0] = '\0';
 
-    auto fn = reinterpret_cast<EventFn>(func);
-    ++g_inCall;
-    __try {
-        fn(self, other ? other : self);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        --g_inCall;
-        const DWORD code = GetExceptionCode();
-        if (g_lastError[0]) Logf("[!] gml: event rejected: %s", g_lastError);
-        else                Logf("[!] gml: exception 0x%08lX in event %p", code, func);
-        return false;
+    DWORD code = 0;
+    bool ok;
+    {
+        InCall scope;
+        ok = GuardedEvent(reinterpret_cast<EventFn>(func), self, other ? other : self, &code);
     }
-    --g_inCall;
-    return true;
+    if (ok) return true;
+    AfterGuardedFault(code);
+    if (g_lastError[0]) Logf("[!] gml: event rejected: %s", g_lastError);
+    else                Logf("[!] gml: exception 0x%08lX in event %p", code, func);
+    return false;
 }
 
 const Capture& LastCapture()  { return g_capture; }
@@ -864,6 +951,7 @@ const Capture& WeaponRecord() { return g_weaponRec; }
 namespace {
 
 void*    g_playerInst       = nullptr;
+ULONGLONG g_playerSeenAt    = 0;     // GetTickCount64 of o_player's last Step
 bool     g_playerTracking   = false;
 int      g_posOffset        = -1;    // byte offset of x inside the CInstance
 bool     g_posExact         = false; // true once derived from a known-answer sample
@@ -999,6 +1087,7 @@ void PlayerStepBefore(hk::Call* c, void*) {
     if (self) {
         if (!g_playerInst) Logf("player tracker: player instance %p", self);
         g_playerInst = self;
+        g_playerSeenAt = GetTickCount64();
         CalibratePosition(self);
 
         // Feeds the activity log so movement can be lined up against the
@@ -1011,12 +1100,42 @@ void PlayerStepBefore(hk::Call* c, void*) {
 
 } // namespace
 
+// Every page of [p, p+n) committed, readable and not a guard page. Touching a
+// guard page (a thread's stack growth sentinel) would fault once and silently
+// disarm it; that thread then dies later with no stack left to grow into.
+static bool PlainReadable(const void* p, std::size_t n) {
+    auto at = reinterpret_cast<std::uintptr_t>(p);
+    const std::uintptr_t end = at + n;
+    if (end < at) return false;
+    while (at < end) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<const void*>(at), &mbi, sizeof(mbi))) return false;
+        if (mbi.State != MEM_COMMIT) return false;
+        const DWORD prot = mbi.Protect;
+        if (prot & (PAGE_GUARD | PAGE_NOACCESS)) return false;
+        if (!(prot & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
+                      PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) return false;
+        at = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+    return true;
+}
+
 bool ReadMemory(const void* src, void* dst, int bytes) {
-    if (!src || !dst || bytes <= 0 || bytes > 1 << 16) return false;
+    if (!src || !dst || bytes <= 0 || bytes > 1 << 20) return false;
+    if (!PlainReadable(src, static_cast<std::size_t>(bytes))) return false;
     return SafeRead(src, dst, bytes);
 }
 
-void* PlayerInstance() { return g_playerInst; }
+// The player is only known while its Step runs. After quitting to the menu or
+// through a room/save transition the instance may be destroyed and its memory
+// reused - writing through a remembered pointer would land in another object.
+void* PlayerInstance() {
+    if (g_playerInst && GetTickCount64() - g_playerSeenAt > 1000) {
+        Logf("player tracker: o_player stopped stepping; forgetting %p", g_playerInst);
+        g_playerInst = nullptr;
+    }
+    return g_playerInst;
+}
 
 namespace {
 std::atomic<void*> g_observedSelf{nullptr};
@@ -1032,13 +1151,25 @@ void ClearObservedSelf() { g_observedSelf.store(nullptr, std::memory_order_relax
 
 // The runtime's own global when it has one; otherwise the instance a hook saw
 // most recently.
+// A CInstance is a C++ object: its first word is a vtable in the image's
+// .rdata. The self global was found by vote, and a wrong winner (some other
+// slot stored from rcx in prologues) would hand out pointers scripts then
+// WRITE instance variables through; this check turns that into "no self".
+bool LooksLikeInstance(void* p) {
+    std::uintptr_t vtable = 0;
+    return p && SafeRead(p, &vtable, sizeof(vtable)) && sym::RdataRange().contains(vtable);
+}
+
 void* CurrentSelf() {
-    if (g_pCurrentSelf && *g_pCurrentSelf) return *g_pCurrentSelf;
+    if (g_pCurrentSelf) {
+        void* s = *g_pCurrentSelf;
+        if (s && LooksLikeInstance(s)) return s;
+    }
     return g_observedSelf.load(std::memory_order_relaxed);
 }
 
 bool PlayerPosition(double& x, double& y) {
-    if (!g_playerInst) return false;
+    if (!PlayerInstance()) return false;
 
     // Preferred: ask the game for "x"/"y" by NAME through GameMaker's reflection
     // API. Two earlier attempts guessed the CInstance layout by watching which

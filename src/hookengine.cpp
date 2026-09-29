@@ -9,7 +9,9 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
+#include <vector>
 
 #include "MinHook.h"
 
@@ -40,7 +42,7 @@ struct Hook {
 
 // ---- thunk arena -------------------------------------------------------------
 //
-// One RWX block: two UNWIND_INFOs at the start, then fixed 64-byte thunk slots.
+// One executable block: two UNWIND_INFOs at the start, then fixed 64-byte thunk slots.
 // A RUNTIME_FUNCTION per slot is registered once, up front; the unwinder reads
 // the table live, so a slot's entry is simply pointed at the right unwind info
 // before its thunk is enabled.
@@ -95,8 +97,22 @@ bool EnsureArena() {
         g_pdata = nullptr;
         return false;
     }
+    // Executable but not writable except while a thunk is being emitted
+    // (WritableArena below): a permanently RWX block is what code-integrity
+    // mitigations and anti-cheat flag, and a stray write could not land in it.
+    DWORD old = 0;
+    VirtualProtect(g_arena, kArenaSize, PAGE_EXECUTE_READ, &old);
     return true;
 }
+
+// Emission window. The arena stays executable throughout: other threads may be
+// running earlier thunks on the same pages at that very moment.
+struct WritableArena {
+    WritableArena()  { DWORD old = 0; VirtualProtect(g_arena, kArenaSize, PAGE_EXECUTE_READWRITE, &old); }
+    ~WritableArena() { DWORD old = 0; VirtualProtect(g_arena, kArenaSize, PAGE_EXECUTE_READ, &old); }
+    WritableArena(const WritableArena&) = delete;
+    WritableArena& operator=(const WritableArena&) = delete;
+};
 
 // ---- dispatch ----------------------------------------------------------------
 
@@ -127,8 +143,120 @@ void RunNatives(Hook* h, Call* c, bool after) {
 // out, so the loader's own bookkeeping always sees the game's view.
 void Phase(Hook* h, Call* c, ManagedDispatch managed, bool after) {
     if (!after) RunNatives(h, c, false);
-    if (managed) managed(c);
+    if (managed) {
+        gml::ManagedScope inManaged;   // no GML exception may cross these frames
+        managed(c);
+    }
     if (after) RunNatives(h, c, true);
+}
+
+// Nested dispatches on this thread. Past kMaxDepth (a handler calling the
+// function it hooks, two hooks calling each other) handlers are skipped and
+// the original runs bare, so a runaway recursion is the game's own - not one
+// multiplied by managed frames per level.
+thread_local int t_depth = 0;
+constexpr int kMaxDepth = 256;
+
+struct DepthScope {
+    DepthScope()  { ++t_depth; }
+    ~DepthScope() { --t_depth; }
+    DepthScope(const DepthScope&) = delete;
+    DepthScope& operator=(const DepthScope&) = delete;
+};
+
+void WarnTooDeep(Hook* h) {
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true))
+        Logf("[!] hooks: dispatch nested %d deep at #%d; handlers skipped past this depth", kMaxDepth, h->id);
+}
+
+// The call records being dispatched on this thread, innermost first. A Call
+// lives on ScriptDispatch's stack: CallOriginal only accepts one that is still
+// in this chain, never a pointer a handler kept past its return.
+struct ActiveCall {
+    const Call* call;
+    ActiveCall* outer;
+};
+thread_local ActiveCall* t_active = nullptr;
+
+struct ActiveScope {
+    ActiveCall node;
+    explicit ActiveScope(const Call* c) : node{c, t_active} { t_active = &node; }
+    ~ActiveScope() { t_active = node.outer; }
+    ActiveScope(const ActiveScope&) = delete;
+    ActiveScope& operator=(const ActiveScope&) = delete;
+};
+
+bool IsActive(const Call* c) {
+    for (const ActiveCall* a = t_active; a; a = a->outer)
+        if (a->call == c) return true;
+    return false;
+}
+
+// Private copies of a script's arguments. YYC passes argument POINTERS - to
+// the caller's temporaries, its variables, or static constants for literals -
+// so a handler replacing an argument in place would change the caller's
+// state, or rewrite the constant for every later call of that site (a
+// multiplier would compound). With managed handlers attached the original is
+// called with copies instead: a replaced argument reaches it, and nothing
+// else. Released however the call ends.
+class ArgCopies {
+public:
+    ArgCopies(gml::RValue** src, int argc) : n_(argc > 0 && src ? argc : 0) {
+        if (n_ > kInline) { heap_.resize(static_cast<std::size_t>(n_)); heapPtrs_.resize(static_cast<std::size_t>(n_)); }
+        gml::RValue*  vals = n_ > kInline ? heap_.data() : inline_;
+        gml::RValue** ptrs = n_ > kInline ? heapPtrs_.data() : inlinePtrs_;
+        for (int i = 0; i < n_; ++i) {
+            vals[i] = gml::RValue{};
+            vals[i].kind = gml::kUndefined;
+            if (src[i] && !gml::CopyValue(vals[i], *src[i])) vals[i] = *src[i];
+            ptrs[i] = &vals[i];
+        }
+        ptrs_ = n_ ? ptrs : src;
+    }
+    ~ArgCopies() {
+        gml::RValue* vals = n_ > kInline ? heap_.data() : inline_;
+        for (int i = 0; i < n_; ++i) gml::FreeValue(vals[i]);
+    }
+    ArgCopies(const ArgCopies&) = delete;
+    ArgCopies& operator=(const ArgCopies&) = delete;
+
+    gml::RValue** Pointers() const { return ptrs_; }
+
+private:
+    static constexpr int kInline = 8;
+    int n_;
+    gml::RValue  inline_[kInline];
+    gml::RValue* inlinePtrs_[kInline];
+    std::vector<gml::RValue>  heap_;
+    std::vector<gml::RValue*> heapPtrs_;
+    gml::RValue** ptrs_ = nullptr;
+};
+
+// The original, with the after phase guaranteed: a GML exception out of it
+// (caught by the game further up) still gives after-handlers their turn, so
+// before/after pairs stay balanced. The exception then continues.
+gml::RValue* RunScriptOriginal(Hook* h, Call* c, ManagedDispatch managed) {
+    gml::RValue* ret = c->result;
+    try {
+        if (!c->skip)
+            ret = reinterpret_cast<ScriptFn>(h->original)(c->self, c->other, c->result, c->argc, c->args);
+    } catch (...) {
+        c->phase = kAfter;
+        Phase(h, c, managed, true);
+        throw;
+    }
+    return ret;
+}
+
+void RunEventOriginal(Hook* h, Call* c, ManagedDispatch managed) {
+    try {
+        if (!c->skip) reinterpret_cast<EventFn>(h->original)(c->self, c->other);
+    } catch (...) {
+        c->phase = kAfter;
+        Phase(h, c, managed, true);
+        throw;
+    }
 }
 
 gml::RValue* ScriptDispatch(void* self, void* other, gml::RValue* result, int argc,
@@ -142,13 +270,25 @@ gml::RValue* ScriptDispatch(void* self, void* other, gml::RValue* result, int ar
     CallerScope scope(*reinterpret_cast<void* const*>(
         static_cast<const char*>(_AddressOfReturnAddress()) + 8 + 0x38));
 
+    DepthScope depth;
+    if (t_depth > kMaxDepth) {
+        WarnTooDeep(h);
+        return reinterpret_cast<ScriptFn>(h->original)(self, other, result, argc, args);
+    }
+
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
+    // Only when mods listen, and only where copies can be made and released.
+    std::optional<ArgCopies> copies;
+    if (managed && gml::CanCopyValues() && gml::CanFreeValues()) {
+        copies.emplace(args, argc);
+        args = copies->Pointers();
+    }
     Call c{self, other, result, args, argc, kBefore, 0, h->id};
+    ActiveScope active(&c);
     Phase(h, &c, managed, false);
 
-    gml::RValue* ret = result;
-    if (!c.skip) ret = reinterpret_cast<ScriptFn>(h->original)(self, other, result, argc, args);
+    gml::RValue* ret = RunScriptOriginal(h, &c, managed);
 
     c.phase = kAfter;
     Phase(h, &c, managed, true);
@@ -160,12 +300,19 @@ void EventDispatch(void* self, void* other, Hook* h) {
     // The event thunk tail-jumped here, so our return address is the game's.
     CallerScope scope(*static_cast<void* const*>(_AddressOfReturnAddress()));
 
+    DepthScope depth;
+    if (t_depth > kMaxDepth) {
+        WarnTooDeep(h);
+        reinterpret_cast<EventFn>(h->original)(self, other);
+        return;
+    }
+
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
     Call c{self, other, nullptr, nullptr, 0, kBefore, 0, h->id};
     Phase(h, &c, managed, false);
 
-    if (!c.skip) reinterpret_cast<EventFn>(h->original)(self, other);
+    RunEventOriginal(h, &c, managed);
 
     c.phase = kAfter;
     Phase(h, &c, managed, true);
@@ -176,6 +323,7 @@ void* EmitThunk(Hook* h) {
     const std::size_t slot = g_used++;
     unsigned char* p = g_arena + kHeaderSize + slot * kSlotSize;
     unsigned char* o = p;
+    WritableArena writable;
 
     auto imm64 = [&](const void* v) {
         const auto x = reinterpret_cast<std::uint64_t>(v);
@@ -216,7 +364,16 @@ Hook* ById(int id) {
 
 void SetManagedDispatch(ManagedDispatch fn) { g_managed.store(fn, std::memory_order_release); }
 
-int Install(void* target, Kind kind) {
+namespace {
+int InstallImpl(void* target, Kind kind, bool queued);
+}
+
+int Install(void* target, Kind kind) { return InstallImpl(target, kind, false); }
+
+namespace {
+// `queued`: the detour is only queued for enabling; the caller applies a whole
+// batch with one MH_ApplyQueued (every enable freezes and resumes all threads).
+int InstallImpl(void* target, Kind kind, bool queued) {
     if (!target) return -1;
     std::lock_guard<std::mutex> lock(g_lock);
 
@@ -246,7 +403,7 @@ int Install(void* target, Kind kind) {
         --g_used;
         return -1;
     }
-    const MH_STATUS es = MH_EnableHook(target);
+    const MH_STATUS es = queued ? MH_QueueEnableHook(target) : MH_EnableHook(target);
     if (es != MH_OK) {
         Logf("[!] hooks: MH_EnableHook(%p) failed: %s", target, MH_StatusToString(es));
         MH_RemoveHook(target);
@@ -261,6 +418,7 @@ int Install(void* target, Kind kind) {
     Logf("hooks: #%d %s %s", h.id, kind == Kind::Script ? "script" : "event", name ? name : "?");
     return h.id;
 }
+} // namespace
 
 bool SetManaged(int id, bool managed) {
     std::lock_guard<std::mutex> lock(g_lock);
@@ -315,10 +473,8 @@ int AddNative(void* target, Kind kind, NativeHandler before, NativeHandler after
     }
     if (!placed) {
         if (n >= kMaxNative) {
+            // Freed slots are reused first, so a full table means four live users.
             Logf("[!] hooks: #%d already has %d native users", id, kMaxNative);
-            // A hook just created for this call has no user at all: detach it.
-            if (h.nativeUsers == 0 && !h.managed.load() && h.enabled && MH_DisableHook(h.target) == MH_OK)
-                h.enabled = false;
             return -1;
         }
         NativeSub& s = h.natives[n];
@@ -359,8 +515,14 @@ void RemoveNative(int id, NativeHandler before, NativeHandler after, void* ctx) 
 
 const void* CurrentCaller() { return g_caller; }
 
+int DispatchDepth() { return t_depth; }
+
 bool CallOriginal(const Call* call, gml::RValue* result) {
     if (!call || !result) return false;
+    if (!IsActive(call)) {
+        Logf("[!] hooks: CallOriginal with a call record that is not being dispatched; refused");
+        return false;
+    }
     Hook* h;
     {
         std::lock_guard<std::mutex> lock(g_lock);
@@ -386,7 +548,7 @@ void InstallSelfObservers(int maxEvents) {
         const bool isDraw = !isStep && std::strstr(e.name, "_Draw_") != nullptr;
         if (!isStep && !isDraw) continue;
         if ((isStep && steps >= maxEvents) || (isDraw && draws >= maxEvents)) continue;
-        const int id = Install(e.func, Kind::Event);
+        const int id = InstallImpl(e.func, Kind::Event, true);
         if (id < 0) continue;
         {
             std::lock_guard<std::mutex> lock(g_lock);
@@ -394,6 +556,8 @@ void InstallSelfObservers(int maxEvents) {
         }
         if (isStep) ++steps; else ++draws;
     }
+    const MH_STATUS applied = MH_ApplyQueued();
+    if (applied != MH_OK) Logf("[!] hooks: enabling the observers failed: %s", MH_StatusToString(applied));
     Logf("hooks: watching %d Step and %d Draw events for a live instance", steps, draws);
 }
 

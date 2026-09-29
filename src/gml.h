@@ -64,8 +64,19 @@ bool        CopyValue(RValue& dst, const RValue& src);
 bool        CanFreeValues();
 bool        CanCopyValues();
 
-// The game's main thread, as first seen at Present. OnGameThread() is true on
-// it - and on any thread until it is known, so start-up is not blocked.
+// Managed code on this thread's stack (Frame, Gui, a managed hook handler).
+// A GML exception must never unwind through .NET frames - that kills the
+// process - so while one is present every call into the game catches it.
+struct ManagedScope {
+    ManagedScope();
+    ~ManagedScope();
+    ManagedScope(const ManagedScope&) = delete;
+    ManagedScope& operator=(const ManagedScope&) = delete;
+};
+bool InManagedCode();
+
+// The game's main thread, as first seen at Present. OnGameThread() is true
+// only on it, and on no thread before it is known.
 void        NoteGameThread();
 bool        OnGameThread();
 
@@ -76,6 +87,12 @@ void        VerifyValueLifetime();
 void        SetReal(RValue& v, double value);
 void        SetUndefined(RValue& v);
 bool        SetString(RValue& v, const char* text);
+
+// Characters that live for the rest of the process, deduplicated. The runtime
+// keeps a POINTER to a string's characters (a variable set from it, a script
+// that stores its argument), so anything handed to SetString must come from
+// here or from static storage - never from a local buffer. Thread-safe.
+const char* Intern(const std::string& text);
 std::string ToString(const RValue& v);
 
 // Calls a YYC script:

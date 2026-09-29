@@ -18,6 +18,7 @@
 #include "tracer.h"
 #include "log.h"
 #include "gml.h"
+#include "paths.h"
 #include "symbols.h"
 
 #include <windows.h>
@@ -27,6 +28,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <new>
 #include <thread>
 #include <unordered_map>
 
@@ -251,7 +253,7 @@ bool Init() {
     }
 
     g_helper = reinterpret_cast<void*>(best);
-    g_ring   = static_cast<Record*>(::operator new(sizeof(Record) * kRingSize));
+    // The ring (megabytes) is only allocated when a recording actually starts.
 
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);
@@ -264,6 +266,8 @@ bool Init() {
 
 bool StartRecording(const Options& opts) {
     if (!g_ready || Recording()) return false;
+    if (!g_ring) g_ring = static_cast<Record*>(::operator new(sizeof(Record) * kRingSize, std::nothrow));
+    if (!g_ring) { Logf("[!] tracer: no memory for the trace ring"); return false; }
 
     g_opts = opts;
     g_head.store(0);
@@ -271,7 +275,7 @@ bool StartRecording(const Options& opts) {
     g_dropped.store(0);
     g_qpcStart = Now();
     g_stopAt   = GetTickCount() + static_cast<DWORD>(opts.durationMs);
-    g_file     = std::string(MOD_DATA_DIR) + "\\trace-" + Timestamp() + ".log";
+    g_file     = paths::File(("trace-" + Timestamp() + ".log").c_str());
 
     if (MH_CreateHook(g_helper, reinterpret_cast<void*>(&HelperDetour),
                       reinterpret_cast<void**>(&g_original)) != MH_OK ||

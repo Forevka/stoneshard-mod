@@ -47,7 +47,7 @@ void* Context() {
 // ever compiled in, so a patch that renumbers objects changes nothing here.
 bool ObjectIndex(const std::string& objectName, double* out) {
     gml::RValue nameArg{};
-    if (!gml::SetString(nameArg, objectName.c_str())) {
+    if (!gml::SetString(nameArg, gml::Intern(objectName))) {
         Fail("could not build the object name string");
         return false;
     }
@@ -83,11 +83,21 @@ const char* RarityName(int rarity) {
 
 namespace {
 
-// The name buffer must outlive the call - and outlive it FOREVER. SetString
-// does not copy: it points a RefString at this buffer, flags it external, and
-// the game stores that pointer inside the item it builds. A local here reads
-// back later as garbage once the stack is reused.
-std::string& HeldName() { static std::string held; return held; }
+// Item names are handed over interned (gml::Intern): SetString does not copy -
+// it points a RefString at the characters, flags them external, and the game
+// stores that pointer inside the item it builds, for good. One shared buffer
+// reassigned per spawn would rewrite the names of items already made.
+
+// A recorded call is replayed from raw bits, and the game freed any string,
+// array or struct among them after its own call: those would dangle.
+bool ReplayableArgs(const std::vector<gml::RValue>& raw, std::size_t skip) {
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        if (i == skip) continue;
+        const std::int32_t k = raw[i].kind & 0x00FFFFFF;
+        if (k == gml::kString || k == gml::kArray || k == gml::kObject) return false;
+    }
+    return true;
+}
 
 // Takes the instance scr_weapon_loot returned, if it gave us one.
 bool HandleFromResult(const gml::RValue& result, builtins::Handle* out) {
@@ -113,15 +123,14 @@ bool SpawnGear(const std::string& displayName, double dx, double dy,
     const bool  havePos    = gml::PlayerPosition(px, py);
     void* const player     = gml::PlayerInstance();
     const auto& rec        = gml::WeaponRecord();
-    const bool  haveSample = rec.valid && rec.raw.size() >= 5 && rec.self;
+    const bool  haveSample = rec.valid && rec.raw.size() >= 5 && rec.self && ReplayableArgs(rec.raw, 0);
 
     if (!player && !haveSample) {
         Fail("no player instance and no recorded call to replay");
         return false;
     }
 
-    std::string& held = HeldName();
-    held = displayName;
+    const char* held = gml::Intern(displayName);
 
     std::vector<gml::RValue> args;
     void* self  = nullptr;
@@ -132,7 +141,7 @@ bool SpawnGear(const std::string& displayName, double dx, double dy,
         // falls back to the tile you are standing on, so an uncalibrated
         // position still spawns - it just lands less precisely.
         args.assign(5, gml::RValue{});
-        gml::SetString(args[0], held.c_str());
+        gml::SetString(args[0], held);
         gml::SetReal(args[1], havePos ? px + dx : 0.0);
         gml::SetReal(args[2], havePos ? py + dy : 0.0);
         gml::SetReal(args[3], 100.0);                          // chance -> certain
@@ -142,7 +151,7 @@ bool SpawnGear(const std::string& displayName, double dx, double dy,
         // Fallback: replay a genuine call the game made. Drops wherever that
         // call was headed, which is why it is second choice.
         args = rec.raw;
-        gml::SetString(args[0], held.c_str());
+        gml::SetString(args[0], held);
         gml::SetReal(args[3], 100.0);
         gml::SetReal(args[4], static_cast<double>(rarity));
         self  = rec.self;
@@ -172,11 +181,8 @@ bool AddWeaponToInventory(const std::string& displayName, int rarity) {
     void* player = gml::PlayerInstance();
     if (!player) { Fail("no player instance"); return false; }
 
-    std::string& held = HeldName();
-    held = displayName;
-
     gml::RValue args[2]{};
-    gml::SetString(args[0], held.c_str());
+    gml::SetString(args[0], gml::Intern(displayName));
     gml::SetReal(args[1], static_cast<double>(rarity));
 
     gml::RValue* argv[2] = { &args[0], &args[1] };

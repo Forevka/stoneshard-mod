@@ -35,23 +35,14 @@ DWORD WINAPI InitThread(LPVOID) {
     // working when a patch adds or renames items.
     if (stoneshard) mod::assets::Load();
 
-    // Our version.dll may be resolved before d3d11/dxgi during the exe's import
-    // walk, so wait for them rather than assuming an order. ~10s ceiling.
-    bool ready = false;
-    for (int i = 0; i < 200; ++i) {
-        if (GetModuleHandleW(L"d3d11.dll") && GetModuleHandleW(L"dxgi.dll")) {
-            ready = true;
-            break;
-        }
-        Sleep(50);
-    }
+    // Resolves the shared prologue helper; the hook itself is only installed
+    // while a recording is armed. Its call forwarding was written against
+    // Stoneshard's runtime, so it stays there. Before the Present hook goes in,
+    // so the overlay never reads its status while this thread still writes it.
+    if (stoneshard) mod::tracer::Init();
 
-    if (!ready) {
-        mod::Logf("[!] d3d11.dll/dxgi.dll never appeared - aborting init");
-        return 0;
-    }
-    mod::Logf("d3d11.dll and dxgi.dll present");
-
+    // d3d11 and dxgi are static imports of this DLL, so they are loaded before
+    // DllMain ever runs: no need to wait for them.
     if (!mod::InstallHooks())
         mod::Logf("[!] hook installation failed - overlay will not appear");
 
@@ -71,9 +62,6 @@ DWORD WINAPI InitThread(LPVOID) {
         mod::potions::InstallRecorder();
     }
 
-    // Resolves the shared prologue helper; the hook itself is only installed
-    // while a recording is armed.
-    mod::tracer::Init();
 
     // Runtimes without a current-self global need a live instance from
     // somewhere before any builtin can be called; watching Step events is the
@@ -90,7 +78,7 @@ DWORD WINAPI InitThread(LPVOID) {
 
 } // namespace
 
-BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
     switch (reason) {
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(module);
@@ -100,6 +88,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         break;
 
     case DLL_PROCESS_DETACH:
+        // Process exit: every other thread is already gone - possibly while
+        // holding the log's or MinHook's lock - and d3d11 may have detached.
+        // Tearing anything down here can only hang or crash the exit; the OS
+        // reclaims it all. Only a real FreeLibrary (never done to a proxy in
+        // practice) unhooks. The log is flushed line by line, so nothing is lost.
+        if (reserved != nullptr) break;
         mod::RemoveHooks();
         mod::LogShutdown();
         break;

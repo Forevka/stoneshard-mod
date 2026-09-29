@@ -42,12 +42,18 @@ FARPROC ResolveReal(const char* name) {
 } // namespace
 
 // Each thunk resolves its target once, then forwards. Signature is declared
-// inline so the compiler checks argument passing for us.
+// inline so the compiler checks argument passing for us. The cached target is
+// atomic: exports can be called from any thread, and two resolving at once
+// simply store the same pointer.
 #define PROXY_FN(ret, name, params, args)                                    \
     extern "C" ret WINAPI Proxy_##name params {                              \
         using fn_t = ret(WINAPI*) params;                                    \
-        static fn_t fn = nullptr;                                            \
-        if (!fn) fn = reinterpret_cast<fn_t>(ResolveReal(#name));            \
+        static std::atomic<fn_t> cached{nullptr};                            \
+        fn_t fn = cached.load(std::memory_order_acquire);                    \
+        if (!fn) {                                                           \
+            fn = reinterpret_cast<fn_t>(ResolveReal(#name));                 \
+            cached.store(fn, std::memory_order_release);                     \
+        }                                                                    \
         if (!fn) { SetLastError(ERROR_PROC_NOT_FOUND); return (ret)0; }      \
         return fn args;                                                      \
     }

@@ -83,4 +83,7 @@ void RemoveNative(int id, NativeHandler before, NativeHandler after, void* ctx);
 // address), for "who called this" diagnostics.
 const void* CurrentCaller();
 
+// How many hook dispatches are active on this thread (0 outside game code).
+int DispatchDepth();
+
 } // namespace mod::hk

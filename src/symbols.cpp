@@ -68,7 +68,8 @@ bool SectionRanges(HMODULE mod) {
 
 // Bounded read of a NUL-terminated string that must live entirely inside .rdata.
 const char* GmlStringAt(std::uintptr_t p) {
-    if (!g_rdata.contains(p)) return nullptr;
+    // The whole "gml_" prefix must be inside .rdata, not just its first byte.
+    if (!g_rdata.contains(p) || p + 4 > g_rdata.hi) return nullptr;
 
     const auto* s = reinterpret_cast<const char*>(p);
     if (s[0] != 'g' || s[1] != 'm' || s[2] != 'l' || s[3] != '_') return nullptr;

@@ -26,6 +26,7 @@
 #include <dxgi.h>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -57,15 +58,21 @@ UINT g_height = 0;
 // thread in practice, but nothing here relies on it).
 std::atomic<bool> g_pickArmed{false};
 std::atomic<bool> g_pickReady{false};
-std::atomic<bool> g_pickSwallowUp{false};
+std::atomic<UINT> g_pickSwallowUp{0};   // the button-up message still owed to us, or 0
 std::atomic<int>  g_pickX{0}, g_pickY{0}, g_pickW{0}, g_pickH{0}, g_pickButton{0};
 
 // True when the message was a pick click and must not reach the game.
 bool HandlePick(HWND hwnd, UINT msg, LPARAM lParam) {
-    const bool down = msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN;
-    const bool up   = msg == WM_LBUTTONUP || msg == WM_RBUTTONUP;
-    if (up && g_pickSwallowUp.exchange(false)) return true;   // the rest of a swallowed click
-    if (!down || !g_pickArmed.load()) return false;
+    const bool left  = msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK;
+    const bool right = msg == WM_RBUTTONDOWN || msg == WM_RBUTTONDBLCLK;
+    // Only the release of the very button we swallowed is ours; the mouse was
+    // captured on the press, so it arrives here even outside the window.
+    if (const UINT owed = g_pickSwallowUp.load(); owed != 0 && msg == owed) {
+        g_pickSwallowUp = 0;
+        if (GetCapture() == hwnd) ReleaseCapture();
+        return true;
+    }
+    if (!(left || right) || !g_pickArmed.load()) return false;
     if (g_visible && g_initialised && ImGui::GetIO().WantCaptureMouse) return false;   // a click on the overlay
 
     RECT rc{};
@@ -74,11 +81,17 @@ bool HandlePick(HWND hwnd, UINT msg, LPARAM lParam) {
     g_pickY = static_cast<short>(HIWORD(lParam));
     g_pickW = rc.right - rc.left;
     g_pickH = rc.bottom - rc.top;
-    g_pickButton = msg == WM_RBUTTONDOWN ? 1 : 0;
+    g_pickButton = right ? 1 : 0;
     g_pickArmed = false;
-    g_pickSwallowUp = true;
+    g_pickSwallowUp = right ? WM_RBUTTONUP : WM_LBUTTONUP;
+    SetCapture(hwnd);
     g_pickReady = true;
     return true;
+}
+
+bool IsReleaseMessage(UINT msg) {
+    return msg == WM_KEYUP || msg == WM_SYSKEYUP || msg == WM_LBUTTONUP || msg == WM_RBUTTONUP ||
+           msg == WM_MBUTTONUP || msg == WM_XBUTTONUP;
 }
 
 LRESULT CALLBACK HookedWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -90,8 +103,11 @@ LRESULT CALLBACK HookedWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     if (msg == WM_DESTROY) host::Shutdown();
 
     if (msg == WM_KEYDOWN && wParam == VK_INSERT) {
-        g_visible = !g_visible;
-        Logf("overlay %s", g_visible ? "shown" : "hidden");
+        // Bit 30: the key was already down - auto-repeat must not flicker it.
+        if ((lParam & (1 << 30)) == 0) {
+            g_visible = !g_visible;
+            Logf("overlay %s", g_visible ? "shown" : "hidden");
+        }
         return 0;   // swallow, so the game never sees the toggle key
     }
 
@@ -99,6 +115,10 @@ LRESULT CALLBACK HookedWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
     if (g_visible && g_initialised) {
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam);
+
+        // Releases always reach the game: a key or button pressed in the game
+        // and let go over the overlay would otherwise stay held down for it.
+        if (IsReleaseMessage(msg)) return CallWindowProcW(g_prevWndProc, hwnd, msg, wParam, lParam);
 
         const ImGuiIO& io = ImGui::GetIO();
         if (io.WantCaptureMouse && msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST)
@@ -143,8 +163,7 @@ bool EnsureInitialised(IDXGISwapChain* swapChain) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
 
-    // Keep imgui.ini in the mod's data dir, NOT the game folder - and one dir
-    // per process, so two instances do not fight over one layout file.
+    // Keep imgui.ini in the loader's data dir, NOT the game folder.
     static std::string iniPath = paths::File("imgui.ini");
     io.IniFilename = iniPath.c_str();
 
@@ -171,7 +190,12 @@ void DrawStatusTab() {
     ImGui::Text("Frames through our hook : %llu", g_frameCount);
     ImGui::Text("Backbuffer              : %u x %u", g_width, g_height);
     ImGui::Text("Overlay framerate       : %.1f FPS", ImGui::GetIO().Framerate);
-    ImGui::Text("Host                    : StoneShard.exe (GameMaker YYC, D3D11)");
+    {
+        char exe[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exe, MAX_PATH);
+        const char* name = std::strrchr(exe, '\\');
+        ImGui::Text("Host                    : %s (GameMaker YYC, D3D11)", name ? name + 1 : exe);
+    }
 
     ImGui::Separator();
 
@@ -417,16 +441,31 @@ void DrawUI() {
 } // namespace
 
 void OverlayRender(IDXGISwapChain* swapChain) {
-    if (!EnsureInitialised(swapChain)) return;
+    // A GML call made during this frame (by a mod, or the console) can present
+    // again from inside it; ImGui's frame and the mods' frame are already
+    // open, so the nested Present only lets the game draw.
+    static thread_local bool inRender = false;
+    if (inRender) return;
+    inRender = true;
+    struct Leave { ~Leave() { inRender = false; } } leave;
 
-    if (!g_rtv) {
+    // Present runs on the game's main thread: from here on, API calls that
+    // touch GML are refused from any other thread. Recorded before anything
+    // else, and whether or not the overlay itself can start.
+    gml::NoteGameThread();
+
+    // The overlay is optional; the game tick below is not. Mods keep running
+    // in a game whose swap chain our ImGui backend cannot draw on.
+    bool overlay = EnsureInitialised(swapChain);
+    if (overlay && !g_rtv) {
         CreateRenderTarget(swapChain);
-        if (!g_rtv) return;
+        overlay = g_rtv != nullptr;
     }
-
-    ImGui_ImplDX11_NewFrame();
-    ImGui_ImplWin32_NewFrame();
-    ImGui::NewFrame();
+    if (overlay) {
+        ImGui_ImplDX11_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+        ImGui::NewFrame();
+    }
 
     ++g_frameCount;
 
@@ -436,7 +475,13 @@ void OverlayRender(IDXGISwapChain* swapChain) {
     // Retires tracked enemy instances once their room stops stepping.
     enemies::Tick();
 
-    remote::Poll();
+    // The remote command file can call any builtin and write memory; it is a
+    // development tool, on only when asked for.
+    static const bool remoteOn = [] {
+        char v[8] = {};
+        return GetEnvironmentVariableA("CORELOADER_REMOTE", v, sizeof(v)) > 0 && v[0] == '1';
+    }();
+    if (remoteOn) remote::Poll();
 
     // We are on the game's render thread here, which is where GML must be
     // called from. Give the game a moment to run its own code first so the
@@ -448,10 +493,6 @@ void OverlayRender(IDXGISwapChain* swapChain) {
         builtins::SelfTest();
     }
 
-    // Present runs on the game's main thread: from here on, API calls that
-    // touch GML are refused from any other thread.
-    gml::NoteGameThread();
-
     // Before any mod runs: prove the value free/copy helpers on a probe string
     // (game thread, once). Until then the managed side treats them as absent.
     gml::VerifyValueLifetime();
@@ -459,28 +500,47 @@ void OverlayRender(IDXGISwapChain* swapChain) {
     // C# mods: initialised on their first frame, then ticked every frame.
     host::Frame();
 
-    // The game hides the OS cursor, so ImGui has to draw its own while visible.
-    ImGui::GetIO().MouseDrawCursor = g_visible;
+    if (overlay) {
+        // The game hides the OS cursor, so ImGui has to draw its own while visible.
+        ImGui::GetIO().MouseDrawCursor = g_visible;
 
-    if (g_visible)
-        DrawUI();
+        if (g_visible)
+            DrawUI();
 
-    // Render/NewFrame must stay balanced even when nothing is drawn.
-    ImGui::Render();
+        // Render/NewFrame must stay balanced even when nothing is drawn.
+        ImGui::Render();
+    }
 
     // Everything that needed a live instance this frame has run; the next
     // frame's events will supply a fresh one (only matters on runtimes without
     // a current-self global, where the observed instance is the only source).
     gml::ClearObservedSelf();
 
+    if (!overlay) return;
+
+    // The DX11 backend restores shaders, buffers and viewports but not the
+    // output-merger targets: the game's own are put back by hand, so a game
+    // that binds its target once keeps drawing where it expects.
+    ID3D11RenderTargetView* gameRtv = nullptr;
+    ID3D11DepthStencilView* gameDsv = nullptr;
+    g_context->OMGetRenderTargets(1, &gameRtv, &gameDsv);
     g_context->OMSetRenderTargets(1, &g_rtv, nullptr);
-    // The DX11 backend snapshots and restores the full pipeline state around
-    // this call, so GameMaker's own render state is left untouched.
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    g_context->OMSetRenderTargets(1, &gameRtv, gameDsv);
+    if (gameRtv) gameRtv->Release();
+    if (gameDsv) gameDsv->Release();
 }
 
 void OverlayInvalidate() {
     if (g_rtv) {
+        // Our view may still be bound; a bound reference to the backbuffer
+        // makes ResizeBuffers fail.
+        if (g_context) {
+            ID3D11RenderTargetView* bound = nullptr;
+            g_context->OMGetRenderTargets(1, &bound, nullptr);
+            if (bound == g_rtv) g_context->OMSetRenderTargets(0, nullptr, nullptr);
+            if (bound) bound->Release();
+        }
         g_rtv->Release();
         g_rtv = nullptr;
     }

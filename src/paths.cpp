@@ -57,8 +57,21 @@ void Resolve() {
                 }
             }
         }
-        // A development build run straight from the build tree.
-        if (g_dir.empty()) g_dir = MOD_DATA_DIR;
+        // A development build run straight from the build tree - only if that
+        // tree is actually on this machine; never create it on a player's drive.
+        if (g_dir.empty()) {
+            std::error_code ec;
+            if (std::filesystem::is_directory(std::filesystem::path(MOD_DATA_DIR).parent_path(), ec))
+                g_dir = MOD_DATA_DIR;
+        }
+        // Otherwise: next to the game, where the proxy dll lives.
+        if (g_dir.empty()) {
+            char exe[MAX_PATH * 2];
+            const DWORD n = GetModuleFileNameA(nullptr, exe, sizeof(exe));
+            g_dir = (n > 0 && n < sizeof(exe))
+                ? (std::filesystem::path(exe).parent_path() / "CoreLoaderLogs").string()
+                : std::string(".");
+        }
 
         std::error_code ec;
         std::filesystem::create_directories(g_dir, ec);   // failure surfaces later, as a

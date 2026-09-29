@@ -104,12 +104,23 @@ bool ReadFile(const fs::path& p, std::string* out) {
     return got > 0;
 }
 
+// Written beside the target and moved over it only once complete: a crash or a
+// full disk halfway through leaves the old save intact rather than a torn one.
 bool WriteFile(const fs::path& p, const std::string& data) {
-    std::FILE* f = _wfopen(p.c_str(), L"wb");
+    fs::path tmp = p;
+    tmp += L".tmp";
+    std::FILE* f = _wfopen(tmp.c_str(), L"wb");
     if (!f) return false;
     const std::size_t put = std::fwrite(data.data(), 1, data.size(), f);
+    const bool flushed = std::fflush(f) == 0;
     std::fclose(f);
-    return put == data.size();
+    if (put != data.size() || !flushed ||
+        !MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        std::error_code ec;
+        fs::remove(tmp, ec);
+        return false;
+    }
+    return true;
 }
 
 // The JSON body of a save, without its checksum. Returns false for anything

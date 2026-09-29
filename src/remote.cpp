@@ -174,8 +174,7 @@ void Execute(const std::string& line) {
         backup::EnsureBackupOnce();
 
         const std::size_t argc = tok.size() - 2;
-        std::vector<std::string> storage(argc);           // must outlive the call
-        std::vector<gml::RValue> args(argc ? argc : 1);
+        std::vector<gml::RValue> args(argc ? argc : 1);   // strings are interned: a builtin may keep them
 
         for (std::size_t i = 0; i < argc; ++i) {
             const std::string& t = tok[i + 2];
@@ -186,8 +185,7 @@ void Execute(const std::string& line) {
             } else if (!t.empty() && end && *end == '\0') {
                 gml::SetReal(args[i], num);
             } else {
-                storage[i] = t;
-                if (!gml::SetString(args[i], storage[i].c_str())) {
+                if (!gml::SetString(args[i], gml::Intern(t))) {
                     Reply("callb: could not build string argument %zu", i);
                     return;
                 }
@@ -224,15 +222,14 @@ void Execute(const std::string& line) {
         if (tok.size() < 3) { Reply("usage: setvar <name> <value>"); return; }
         backup::EnsureBackupOnce();
 
-        std::string storage;                              // must outlive the call
         gml::RValue v{};
         char* end = nullptr;
         const double num = std::strtod(tok[2].c_str(), &end);
         if (end && *end == '\0') {
             gml::SetReal(v, num);
         } else {
-            storage = tok[2];
-            if (!gml::SetString(v, storage.c_str())) { Reply("setvar: bad value"); return; }
+            // The variable keeps pointing at these characters: they must never go.
+            if (!gml::SetString(v, gml::Intern(tok[2]))) { Reply("setvar: bad value"); return; }
         }
 
         const builtins::Handle h = builtins::PlayerHandle();

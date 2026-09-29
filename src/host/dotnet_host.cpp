@@ -9,6 +9,7 @@
 #include "host/dotnet_host.h"
 #include "host/core_api.h"
 
+#include "gml.h"
 #include "hookengine.h"
 #include "log.h"
 
@@ -275,8 +276,20 @@ bool Start() {
 // unwinding managed frames behind the CLR's back from out here would corrupt
 // the thread's runtime state rather than contain anything.
 
+// A GML call made from managed code can present (screen_refresh, a script that
+// draws and flips): Present then re-enters us while the outer frame's values,
+// UI and mod code are still live. The nested pass does no managed work.
+thread_local bool t_inFrame = false;
+thread_local bool t_inGui   = false;
+
 void Frame() {
-    if (g_running.load(std::memory_order_acquire)) g_exports.frame();
+    if (!g_running.load(std::memory_order_acquire) || t_inFrame || gml::InManagedCode()) return;
+    t_inFrame = true;
+    {
+        gml::ManagedScope inManaged;
+        g_exports.frame();
+    }
+    t_inFrame = false;
 }
 
 void DrawModsTab() {
@@ -286,15 +299,31 @@ void DrawModsTab() {
         ImGui::TextWrapped("%s", status.c_str());
         return;
     }
-    g_exports.gui();
+    if (t_inGui || gml::InManagedCode()) return;
+    t_inGui = true;
+    {
+        gml::ManagedScope inManaged;
+        g_exports.gui();
+    }
+    t_inGui = false;
 }
 
 void Shutdown() {
     if (!g_running.exchange(false, std::memory_order_acq_rel)) return;
-    g_exports.shutdown();
-    // Hooks stay installed until the process ends; from here on they only run
-    // the originals, never managed handlers of mods that have shut down.
+    // Mods stop receiving hooked calls BEFORE they shut down: GML their
+    // OnShutdown runs (or the game runs during WM_DESTROY) must not dispatch
+    // into mods halfway through tearing themselves down. Hooks stay installed
+    // until the process ends and only run the originals from here on.
     hk::SetManagedDispatch(nullptr);
+    // WM_DESTROY sent from inside game code that a mod's handler is running
+    // under: shutting mods down now would unload code that is on the stack.
+    // Settings saved on change are already on disk; skip the managed pass.
+    if (gml::InManagedCode()) {
+        Logf("[!] host: window destroyed from inside a mod's handler; skipping managed shutdown");
+        return;
+    }
+    gml::ManagedScope inManaged;
+    g_exports.shutdown();
 }
 
 bool        Running() { return g_running.load(std::memory_order_acquire); }

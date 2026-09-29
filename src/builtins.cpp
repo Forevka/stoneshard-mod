@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <unordered_map>
 #include <vector>
 
@@ -453,12 +454,33 @@ bool Call(const std::string& name, gml::RValue* result,
     return true;
 }
 
+namespace {
+// Variable names as GML strings, one per distinct name, made once and kept for
+// the life of the process. A fresh string per call would leak one allocation
+// every time (builtins never release their arguments; compiled callers do),
+// and the runtime may keep a pointer to a new variable's name anyway, so the
+// characters must outlive the call. Game thread only, like every caller.
+bool NameArg(const char* name, gml::RValue& out) {
+    static std::unordered_map<std::string, gml::RValue> strings;
+    static std::deque<std::string> chars;   // stable addresses
+    auto it = strings.find(name);
+    if (it == strings.end()) {
+        chars.emplace_back(name);
+        gml::RValue v{};
+        if (!gml::SetString(v, chars.back().c_str())) { chars.pop_back(); return false; }
+        it = strings.emplace(chars.back(), v).first;
+    }
+    out = it->second;   // a borrowed copy: the cache keeps the one reference
+    return true;
+}
+} // namespace
+
 bool GetInstanceVar(void* instance, const char* name, gml::RValue* out) {
     if (!instance || !name || !out) return false;
 
     gml::RValue args[2]{};
     gml::SetReal(args[0], -1.0);               // GML "self": use the instance context below
-    if (!gml::SetString(args[1], name)) return false;
+    if (!NameArg(name, args[1])) return false;
 
     return Call("variable_instance_get", out, args, 2, instance) &&
            out->kind != gml::kUndefined;
@@ -551,7 +573,7 @@ bool GetVar(const Handle& h, const char* name, gml::RValue* out) {
 
     gml::RValue args[2]{};
     args[0] = h.id;
-    if (!gml::SetString(args[1], name)) return false;
+    if (!NameArg(name, args[1])) return false;
 
     return Call("variable_instance_get", out, args, 2, h.self) &&
            out->kind != gml::kUndefined && out->kind != gml::kUnset;
@@ -562,7 +584,7 @@ bool SetVar(const Handle& h, const char* name, const gml::RValue& value) {
 
     gml::RValue args[3]{};
     args[0] = h.id;
-    if (!gml::SetString(args[1], name)) return false;
+    if (!NameArg(name, args[1])) return false;
     args[2] = value;
 
     gml::RValue ignored{};
