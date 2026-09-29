@@ -19,6 +19,9 @@ public sealed class ScriptSpyMod : CoreMod
         public required string Symbol;
         public required HookHandle Before;
         public required HookHandle After;
+        // A variable of self read before and after each call ("HP"), or null.
+        // Answers "which of these scripts actually changes X" without guessing.
+        public string? Track;
         public long Calls;
         // A stack, not one slot: a watched script that calls itself (directly
         // or through others) must pair each result with its own arguments.
@@ -79,6 +82,8 @@ public sealed class ScriptSpyMod : CoreMod
 
     public override void OnInitialize()
     {
+        if (TestHost.Enabled) RegisterCommands();
+
         // Watches listed in ScriptSpy.txt next to the dll (one symbol per line)
         // start with the game - handy for functions that only run at startup.
         var file = Path.Combine(Directory, "ScriptSpy.txt");
@@ -90,23 +95,74 @@ public sealed class ScriptSpyMod : CoreMod
         }
     }
 
-    private void AddWatch(string symbol)
+    // The same watches, driven from a test script: probing a game over the pipe
+    // is how hook points are found without clicking through the overlay.
+    private void RegisterCommands()
+    {
+        TestHost.Register("spy.watch", args =>
+        {
+            if (args.Count == 0) throw new ArgumentException("spy.watch <function> [self variable to track]");
+            string symbol = Normalise(args[0].GetString() ?? "");
+            string? track = args.Count > 1 ? args[1].GetString() : null;
+            if (!AddWatch(symbol, track)) throw new InvalidOperationException(_error);
+            return symbol;
+        }, "spy.watch <function> [var]: records calls (args, self object, result; var = self's variable before->after)");
+        TestHost.Register("spy.read", args =>
+        {
+            string? only = args.Count > 0 ? Normalise(args[0].GetString() ?? "") : null;
+            return _watches.Where(w => only == null || w.Symbol == only)
+                .Select(w => new { symbol = w.Symbol, calls = w.Calls, rows = w.Rows.ToArray() }).ToArray();
+        }, "spy.read [function]: every watch (or one) with its call count and last rows, oldest first");
+        TestHost.Register("spy.clear", _ =>
+        {
+            foreach (var w in _watches) { w.Rows.Clear(); w.Calls = 0; }
+            return _watches.Count;
+        }, "spy.clear: empties every watch's rows and counts");
+        TestHost.Register("spy.unwatch", args =>
+        {
+            string which = args.Count > 0 ? args[0].GetString() ?? "all" : "all";
+            which = which == "all" ? which : Normalise(which);
+            int n = 0;
+            foreach (var w in _watches.ToArray())
+            {
+                if (which != "all" && w.Symbol != which) continue;
+                w.Before.Dispose();
+                w.After.Dispose();
+                _watches.Remove(w);
+                n++;
+            }
+            return n;
+        }, "spy.unwatch <function|all>: removes watches, answers how many");
+    }
+
+    // "scr_damage" means the script; anything already prefixed is left alone.
+    private static string Normalise(string symbol) =>
+        symbol.StartsWith("gml_", StringComparison.Ordinal) ? symbol : "gml_Script_" + symbol;
+
+    private bool AddWatch(string symbol, string? track = null)
     {
         _error = "";
-        if (symbol.Length == 0) return;
-        if (_watches.Any(w => w.Symbol == symbol)) return;
+        if (symbol.Length == 0) return false;
+        if (_watches.FirstOrDefault(w => w.Symbol == symbol) is { } existing)
+        {
+            // Watching again with a variable switches what it tracks.
+            if (track != null) existing.Track = track;
+            return true;
+        }
         try
         {
             Watch? w = null;
             var before = Hooks.Before(symbol, c => OnBefore(w!, c));
             var after = Hooks.After(symbol, c => OnAfter(w!, c));
-            w = new Watch { Symbol = symbol, Before = before, After = after };
+            w = new Watch { Symbol = symbol, Before = before, After = after, Track = track };
             _watches.Add(w);
-            Log.Info($"watching {symbol}");
+            Log.Info($"watching {symbol}" + (track != null ? $" (tracking self.{track})" : ""));
+            return true;
         }
         catch (Exception ex)
         {
             _error = ex.Message;
+            return false;
         }
     }
 
@@ -123,7 +179,8 @@ public sealed class ScriptSpyMod : CoreMod
             if (c.ArgCount > MaxArgs) parts.Add("...");
             text = w.Symbol.StartsWith("gml_Object_", StringComparison.Ordinal)
                 ? $"self={c.Self}"
-                : $"({string.Join(", ", parts)})";
+                : $"({string.Join(", ", parts)}) self={SelfName(c)}";
+            if (w.Track != null) text += $" {w.Track}={Tracked(w, c)}";
         }
         catch (Exception ex)
         {
@@ -143,6 +200,11 @@ public sealed class ScriptSpyMod : CoreMod
         string row = w.Symbol.StartsWith("gml_Object_", StringComparison.Ordinal)
             ? args
             : $"{args} -> {result}";
+        if (w.Track != null)
+        {
+            try { row += $"  [{w.Track} after={Tracked(w, c)}]"; }
+            catch (Exception ex) { row += $"  [{w.Track} unreadable: {ex.Message}]"; }
+        }
         w.Rows.Enqueue(row);
         while (w.Rows.Count > MaxRows) w.Rows.Dequeue();
 
@@ -153,6 +215,30 @@ public sealed class ScriptSpyMod : CoreMod
     }
 
     private const int LoggedCalls = 15;
+
+    // Which object the script ran as: the same script runs as the player, an
+    // enemy or a controller, and that is often the whole question.
+    private static string SelfName(HookCall c)
+    {
+        if (c.Self.IsNull) return "none";
+        try
+        {
+            var index = c.Self.Get("object_index");
+            // A number here, a typed reference on newer runtimes; object_get_name takes both.
+            return index.IsUndefined ? "?" : Game.CallBuiltin("object_get_name", index).ToString();
+        }
+        // A struct self, say: it costs this field, not the arguments beside it.
+        catch (GmlException) { return "?"; }
+    }
+
+    // Not every self has the variable (a script runs as many objects), and that
+    // must cost only this field, not the arguments beside it.
+    private static string Tracked(Watch w, HookCall c)
+    {
+        if (c.Self.IsNull) return "-";
+        try { return Describe(c.Self.Get(w.Track!)); }
+        catch (GmlException) { return "n/a"; }
+    }
 
     private static string Describe(RValue v) => v.Kind switch
     {

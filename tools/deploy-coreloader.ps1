@@ -132,6 +132,24 @@ foreach ($m in $Mods) {
         if (Test-Path -LiteralPath $p) { $found = $p; break }
     }
     if (-not $found) { throw "mod not built: $m" }
+    # Project references the mod was built with - a generated <Game>.Interop.dll,
+    # say - must sit next to it: the loader resolves them from the mod's folder.
+    # deps.json names them; CoreLoader itself is provided by the loader. They go
+    # first, so a running game's hot reload never pairs the new mod with an old
+    # dependency.
+    $deps = [IO.Path]::ChangeExtension($found, ".deps.json")
+    if (Test-Path -LiteralPath $deps) {
+        $libs = (Get-Content -LiteralPath $deps -Raw | ConvertFrom-Json).libraries
+        foreach ($lib in $libs.PSObject.Properties) {
+            if ($lib.Value.type -ne "project") { continue }
+            $depName = ($lib.Name -split '/')[0]
+            if ($depName -eq "CoreLoader" -or $depName -eq $m) { continue }
+            foreach ($ext in ".dll", ".pdb") {
+                $depFile = Join-Path (Split-Path -Parent $found) "$depName$ext"
+                if (Test-Path -LiteralPath $depFile) { Copy-Item -LiteralPath $depFile -Destination $modsDir -Force }
+            }
+        }
+    }
     Copy-Item -LiteralPath $found -Destination $modsDir -Force
     $pdb = [IO.Path]::ChangeExtension($found, ".pdb")
     if (Test-Path -LiteralPath $pdb) { Copy-Item -LiteralPath $pdb -Destination $modsDir -Force }

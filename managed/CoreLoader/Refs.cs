@@ -25,6 +25,13 @@ public class ScriptRef
     public RValue CallAs(Instance self, Instance other, params RValue[] args) =>
         Game.CallScriptAs(self, other, Symbol, args);
 
+    /// <summary>
+    /// Runs the script as the instance <paramref name="self"/> names (self and
+    /// other both), the form a mod usually holds across frames. Throws if it no
+    /// longer exists; see <see cref="Game.CallScriptAs(InstanceRef, string, RValue[])"/>.
+    /// </summary>
+    public RValue CallAs(InstanceRef self, params RValue[] args) => Game.CallScriptAs(self, Symbol, args);
+
     public HookHandle Before(HookHandler handler) => Hooks.Before(Symbol, handler);
 
     public HookHandle After(HookHandler handler) => Hooks.After(Symbol, handler);

@@ -59,6 +59,21 @@ public class LifetimeAnalyzerTests
         Assert.Empty(await Run($"class M {{ {member} }}"));
     }
 
+    // A ref struct cannot leave the stack, so its fields live no longer than a local.
+    [Theory]
+    [InlineData("ref struct S { Instance _i; public S(Instance i) => _i = i; }")]
+    [InlineData("ref struct S { RValue _v; HookCall _c; }")]
+    public async Task RefStructFields_AreClean(string type)
+    {
+        Assert.Empty(await Run(type));
+    }
+
+    [Fact]
+    public async Task RefStructStaticField_IsReported()
+    {
+        Assert.Equal(["CL0002"], await Run("ref struct S { static Instance _i; }"));
+    }
+
     [Theory]
     [InlineData("Instance _i;")]
     [InlineData("static Instance? _i;")]

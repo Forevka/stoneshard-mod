@@ -50,6 +50,11 @@ public sealed class LifetimeAnalyzer : DiagnosticAnalyzer
                 return;
         }
 
+        // A ref struct lives on the stack and cannot outlive the call that made
+        // it, so an instance field in one is as short-lived as a local. A static
+        // field is not: it lives as long as the process.
+        if (!c.Symbol.IsStatic && c.Symbol.ContainingType is { IsRefLikeType: true }) return;
+
         var location = c.Symbol.Locations.FirstOrDefault();
         if (location is null) return;
         if (Contains(type, types.RValue))

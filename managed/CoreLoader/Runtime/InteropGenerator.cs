@@ -155,13 +155,30 @@ internal static unsafe class InteropGenerator
         }
     }
 
+    // Bumped whenever the generated code changes shape, so installed interops
+    // regenerate without waiting for a new loader version.
+    private const int Format = 2;
+
     private static string Stamp()
     {
         var exe = Environment.ProcessPath ?? "";
         var info = new FileInfo(exe);
         return $"{info.Length}|{info.LastWriteTimeUtc.Ticks}|{Game.Symbols.Count}|{Game.BuiltinCount}|" +
-               $"{typeof(InteropGenerator).Assembly.GetName().Version}";
+               $"{typeof(InteropGenerator).Assembly.GetName().Version}|f{Format}";
     }
+
+    // GameMaker's built-in instance variables. Every instance has them, but
+    // variable_instance_get_names does not list them, so the harvest never sees
+    // them: without this list a mod reading x or object_index falls back to strings.
+    private static readonly string[] BuiltinInstanceVars =
+    {
+        "id", "object_index", "x", "y", "xstart", "ystart", "xprevious", "yprevious",
+        "direction", "speed", "hspeed", "vspeed", "friction", "gravity", "gravity_direction",
+        "sprite_index", "image_index", "image_speed", "image_number", "image_xscale", "image_yscale",
+        "image_angle", "image_alpha", "image_blend", "sprite_width", "sprite_height",
+        "sprite_xoffset", "sprite_yoffset", "mask_index", "bbox_left", "bbox_right", "bbox_top", "bbox_bottom",
+        "depth", "layer", "visible", "solid", "persistent", "alarm",
+    };
 
     // ------------------------------------------------------------------ model
 
@@ -423,6 +440,10 @@ internal static unsafe class InteropGenerator
     private static string ObjectsSource(string ns, IEnumerable<ObjectInfo> objects, IReadOnlyDictionary<string, string[]> known)
     {
         var sb = new StringBuilder(Header(ns));
+        sb.Append("/// <summary>GameMaker's built-in instance variables, which every instance has (each harvested <c>Vars</c> class repeats them).</summary>\n");
+        sb.Append("public static class InstanceVars\n{\n");
+        foreach (var v in BuiltinInstanceVars) sb.Append($"    public const string {Ident(v)} = \"{v}\";\n");
+        sb.Append("}\n\n");
         sb.Append("/// <summary>Every object in the game, with its events.</summary>\n");
         sb.Append("public static class Objects\n{\n");
         var used = new HashSet<string>(StringComparer.Ordinal) { "Objects" };
@@ -442,12 +463,14 @@ internal static unsafe class InteropGenerator
             sb.Append($"        public static global::CoreLoader.InstanceRef? First => Object is {{ InstanceCount: > 0 }} o ? o.Instance(0) : null;\n");
             var members = new HashSet<string>(StringComparer.Ordinal) { "Name", "Object", "First", "Vars", id };
 
+            // Only for objects seen live: repeating the built-ins on all of a big
+            // game's objects would double the file. The rest have InstanceVars.
             if (known.TryGetValue(o.Name, out var vars) && vars.Length > 0)
             {
-                sb.Append($"        /// <summary>Variables seen on live {o.Name} instances (harvested while playing).</summary>\n");
+                sb.Append($"        /// <summary>Variables seen on live {o.Name} instances (harvested while playing), and the built-in ones.</summary>\n");
                 sb.Append("        public static class Vars\n        {\n");
                 var seen = new HashSet<string>(StringComparer.Ordinal) { "Vars" };
-                foreach (var v in vars)
+                foreach (var v in vars.Concat(BuiltinInstanceVars))
                 {
                     var vid = Ident(v);
                     if (!seen.Add(vid)) continue;
