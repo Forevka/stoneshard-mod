@@ -115,6 +115,8 @@ internal static unsafe class Entry
             // mod code is on the stack.
             if (_initialisedMods) Stage("hot reload", ModManager.PollChanges);
             Stage("queued actions", () => Game.DrainPending(Log));
+            Stage("hook request timeouts", Hooks.TickRequests);
+            Stage("object table", ObjectTable.Tick);
             Stage("interop", InteropGenerator.Tick);
             Stage("variable harvest", VarHarvest.Tick);
             Stage("updates", () => ModManager.ForEach(nameof(CoreMod.OnUpdate), mod => mod.OnUpdate()));

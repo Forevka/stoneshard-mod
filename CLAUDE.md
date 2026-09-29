@@ -13,7 +13,7 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 | Path | What |
 |---|---|
 | `src/` | Native loader. `dllmain.cpp` (init thread), `symbols.cpp` (gml_* table), `gml.cpp` (runtime bridge: strings, calls, value free/copy, self-tests), `builtins.cpp` (builtin registry), `hookengine.cpp` (thunk detours shared by native and managed users), `overlay.cpp` (ImGui, WndProc, pick mode, per-frame tick), `host/` (.NET hosting, `core_api.h/.cpp` = the C ABI), `hooks.cpp` (D3D11 Present hook), `proxy.cpp`, `paths.cpp`, `log.cpp` |
-| `managed/CoreLoader/` | The runtime mods reference: `Game`, `Hooks`, `Values`, `RValue`, `Globals`/`GmlObject`/`InstanceRef`, `UI`, `Content`, `GameDraw`, `Input`, `Code`, `ModConfig`; `Runtime/` = entry points, mod manager (hot reload), interop generator |
+| `managed/CoreLoader/` | The runtime mods reference: `Game`, `Hooks`, `Values`, `RValue`, `Globals`/`GmlObject`/`InstanceRef`, `ObjectTable`, `DsMap`/`DsList`, `UI`, `Content`, `GameDraw`, `Input`, `Code`, `ModConfig`; `Runtime/` = entry points, mod manager (hot reload), interop generator |
 | `managed/Mods/` | Shipped mods (Console + Inspector, ScriptSpy, GlobalsEditor, InstanceInspector, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost, StoneshardCheats) |
 | `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, CoexistProbe, FaultyGuiMod, ReflectionProbe, VarProbeMod, WidgetProbe (every UI widget, and scope unwind under faults) |
 | `managed/Examples/`, `managed/Templates/CoreLoaderMod/` | HelloMod, InteropExample; the `dotnet new coreloader-mod` template |
