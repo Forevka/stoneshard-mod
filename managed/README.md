@@ -30,6 +30,12 @@ The game folder ends up with:
 Players need the .NET 10 runtime. It can also be shipped privately in `CoreLoader\dotnet\`. The
 overlay (**INSERT**) has a *Mods* tab that shows the loader's status and one tab per mod.
 
+The log is `CoreLoader\Logs\coreloader.log`. The previous session's log is kept as
+`coreloader.prev.log`, so a crash's trail survives the next launch. An identical line repeated many
+times a second is written a few times, then summarised. The remote command file (a development
+tool that can call any builtin) is only read when the environment variable `CORELOADER_REMOTE=1`
+is set.
+
 ## The mod-author workflow
 
 1. Install CoreLoader and start the game once.
@@ -139,6 +145,13 @@ The rules the loader enforces:
   later `Values.Free(ref v)`. Structs are garbage-collected rather than reference-counted, and the
   collector can't see a pointer held in C#. So `Keep` also roots a kept struct in a GML array (the
   global `__coreloader_roots`), and `Free` takes it out again.
+- A script with mod hooks on it is called with private copies of its arguments. `SetArg` changes
+  what the original and later handlers see, and nothing else: not the caller's variables, and not
+  the constants the compiler passes literals from. So a multiplier can't compound.
+- Everything a mod registers belongs to it, including registrations made in its constructor or from
+  a background task, and goes when it unloads. That covers hooks, draw handlers, content, a pick in
+  progress, kept structs and queued actions. A hot reload loads the new build first; if it can't
+  load yet, the running copy stays.
 - GML is single-threaded. From another thread, the loader refuses every call that touches it
   (builtins, scripts, strings, value free/copy), including calls from native plugins, and logs the
   refusal.

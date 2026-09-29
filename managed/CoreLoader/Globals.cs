@@ -9,11 +9,11 @@ public static class Globals
     // GML's `global` keyword compiles to this instance id.
     private const double GlobalId = -5;
 
-    public static RValue Get(string name) => Game.CallBuiltin("variable_global_get", name);
+    public static RValue Get(string name) => Game.CallWithName(default, "variable_global_get", 0, name);
 
-    public static void Set(string name, RValue value) => Game.CallBuiltin("variable_global_set", name, value);
+    public static void Set(string name, RValue value) => Game.CallWithName(default, "variable_global_set", 0, name, value);
 
-    public static bool Exists(string name) => Game.CallBuiltin("variable_global_exists", name).AsBool;
+    public static bool Exists(string name) => Game.CallWithName(default, "variable_global_exists", 0, name).AsBool;
 
     /// <summary>Every global variable name, as the runtime lists them.</summary>
     public static IReadOnlyList<string> Names() =>
@@ -45,10 +45,10 @@ public static class Gml
         Gml.ToStringList(Game.CallBuiltin("variable_struct_get_names", structValue));
 
     public static RValue StructGet(RValue structValue, string name) =>
-        Game.CallBuiltin("variable_struct_get", structValue, name);
+        Game.CallWithName(default, "variable_struct_get", 1, name, structValue);
 
     public static void StructSet(RValue structValue, string name, RValue value) =>
-        Game.CallBuiltin("variable_struct_set", structValue, name, value);
+        Game.CallWithName(default, "variable_struct_set", 1, name, structValue, value);
 }
 
 /// <summary>
@@ -132,11 +132,11 @@ public readonly record struct InstanceRef(RValue Id)
 {
     public bool Exists => !Id.IsUndefined && Game.CallBuiltin("instance_exists", Id).AsBool;
 
-    public RValue Get(string variable) => Game.CallBuiltin("variable_instance_get", Id, variable);
+    public RValue Get(string variable) => Game.CallWithName(default, "variable_instance_get", 1, variable, Id);
 
-    public void Set(string variable, RValue value) => Game.CallBuiltin("variable_instance_set", Id, variable, value);
+    public void Set(string variable, RValue value) => Game.CallWithName(default, "variable_instance_set", 1, variable, Id, value);
 
-    public bool Has(string variable) => Game.CallBuiltin("variable_instance_exists", Id, variable).AsBool;
+    public bool Has(string variable) => Game.CallWithName(default, "variable_instance_exists", 1, variable, Id).AsBool;
 
     public IReadOnlyList<string> VariableNames() =>
         Gml.ToStringList(Game.CallBuiltin("variable_instance_get_names", Id));

@@ -35,7 +35,7 @@ public static class GameDraw
     {
         ArgumentNullException.ThrowIfNull(draw);
         Loader.EnsureGameThread();
-        var entry = (draw, ModManager.Current);
+        var entry = (draw, ModManager.OwnerOf(draw));
         Handlers.Add(entry);
         return new Registration(() => Handlers.Remove(entry));
     }

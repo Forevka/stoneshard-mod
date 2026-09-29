@@ -25,6 +25,7 @@ public static unsafe class Code
     private const int MaxBytes = 256 * 1024;
 
     private static nint[]? _starts;
+    private static byte[] _buffer = Array.Empty<byte>();
     private static Dictionary<nint, string>? _names;
     private static readonly Dictionary<string, CodeInfo> Cache = new(StringComparer.Ordinal);
 
@@ -48,12 +49,13 @@ public static unsafe class Code
     }
 
     /// <summary>
-    /// Functions whose code calls <paramref name="symbol"/>. Scans every
-    /// function, so it takes a moment in a large game: <paramref name="budget"/>
-    /// functions per call, resumed from <paramref name="cursor"/> (start at 0;
-    /// finished when it comes back as -1).
+    /// Functions whose code calls <paramref name="symbol"/> - a script, event
+    /// or builtin. Scans every function, so it takes a moment in a large game:
+    /// each call works for at most <paramref name="millisecondBudget"/> ms,
+    /// resumed from <paramref name="cursor"/> (start at 0; finished when it
+    /// comes back as -1). Call it once a frame until then.
     /// </summary>
-    public static IReadOnlyList<string> FindCallers(string symbol, ref int cursor, int budget = 2000)
+    public static IReadOnlyList<string> FindCallers(string symbol, ref int cursor, double millisecondBudget = 4)
     {
         Loader.EnsureGameThread();
         nint target = Game.FindSymbol(symbol);
@@ -67,9 +69,13 @@ public static unsafe class Code
         if ((target == 0 && registry < 0) || cursor < 0) { cursor = -1; return found; }
 
         var all = Game.Symbols;
-        int end = (int)Math.Min(all.Count, (long)cursor + budget);
-        for (int i = cursor; i < end; i++)
+        long deadline = System.Diagnostics.Stopwatch.GetTimestamp() +
+                        (long)(millisecondBudget * System.Diagnostics.Stopwatch.Frequency / 1000);
+        int i = cursor;
+        for (; i < all.Count; i++)
         {
+            // Checked every few functions: reading the clock costs more than a small function.
+            if ((i & 15) == 0 && i > cursor && System.Diagnostics.Stopwatch.GetTimestamp() > deadline) break;
             var s = all[i];
             if (s.Address == 0) continue;
             var bytes = Read(s.Address, out _);
@@ -77,7 +83,7 @@ public static unsafe class Code
                 (registry >= 0 && CallsBuiltin(s.Address, bytes, registry)))
                 found.Add(s.Name);
         }
-        cursor = end >= all.Count ? -1 : end;
+        cursor = i >= all.Count ? -1 : i;
         return found;
     }
 
@@ -96,7 +102,10 @@ public static unsafe class Code
         nint next = at >= 0 && at + 1 < _starts.Length ? _starts[at + 1] : 0;
         int limit = next > addr ? (int)Math.Min(next - addr, MaxBytes) : 4096;
 
-        var buf = new byte[limit];
+        // One buffer, reused: a callers search reads tens of thousands of
+        // functions, and every caller consumes the span before the next read.
+        if (_buffer.Length < limit) _buffer = new byte[Math.Max(limit, 64 * 1024)];
+        var buf = _buffer;
         int len = limit;
         fixed (byte* p = buf)
         {

@@ -11,7 +11,12 @@ namespace CoreLoader.Runtime;
 internal static unsafe class Entry
 {
     private static readonly Logger Log = new("CoreLoader");
-    private static bool _initialisedMods, _announcedWait;
+    private static bool _initialisedMods, _announcedWait, _probed;
+
+    // Re-entry: a GML call made during a frame can present again from inside
+    // it. The nested pass must not drain the pool the outer one still uses,
+    // nor reload a mod whose code is on the stack. (The host guards too.)
+    private static bool _inFrame, _inGui;
     private static System.Diagnostics.Stopwatch? _startWait;
 
     [UnmanagedCallersOnly]
@@ -54,6 +59,15 @@ internal static unsafe class Entry
     {
         Loader.MarkGameThread();
         if (_initialisedMods) return;
+        // The native side proves the value helpers on the first frame, before
+        // this runs: pick up the verdict at once - the loader's own tools call
+        // the game while mods are still waiting, and must release what they get.
+        if (!_probed)
+        {
+            _probed = true;
+            Values.Probe();
+            Log.Info($"value lifetime: free {(Values.CanFree ? "yes" : "no")} / copy {(Values.CanCopy ? "yes" : "no")}");
+        }
         // Mods start once the game has its assets: some games (Stoneshard)
         // load sprites, sounds and rooms seconds after the first frame, and a
         // sprite added before that would take a slot the game is about to fill.
@@ -68,10 +82,6 @@ internal static unsafe class Entry
         _initialisedMods = true;
         ModManager.Started = true;
         if (_announcedWait) Log.Info($"starting mods after {_startWait.Elapsed.TotalSeconds:0.0} s");
-        // The native side proves the value helpers on the first frame (before
-        // this runs); pick up the verdict before any mod gets to use values.
-        Values.Probe();
-        Log.Info($"value lifetime: free {(Values.CanFree ? "yes" : "no")} / copy {(Values.CanCopy ? "yes" : "no")}");
         // Attribute hooks first, so OnInitialize can rely on them being live.
         // Only mods still waiting: never a second start for one already running.
         foreach (var m in ModManager.Mods.ToList())
@@ -94,6 +104,8 @@ internal static unsafe class Entry
     [UnmanagedCallersOnly]
     private static void Frame()
     {
+        if (_inFrame || _inGui) return;
+        _inFrame = true;
         // Each stage is isolated: one failing (a half-written dll, a full disk)
         // must not cost every mod its update, and the pool must drain regardless.
         try
@@ -112,6 +124,7 @@ internal static unsafe class Entry
         finally
         {
             try { Values.Drain(); } catch (Exception ex) { Log.Error("releasing the frame's values failed", ex); }
+            _inFrame = false;
         }
     }
 
@@ -124,6 +137,8 @@ internal static unsafe class Entry
     [UnmanagedCallersOnly]
     private static void Gui()
     {
+        if (_inFrame || _inGui) return;
+        _inGui = true;
         int baseMark = UI.Mark;
         UI.InGui = true;
         try
@@ -151,9 +166,18 @@ internal static unsafe class Entry
         {
             // Whatever is still open - ours after an exception, or anything that
             // slipped past a mod's own unwind - is closed before ImGui sees End().
-            UI.UnwindTo(baseMark);
-            UI.InGui = false;
-            Values.Drain();
+            try
+            {
+                UI.UnwindTo(baseMark);
+                UI.InGui = false;
+                Values.Drain();
+            }
+            catch (Exception ex)
+            {
+                // Nothing may leave an [UnmanagedCallersOnly] method.
+                try { Log.Error("closing the GUI pass failed", ex); } catch { }
+            }
+            _inGui = false;
         }
     }
 

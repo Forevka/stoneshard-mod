@@ -75,6 +75,27 @@ public static unsafe class UI
             throw new InvalidOperationException("UI can only be used inside OnGUI.");
     }
 
+    /// <summary>
+    /// Runs part of a tab that may fail (it reads the live game, say). On an
+    /// exception, every scope <paramref name="draw"/> opened is closed and
+    /// <paramref name="onError"/> gets the exception - the rest of the tab
+    /// carries on, and the mod is not disabled for it.
+    /// </summary>
+    public static void Guarded(Action draw, Action<Exception> onError)
+    {
+        Guard();
+        int mark = Mark;
+        try
+        {
+            draw();
+        }
+        catch (Exception ex)
+        {
+            UnwindTo(mark);
+            onError(ex);
+        }
+    }
+
     public static void Text(string text)
     {
         Guard();
@@ -140,11 +161,7 @@ public static unsafe class UI
         Guard();
         ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 2);
         value ??= "";
-
-        var buf = new byte[maxBytes];
-        Encoding.UTF8.GetEncoder().Convert(value.AsSpan(), buf.AsSpan(0, maxBytes - 1), flush: true,
-                                           out _, out int written, out _);
-        buf[written] = 0;
+        var buf = TextBuffer(value, maxBytes);
 
         bool changed;
         fixed (byte* l = Utf8.Get(label))
@@ -167,10 +184,7 @@ public static unsafe class UI
         Guard();
         ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 2);
         value ??= "";
-        var buf = new byte[maxBytes];
-        Encoding.UTF8.GetEncoder().Convert(value.AsSpan(), buf.AsSpan(0, maxBytes - 1), flush: true,
-                                           out _, out int written, out _);
-        buf[written] = 0;
+        var buf = TextBuffer(value, maxBytes);
 
         const int EnterReturnsTrue = 1 << 6, AutoSelectAll = 1 << 12;
         bool enter;
@@ -180,6 +194,20 @@ public static unsafe class UI
         int end = Array.IndexOf(buf, (byte)0);
         value = Encoding.UTF8.GetString(buf, 0, end < 0 ? buf.Length : end);
         return enter;
+    }
+
+    // An input's editing buffer: the text as UTF-8, cut on a character boundary
+    // to fit maxBytes-1 bytes, NUL-terminated. (Encoder.Convert throws when the
+    // space cannot hold even the first character; this simply keeps less.)
+    private static byte[] TextBuffer(string value, int maxBytes)
+    {
+        var buf = new byte[maxBytes];
+        var bytes = Encoding.UTF8.GetBytes(value);
+        int n = Math.Min(bytes.Length, maxBytes - 1);
+        while (n > 0 && n < bytes.Length && (bytes[n] & 0xC0) == 0x80) n--;   // not inside a character
+        Array.Copy(bytes, buf, n);
+        buf[n] = 0;
+        return buf;
     }
 
     public static bool CollapsingHeader(string label)
@@ -254,7 +282,9 @@ public static unsafe class UI
     {
         Guard();
         bool open;
-        fixed (byte* l = Utf8.Get(label)) open = Loader.Api->UiTreeNode(l) != 0;
+        // Not cached: tree labels usually carry a live value, and every
+        // distinct value would otherwise become a cache entry.
+        fixed (byte* l = Utf8.Encode(label)) open = Loader.Api->UiTreeNode(l) != 0;
         if (open) Open.Add(Scope.Tree);
         return open;
     }
@@ -311,36 +341,75 @@ public static unsafe class UI
         Guard();
         ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 2);
         if (cursor >= history.Count || cursor < -1) cursor = -1;
-        var buf = new byte[maxBytes];
-        System.Text.Encoding.UTF8.GetEncoder().Convert((value ?? "").AsSpan(), buf.AsSpan(0, maxBytes - 1), true,
-                                                       out _, out int written, out _);
-        buf[written] = 0;
+        var buf = TextBuffer(value ?? "", maxBytes);
 
-        // History entries are passed as NUL-terminated UTF-8, pinned for the call.
-        var handles = new System.Runtime.InteropServices.GCHandle[history.Count];
-        var ptrs = new nint[history.Count];
-        try
+        var block = HistoryBlock.For(history);
+        int c = cursor;
+        bool enter;
+        fixed (byte* l = Utf8.Get(label))
+        fixed (byte* b = buf)
+            enter = Loader.Api->UiInputHistory(l, b, maxBytes, block.Pointers, block.Count, &c) != 0;
+        cursor = c;
+        int end = Array.IndexOf(buf, (byte)0);
+        value = Encoding.UTF8.GetString(buf, 0, end < 0 ? buf.Length : end);
+        return enter;
+    }
+
+    /// <summary>
+    /// A history list as the native side takes it - NUL-terminated UTF-8
+    /// strings and an array of pointers to them - in unmanaged memory, rebuilt
+    /// only when the list's contents change rather than re-encoded and pinned
+    /// every frame.
+    /// </summary>
+    private sealed class HistoryBlock
+    {
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, HistoryBlock> Blocks = new();
+
+        private byte* _text;
+        private byte** _ptrs;
+        private int _signature;
+
+        public byte** Pointers => _ptrs;
+        public int Count { get; private set; }
+
+        public static HistoryBlock For(IReadOnlyList<string> history)
         {
-            for (int i = 0; i < history.Count; i++)
+            var block = Blocks.GetValue(history, _ => new HistoryBlock());
+            int sig = history.Count;
+            foreach (var s in history) sig = HashCode.Combine(sig, s);
+            if (block._ptrs == null || sig != block._signature || block.Count != history.Count)
+                block.Rebuild(history, sig);
+            return block;
+        }
+
+        private void Rebuild(IReadOnlyList<string> history, int signature)
+        {
+            Release();
+            var encoded = history.Select(s => Encoding.UTF8.GetBytes(s ?? "")).ToArray();
+            nuint total = 0;
+            foreach (var e in encoded) total += (nuint)e.Length + 1;
+            _text = (byte*)System.Runtime.InteropServices.NativeMemory.Alloc(Math.Max(total, 1));
+            _ptrs = (byte**)System.Runtime.InteropServices.NativeMemory.Alloc((nuint)Math.Max(encoded.Length, 1), (nuint)sizeof(byte*));
+            byte* at = _text;
+            for (int i = 0; i < encoded.Length; i++)
             {
-                handles[i] = System.Runtime.InteropServices.GCHandle.Alloc(Utf8.Encode(history[i]),
-                    System.Runtime.InteropServices.GCHandleType.Pinned);
-                ptrs[i] = handles[i].AddrOfPinnedObject();
+                _ptrs[i] = at;
+                encoded[i].AsSpan().CopyTo(new Span<byte>(at, encoded[i].Length));
+                at[encoded[i].Length] = 0;
+                at += encoded[i].Length + 1;
             }
-            int c = cursor;
-            bool enter;
-            fixed (byte* l = Utf8.Get(label))
-            fixed (byte* b = buf)
-            fixed (nint* h = ptrs)
-                enter = Loader.Api->UiInputHistory(l, b, maxBytes, (byte**)h, history.Count, &c) != 0;
-            cursor = c;
-            int end = Array.IndexOf(buf, (byte)0);
-            value = System.Text.Encoding.UTF8.GetString(buf, 0, end < 0 ? buf.Length : end);
-            return enter;
+            Count = encoded.Length;
+            _signature = signature;
         }
-        finally
+
+        private void Release()
         {
-            foreach (var h in handles) if (h.IsAllocated) h.Free();
+            if (_text != null) System.Runtime.InteropServices.NativeMemory.Free(_text);
+            if (_ptrs != null) System.Runtime.InteropServices.NativeMemory.Free(_ptrs);
+            _text = null;
+            _ptrs = null;
         }
+
+        ~HistoryBlock() => Release();
     }
 }

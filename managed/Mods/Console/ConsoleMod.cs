@@ -33,7 +33,12 @@ public sealed class ConsoleMod : CoreMod
         _gameDrawing = GameDraw.OnGui(_inspector.DrawGame);
     }
 
-    public override void OnUpdate() => _inspector?.Update();
+    public override void OnUpdate()
+    {
+        _inspector?.Update();
+        try { AdvanceCallers(); }
+        catch (Exception ex) { Print($"callers search stopped: {ex.Message}", 1f, 0.5f, 0.45f); _callersOf = null; }
+    }
 
     private long _lastDrawn;
 
@@ -82,6 +87,7 @@ public sealed class ConsoleMod : CoreMod
         foreach (var (b, a) in _hooks.Values) { b.Dispose(); a.Dispose(); }
         _gameDrawing?.Dispose();
         _inspector?.Release();
+        _eval.Release();
         Config.Set("history", string.Join('\n', _history.TakeLast(100)));
     }
 
@@ -235,18 +241,25 @@ public sealed class ConsoleMod : CoreMod
         // reached again from inside), and each After must print its own call.
         var pending = new Stack<(long N, string Args)>();
         bool isEvent = symbol.StartsWith("gml_Object_", StringComparison.Ordinal);
+        // Formatting asks the game about the values (typeof, struct names); a
+        // failure there must cost one line of output, not fault the console.
         var before = Hooks.Before(symbol, c =>
         {
             calls++;
-            var args = Enumerable.Range(0, Math.Min(c.ArgCount, 8)).Select(i => Format(c.GetArg(i)));
-            pending.Push((calls, $"({string.Join(", ", args)})"));
+            string text;
+            try { text = $"({string.Join(", ", Enumerable.Range(0, Math.Min(c.ArgCount, 8)).Select(i => Format(c.GetArg(i))))})"; }
+            catch (Exception ex) { text = $"(arguments unreadable: {ex.Message})"; }
+            pending.Push((calls, text));
         });
         var after = Hooks.After(symbol, c =>
         {
             var (n, args) = pending.Count > 0 ? pending.Pop() : (calls, "");
             // Throttled: a Step event can fire thousands of times a second.
-            if (n <= 20 || n % 500 == 0)
-                Print($"[{symbol} #{n}] {args}{(isEvent ? "" : " -> " + Format(c.Result))}", 0.85f, 0.8f, 0.5f);
+            if (n > 20 && n % 500 != 0) return;
+            string result;
+            try { result = isEvent ? "" : " -> " + Format(c.Result); }
+            catch (Exception ex) { result = $" -> (unreadable: {ex.Message})"; }
+            Print($"[{symbol} #{n}] {args}{result}", 0.85f, 0.8f, 0.5f);
         });
         _hooks[symbol] = (before, after);
         Print($"hooked {symbol}");
@@ -289,15 +302,33 @@ public sealed class ConsoleMod : CoreMod
         _inspector?.ShowCode(info.Name);
     }
 
+    // A callers search reads every function in the game: it runs a few
+    // milliseconds per frame (OnUpdate) rather than freezing one frame.
+    private string? _callersOf;
+    private int _callersCursor = -1;
+    private readonly List<string> _callersFound = new();
+
     private void Callers(string symbol)
     {
         if (symbol.Length == 0) throw new ConsoleError("callers <script, event or builtin>");
         var target = CoreLoader.Code.Describe(symbol)?.Name ?? symbol;
-        int cursor = 0;
-        var found = CoreLoader.Code.FindCallers(target, ref cursor, int.MaxValue);
-        Print($"{found.Count} caller(s) of {target}:", 0.6f, 0.85f, 1f);
-        foreach (var c in found.Take(100)) Print("  " + c);
-        if (found.Count > 100) Print($"  ... and {found.Count - 100} more");
+        if (CoreLoader.Code.Describe(target) == null && CoreLoader.Code.BuiltinAddress(target) == 0)
+            throw new ConsoleError($"{symbol} is not a compiled function or a builtin");
+        _callersOf = target;
+        _callersCursor = 0;
+        _callersFound.Clear();
+        Print($"searching for callers of {target}...", 0.6f, 0.6f, 0.65f);
+    }
+
+    private void AdvanceCallers()
+    {
+        if (_callersOf == null) return;
+        _callersFound.AddRange(CoreLoader.Code.FindCallers(_callersOf, ref _callersCursor));
+        if (_callersCursor >= 0) return;
+        Print($"{_callersFound.Count} caller(s) of {_callersOf}:", 0.6f, 0.85f, 1f);
+        foreach (var c in _callersFound.Take(100)) Print("  " + c);
+        if (_callersFound.Count > 100) Print($"  ... and {_callersFound.Count - 100} more");
+        _callersOf = null;
     }
 
     private void Unhook(string symbol)

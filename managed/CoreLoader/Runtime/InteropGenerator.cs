@@ -52,15 +52,42 @@ internal static unsafe class InteropGenerator
     /// <summary>Regenerates on the next frame, now, regardless of the stamp.</summary>
     public static void RequestRegenerate()
     {
+        if (_job != null || _writer != null) return;   // one is already under way
         VarHarvest.Flush();
         MarkStale();
         _done = false;
         _waitFrames = 1800;   // assets are certainly loaded by now
     }
 
+    // Generation never freezes the game: what needs the game (objects, assets,
+    // builtins - tens of thousands of builtin calls in a big game) is collected
+    // a few milliseconds per frame, and what does not (scanning code for
+    // argument counts, writing several MB of source) runs on a worker thread.
+    private const double SliceMs = 4;
+    private static IEnumerator<bool>? _job;
+    private static Task? _writer;
+    private static System.Diagnostics.Stopwatch? _clock;
+    private static string _stamp = "";
+
     /// <summary>Called every frame; does its work once, when builtins are available.</summary>
     public static void Tick()
     {
+        if (_writer != null)
+        {
+            if (!_writer.IsCompleted) return;
+            if (_writer.Exception is { } ex)
+            {
+                Status = $"failed: {ex.GetBaseException().Message}";
+                Log.Error("interop generation failed", ex.GetBaseException());
+            }
+            _writer = null;
+            return;
+        }
+        if (_job != null)
+        {
+            RunSlice();
+            return;
+        }
         if (_done) return;
         ++_waitFrames;
         // Builtins resolve a moment after startup, and some games (Stoneshard)
@@ -76,27 +103,40 @@ internal static unsafe class InteropGenerator
 
         try
         {
-            var stamp = Stamp();
+            _stamp = Stamp();
             var stampFile = Path.Combine(OutputDirectory, ".stamp");
-            if (File.Exists(stampFile) && File.ReadAllText(stampFile) == stamp)
+            if (File.Exists(stampFile) && File.ReadAllText(stampFile) == _stamp)
             {
                 Status = $"up to date: {OutputDirectory}";
                 return;
             }
-
-            var sw = System.Diagnostics.Stopwatch.StartNew();
+            _clock = System.Diagnostics.Stopwatch.StartNew();
             _degraded = _waitFrames >= 1800 && !Game.AssetsLoaded();
-            Generate();
-            // A scan that gave up waiting or was cut short is not stamped, so
-            // the next launch tries again instead of keeping a partial map.
-            if (_degraded) File.Delete(stampFile);
-            else File.WriteAllText(stampFile, stamp);
-            Status = $"generated{(_degraded ? " (partial - will retry next launch)" : "")} " +
-                     $"in {sw.ElapsedMilliseconds} ms: {OutputDirectory}";
-            Log.Info($"interop {Status}");
+            Status = "collecting from the game...";
+            _job = Collect().GetEnumerator();
+            RunSlice();
         }
         catch (Exception ex)
         {
+            Status = $"failed: {ex.Message}";
+            Log.Error("interop generation failed", ex);
+        }
+    }
+
+    private static void RunSlice()
+    {
+        long deadline = System.Diagnostics.Stopwatch.GetTimestamp() +
+                        (long)(SliceMs * System.Diagnostics.Stopwatch.Frequency / 1000);
+        try
+        {
+            while (System.Diagnostics.Stopwatch.GetTimestamp() < deadline)
+            {
+                if (!_job!.MoveNext()) { _job = null; return; }
+            }
+        }
+        catch (Exception ex)
+        {
+            _job = null;
             Status = $"failed: {ex.Message}";
             Log.Error("interop generation failed", ex);
         }
@@ -114,109 +154,157 @@ internal static unsafe class InteropGenerator
 
     private sealed record ObjectInfo(string Name, int Index, List<(string Member, string Symbol)> Events);
 
-    private static void Generate()
+    // Everything generation needs from the game, collected on the game thread.
+    private sealed class Snapshot
+    {
+        public List<string> Scripts = new();
+        public Dictionary<string, nint> Addresses = new(StringComparer.Ordinal);
+        public nint[] Starts = Array.Empty<nint>();
+        public SortedDictionary<string, ObjectInfo> Objects = new(StringComparer.Ordinal);
+        public List<(string Name, int Arity)> Builtins = new();
+        public List<string> Sprites = new(), Rooms = new(), Sounds = new();
+        // A copy: the harvester keeps adding to its own on the game thread.
+        public Dictionary<string, string[]> Variables = new(StringComparer.Ordinal);
+    }
+
+    // The game-thread part, as steps: every `yield` is a point where the frame
+    // may end and the rest continue next frame.
+    private static IEnumerable<bool> Collect()
+    {
+        var snap = new Snapshot();
+        snap.Scripts = Game.Symbols.Where(s => s.IsScript && !s.Name.Contains('@')).Select(s => s.Name).ToList();
+        foreach (var s in Game.Symbols) if (s.Address != 0) snap.Addresses.TryAdd(s.Name, s.Address);
+        // Every function's start, in address order: each script is scanned only
+        // up to the next function, never into its neighbour.
+        snap.Starts = snap.Addresses.Values.Distinct().OrderBy(a => a).ToArray();
+        yield return true;
+
+        // Objects: indices are dense from 0; stop after a run of misses.
+        int misses = 0;
+        for (int i = 0; misses < 64 && i < 100_000; i++)
+        {
+            bool exists;
+            string name = "";
+            try
+            {
+                exists = Game.CallBuiltin("object_exists", i).AsBool;
+                if (exists) name = Game.CallBuiltin("object_get_name", i).ToString();
+            }
+            catch (GmlException ex)
+            {
+                Log.Warning($"interop: object scan stopped: {ex.Message}");
+                _degraded = true;
+                break;
+            }
+            if (!exists) { misses++; continue; }
+            misses = 0;
+            snap.Objects[name] = new ObjectInfo(name, i, new());
+            if ((i & 127) == 0) yield return true;
+        }
+        foreach (var s in Game.Symbols.Where(s => s.IsObjectEvent))
+        {
+            if (!SplitEvent(s.Name, out var obj, out var member)) continue;
+            if (!snap.Objects.TryGetValue(obj, out var info)) snap.Objects[obj] = info = new ObjectInfo(obj, -1, new());
+            info.Events.Add((member, s.Name));
+        }
+        yield return true;
+
+        for (int i = 0; i < Game.BuiltinCount; i++)
+        {
+            var name = BuiltinName(i);
+            if (name != null) snap.Builtins.Add((name, Game.BuiltinArity(name) ?? -1));
+            if ((i & 255) == 0) yield return true;
+        }
+
+        // Sprites and sounds mods added at runtime are not part of the game.
+        foreach (var step in EnumerateAssets("sprite_exists", "sprite_get_name", snap.Sprites, Content.IsModSprite)) yield return step;
+        foreach (var step in EnumerateAssets("room_exists", "room_get_name", snap.Rooms)) yield return step;
+        foreach (var step in EnumerateAssets("audio_exists", "audio_get_name", snap.Sounds, Content.IsModSound)) yield return step;
+
+        foreach (var (obj, names) in VarHarvest.Known) snap.Variables[obj] = names.ToArray();
+
+        // The rest reads only code and writes files: off the game thread.
+        Status = "writing...";
+        bool degraded = _degraded;
+        string stamp = _stamp;
+        var clock = _clock;
+        _writer = Task.Run(() => Write(snap, degraded, stamp, clock));
+    }
+
+    // Outside the iterator: iterators cannot hold unsafe code.
+    private static string? BuiltinName(int i) => Utf8.Read(Loader.Api->BuiltinName(i));
+
+    private static void Write(Snapshot snap, bool degraded, string stamp, System.Diagnostics.Stopwatch? clock)
     {
         Directory.CreateDirectory(OutputDirectory);
         string ns = SafeGameName;
 
-        var scripts = Game.Symbols
-            .Where(s => s.IsScript && !s.Name.Contains('@'))
-            .Select(s => s.Name)
-            .ToList();
-
-        var objects = new SortedDictionary<string, ObjectInfo>(StringComparer.Ordinal);
-        foreach (var o in SafeEnumerate(GmlObject.All))
-            objects[o.Name] = new ObjectInfo(o.Name, o.Index, new());
-        foreach (var s in Game.Symbols.Where(s => s.IsObjectEvent))
-        {
-            if (!SplitEvent(s.Name, out var obj, out var member)) continue;
-            if (!objects.TryGetValue(obj, out var info)) objects[obj] = info = new ObjectInfo(obj, -1, new());
-            info.Events.Add((member, s.Name));
-        }
-
-        var builtins = new List<(string Name, int Arity)>();
-        for (int i = 0; i < Game.BuiltinCount; i++)
-        {
-            var name = Utf8.Read(Loader.Api->BuiltinName(i));
-            if (name == null) continue;
-            builtins.Add((name, Game.BuiltinArity(name) ?? -1));
-        }
-
-        // Sprites and sounds mods added at runtime are not part of the game.
-        var sprites = EnumerateAssets("sprite_exists", "sprite_get_name", Content.IsModSprite);
-        var rooms = EnumerateAssets("room_exists", "room_get_name");
-        var sounds = EnumerateAssets("audio_exists", "audio_get_name", Content.IsModSound);
-
-        File.WriteAllText(Path.Combine(OutputDirectory, ns + ".Interop.csproj"), Csproj(ns));
-        // Every function's start, in address order: each script is scanned only
-        // up to the next function, never into its neighbour.
-        var starts = Game.Symbols.Select(x => x.Address).Where(a => a != 0).Distinct().OrderBy(a => a).ToArray();
         var arity = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var s in scripts)
+        foreach (var s in snap.Scripts)
         {
-            var addr = Game.FindSymbol(s);
-            if (addr == 0) continue;
-            int at = Array.BinarySearch(starts, addr);
-            nint next = at >= 0 && at + 1 < starts.Length ? starts[at + 1] : 0;
+            if (!snap.Addresses.TryGetValue(s, out var addr)) continue;
+            int at = Array.BinarySearch(snap.Starts, addr);
+            nint next = at >= 0 && at + 1 < snap.Starts.Length ? snap.Starts[at + 1] : 0;
             arity[s] = CodeScan.ArgumentCount(addr, next);
         }
         int typed = arity.Values.Count(n => n is >= 1 and <= 8);
-        Log.Info($"interop: argument counts read from code for {typed} of {scripts.Count} scripts");
+        Log.Info($"interop: argument counts read from code for {typed} of {snap.Scripts.Count} scripts");
 
-        File.WriteAllText(Path.Combine(OutputDirectory, "Scripts.g.cs"), ScriptsSource(ns, scripts, arity));
-        File.WriteAllText(Path.Combine(OutputDirectory, "Objects.g.cs"), ObjectsSource(ns, objects.Values));
-        File.WriteAllText(Path.Combine(OutputDirectory, "Builtins.g.cs"), BuiltinsSource(ns, builtins));
-        File.WriteAllText(Path.Combine(OutputDirectory, "Assets.g.cs"), AssetsSource(ns, sprites, rooms, sounds));
-        WriteCodeMap(scripts, arity, objects.Values, builtins, sprites, rooms, sounds);
+        File.WriteAllText(Path.Combine(OutputDirectory, ns + ".Interop.csproj"), Csproj(ns));
+        File.WriteAllText(Path.Combine(OutputDirectory, "Scripts.g.cs"), ScriptsSource(ns, snap.Scripts, arity));
+        File.WriteAllText(Path.Combine(OutputDirectory, "Objects.g.cs"), ObjectsSource(ns, snap.Objects.Values, snap.Variables));
+        File.WriteAllText(Path.Combine(OutputDirectory, "Builtins.g.cs"), BuiltinsSource(ns, snap.Builtins));
+        File.WriteAllText(Path.Combine(OutputDirectory, "Assets.g.cs"), AssetsSource(ns, snap.Sprites, snap.Rooms, snap.Sounds));
+        WriteCodeMap(snap.Scripts, arity, snap.Objects.Values, snap.Builtins, snap.Sprites, snap.Rooms, snap.Sounds, snap.Variables);
 
-        Log.Info($"interop: {scripts.Count} scripts, {objects.Count} objects, " +
-                 $"{objects.Values.Sum(o => o.Events.Count)} events, {builtins.Count} builtins, " +
-                 $"{sprites.Count} sprites, {rooms.Count} rooms, {sounds.Count} sounds");
+        Log.Info($"interop: {snap.Scripts.Count} scripts, {snap.Objects.Count} objects, " +
+                 $"{snap.Objects.Values.Sum(o => o.Events.Count)} events, {snap.Builtins.Count} builtins, " +
+                 $"{snap.Sprites.Count} sprites, {snap.Rooms.Count} rooms, {snap.Sounds.Count} sounds");
+
+        // A scan that gave up waiting or was cut short is not stamped, so the
+        // next launch tries again instead of keeping a partial map.
+        var stampFile = Path.Combine(OutputDirectory, ".stamp");
+        if (degraded) File.Delete(stampFile);
+        else File.WriteAllText(stampFile, stamp);
+        Status = $"generated{(degraded ? " (partial - will retry next launch)" : "")} " +
+                 $"in {clock?.ElapsedMilliseconds ?? 0} ms: {OutputDirectory}";
+        Log.Info($"interop {Status}");
     }
 
-    private static IEnumerable<T> SafeEnumerate<T>(Func<IReadOnlyList<T>> f)
+    // Asset indices are dense from 0; stop after a run of misses. A step per
+    // few hundred indices, so a game with 17,000 sprites spreads over frames.
+    private static IEnumerable<bool> EnumerateAssets(string exists, string getName, List<string> names, Func<int, bool>? skip = null)
     {
-        try { return f(); }
-        catch (GmlException ex)
-        {
-            Log.Warning($"interop: skipped part of the asset scan: {ex.Message}");
-            _degraded = true;
-            return Array.Empty<T>();
-        }
-    }
-
-    // Asset indices are dense from 0; stop after a run of misses.
-    private static List<string> EnumerateAssets(string exists, string getName, Func<int, bool>? skip = null)
-    {
-        var names = new List<string>();
         if (Game.BuiltinArity(exists) is null || Game.BuiltinArity(getName) is null)
         {
             Log.Warning($"interop: {exists}/{getName} not in this runtime's registry; skipping");
-            return names;
+            yield break;
         }
-        try
+        int misses = 0;
+        for (int i = 0; misses < 64 && i < 200_000; i++)
         {
-            int misses = 0;
-            for (int i = 0; misses < 64 && i < 200_000; i++)
+            string? name = null;
+            bool stop = false;
+            try
             {
-                if (!Game.CallBuiltin(exists, i).AsBool) { misses++; continue; }
-                misses = 0;
-                if (skip?.Invoke(i) == true) continue;
-                names.Add(Game.CallBuiltin(getName, i).ToString());
+                if (!Game.CallBuiltin(exists, i).AsBool) misses++;
+                else
+                {
+                    misses = 0;
+                    if (skip?.Invoke(i) != true) name = Game.CallBuiltin(getName, i).ToString();
+                }
             }
-            if (names.Count == 0)
+            catch (GmlException ex)
             {
-                var probe = Game.CallBuiltin(exists, 0);
-                Log.Warning($"interop: {exists} found nothing; {exists}(0) gave kind {probe.Kind} " +
-                            $"(real {probe.Real}, int {probe.Int32})");
+                Log.Warning($"interop: {getName} scan stopped: {ex.Message}");
+                _degraded = true;
+                stop = true;
             }
+            if (stop) yield break;
+            if (name != null) names.Add(name);
+            if ((i & 255) == 0) yield return true;
         }
-        catch (GmlException ex)
-        {
-            Log.Warning($"interop: {getName} scan stopped: {ex.Message}");
-            _degraded = true;
-        }
-        return names;
+        if (names.Count == 0) Log.Warning($"interop: {exists} found nothing");
     }
 
     // gml_Object_<object>_<EventType>_<suffix>. Object names may themselves
@@ -313,7 +401,7 @@ internal static unsafe class InteropGenerator
         return sb.Append("}\n").ToString();
     }
 
-    private static string ObjectsSource(string ns, IEnumerable<ObjectInfo> objects)
+    private static string ObjectsSource(string ns, IEnumerable<ObjectInfo> objects, IReadOnlyDictionary<string, string[]> known)
     {
         var sb = new StringBuilder(Header(ns));
         sb.Append("/// <summary>Every object in the game, with its events.</summary>\n");
@@ -335,7 +423,7 @@ internal static unsafe class InteropGenerator
             sb.Append($"        public static global::CoreLoader.InstanceRef? First => Object is {{ InstanceCount: > 0 }} o ? o.Instance(0) : null;\n");
             var members = new HashSet<string>(StringComparer.Ordinal) { "Name", "Object", "First", "Vars", id };
 
-            if (VarHarvest.Known.TryGetValue(o.Name, out var vars) && vars.Count > 0)
+            if (known.TryGetValue(o.Name, out var vars) && vars.Length > 0)
             {
                 sb.Append($"        /// <summary>Variables seen on live {o.Name} instances (harvested while playing).</summary>\n");
                 sb.Append("        public static class Vars\n        {\n");
@@ -411,7 +499,8 @@ internal static unsafe class InteropGenerator
 
     private static void WriteCodeMap(List<string> scripts, IReadOnlyDictionary<string, int> arity, IEnumerable<ObjectInfo> objects,
                                      List<(string Name, int Arity)> builtins,
-                                     List<string> sprites, List<string> rooms, List<string> sounds)
+                                     List<string> sprites, List<string> rooms, List<string> sounds,
+                                     IReadOnlyDictionary<string, string[]> known)
     {
         var map = new
         {
@@ -422,7 +511,7 @@ internal static unsafe class InteropGenerator
             objects = objects.Select(o => new
             {
                 name = o.Name, index = o.Index, events = o.Events.Select(e => e.Symbol),
-                variables = VarHarvest.Known.TryGetValue(o.Name, out var v) ? v.ToArray() : Array.Empty<string>(),
+                variables = known.TryGetValue(o.Name, out var v) ? v : Array.Empty<string>(),
             }),
             builtins = builtins.Select(b => new { name = b.Name, arity = b.Arity }),
             sprites,

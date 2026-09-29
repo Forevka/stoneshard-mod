@@ -48,16 +48,16 @@ public readonly unsafe struct HookCall
     /// this changes what the original receives.
     /// </summary>
     /// <remarks>
-    /// The argument slot belongs to the caller. Compiled GML normally passes
-    /// temporaries, but where it passes a variable by address the caller sees
-    /// the new value too - scale the value you were given rather than
-    /// accumulating into it. A string or array previously in the slot is not
-    /// released.
+    /// Scripts with managed handlers are called with private copies of their
+    /// arguments, so the change reaches the original (and after-handlers) and
+    /// nothing else - not the caller's variables, and not the constants YYC
+    /// passes literals from. On a runtime without the value helpers there are
+    /// no copies: the slot is the caller's, and what was in it is not released.
     /// </remarks>
     public void SetArg(int index, RValue value)
     {
         CheckArg(index);
-        Values.StoreInto(_p->Args[index], value);
+        Values.StoreInto(_p->Args[index], value, releaseOld: Values.CanCopy && Values.CanFree);
     }
 
     /// <summary>
@@ -141,7 +141,11 @@ internal sealed class Subscription
 public static unsafe class Hooks
 {
     private static readonly Logger Log = new("CoreLoader");
-    private static readonly Dictionary<int, List<Subscription>> ById = new();
+    // Copy-on-write: a hooked Step event can dispatch thousands of times a
+    // frame, so dispatch reads the array as it is - no snapshot allocated per
+    // call - and add/remove replace it (a handler adding or removing hooks
+    // mid-dispatch leaves the array being iterated untouched).
+    private static readonly Dictionary<int, Subscription[]> ById = new();
     private static readonly Dictionary<int, string> Names = new();
     private static int _order;
 
@@ -163,14 +167,11 @@ public static unsafe class Hooks
         int id = Loader.Api->HookInstall(target, kind);
         if (id < 0) throw new GmlException($"could not hook {full} (see the loader log)");
 
-        var sub = new Subscription { Handler = handler, After = after, Owner = ModManager.Current, Order = _order++ };
-        if (!ById.TryGetValue(id, out var list))
-        {
-            ById[id] = list = new List<Subscription>();
-            Names[id] = full;
-        }
-        list.Add(sub);
-        if (list.Count == 1) { Loader.Api->HookEnable(id, 1); Loader.Api->HookSetManaged(id, 1); }
+        var sub = new Subscription { Handler = handler, After = after, Owner = ModManager.OwnerOf(handler), Order = _order++ };
+        var list = ById.TryGetValue(id, out var existing) ? existing : Array.Empty<Subscription>();
+        Names[id] = full;
+        ById[id] = [.. list, sub];
+        if (list.Length == 0) { Loader.Api->HookEnable(id, 1); Loader.Api->HookSetManaged(id, 1); }
         return new HookHandle(id, sub);
     }
 
@@ -184,18 +185,29 @@ public static unsafe class Hooks
 
     internal static void Remove(HookHandle h)
     {
+        // A handle disposed from a Task, a finalizer or `using` in async code:
+        // the subscription lists and the native detour belong to the game thread.
+        if (!Loader.OnGameThread)
+        {
+            Game.RunOnGameThread(() => Remove(h));
+            return;
+        }
         if (!ById.TryGetValue(h.HookId, out var list)) return;
-        list.Remove(h.Sub);
-        if (list.Count == 0) Release(h.HookId);
+        var rest = Array.FindAll(list, s => s != h.Sub);
+        if (rest.Length == list.Length) return;
+        ById[h.HookId] = rest;
+        if (rest.Length == 0) Release(h.HookId);
     }
 
-    /// <summary>Drops every subscription a faulted mod made.</summary>
+    /// <summary>Drops every subscription a mod made (it faulted or is unloading).</summary>
     internal static void RemoveOwner(LoadedMod owner)
     {
-        foreach (var (id, list) in ById)
+        foreach (var (id, list) in ById.ToList())
         {
-            if (list.RemoveAll(s => s.Owner == owner) > 0 && list.Count == 0)
-                Release(id);
+            var rest = Array.FindAll(list, s => s.Owner != owner);
+            if (rest.Length == list.Length) continue;
+            ById[id] = rest;
+            if (rest.Length == 0) Release(id);
         }
     }
 
@@ -204,13 +216,14 @@ public static unsafe class Hooks
 
     internal static void Dispatch(CoreHookCall* c)
     {
-        Loader.MarkGameThread();
-        if (!ById.TryGetValue(c->HookId, out var list) || list.Count == 0) return;
+        // No MarkGameThread here: the game thread is named by Frame/Gui (and
+        // natively at Present). A hooked function reached from some other
+        // thread must not be able to move that mark and switch off the guard.
+        if (!ById.TryGetValue(c->HookId, out var list) || list.Length == 0) return;
 
         bool after = c->Phase == 1;
         var call = new HookCall(c, Names[c->HookId]);
-        // Snapshot: a handler may add or remove hooks while we iterate.
-        foreach (var s in list.ToArray())
+        foreach (var s in list)
         {
             if (s.After != after) continue;
             if (s.Owner is { State: ModState.Faulted }) continue;
@@ -248,10 +261,13 @@ public static unsafe class Hooks
         }
         if (target == 0) throw new GmlException($"{symbol} does not exist in {Game.Name}");
 
-        if (full.StartsWith("gml_Object_", StringComparison.Ordinal)) kind = 1;
-        else if (full.StartsWith("gml_Script_", StringComparison.Ordinal) ||
-                 full.StartsWith("gml_GlobalScript_", StringComparison.Ordinal)) kind = 0;
-        else throw new GmlException($"{full}: only gml_Script_* and gml_Object_* functions can be hooked");
+        // Scripts take (self, other, result, argc, args); object events, room
+        // creation code and 2.3+ global-script initialisers take (self, other).
+        if (full.StartsWith("gml_Object_", StringComparison.Ordinal) ||
+            full.StartsWith("gml_RoomCC_", StringComparison.Ordinal) ||
+            full.StartsWith("gml_GlobalScript_", StringComparison.Ordinal)) kind = 1;
+        else if (full.StartsWith("gml_Script_", StringComparison.Ordinal)) kind = 0;
+        else throw new GmlException($"{full}: only gml_Script_*, gml_Object_*, gml_RoomCC_* and gml_GlobalScript_* functions can be hooked");
         return full;
     }
 
@@ -262,7 +278,10 @@ public static unsafe class Hooks
     internal static void AttachAttributes(LoadedMod m)
     {
         var asm = m.Instance.GetType().Assembly;
-        const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+        // DeclaredOnly: a hook method on a base class is found once, on the
+        // class that declares it - not again on every class deriving from it.
+        const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static |
+                                 BindingFlags.Instance | BindingFlags.DeclaredOnly;
         foreach (var type in asm.GetTypes())
         {
             foreach (var method in type.GetMethods(all))

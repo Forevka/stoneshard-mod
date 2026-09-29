@@ -64,8 +64,14 @@ public static class Content
         else
         {
             id = Values.Keep(Game.CallBuiltin("sprite_add", path, frames, removeBackground, smooth, xOrigin, yOrigin));
-            if (IndexOf(id) < 0 || !Loaded(id))
+            if (IndexOf(id) < 0)
                 throw new GmlException($"{Game.Name} could not load {path} as a sprite");
+            if (!Loaded(id))
+            {
+                // A slot was made but holds nothing usable: keep it for reuse.
+                Retire(id);
+                throw new GmlException($"{Game.Name} could not load {path} as a sprite");
+            }
         }
         int index = IndexOf(id);
 

@@ -16,7 +16,9 @@ namespace CoreLoader.Runtime;
 internal static class VarHarvest
 {
     private static readonly Logger Log = new("CoreLoader");
-    private const int ObjectsPerFrame = 150;
+    // Budgeted by time, not by objects: one object with hundreds of variables
+    // costs as much as a hundred with a few.
+    private const double BudgetMs = 1.5;
     private const int PassIntervalFrames = 3600;   // a full pass about once a minute
 
     private static Dictionary<string, SortedSet<string>>? _known;
@@ -35,13 +37,21 @@ internal static class VarHarvest
 
     public static void Tick()
     {
-        if (Game.BuiltinCount == 0) return;
+        // Not before the game has its assets (mods start at the same moment):
+        // an object table read too early can come back empty.
+        if (Game.BuiltinCount == 0 || !ModManager.Started) return;
         _known ??= Load();
 
         if (_objects == null)
         {
-            // The object table is fixed for the life of the game; list it once.
-            try { _objects = GmlObject.All(); }
+            // The object table is fixed for the life of the game; list it once -
+            // but only a list that has something in it.
+            try
+            {
+                var all = GmlObject.All();
+                if (all.Count == 0) return;
+                _objects = all;
+            }
             catch (GmlException) { return; }
         }
 
@@ -53,8 +63,9 @@ internal static class VarHarvest
             _cursor = 0;
         }
 
-        int end = Math.Min(_cursor + ObjectsPerFrame, _objects.Count);
-        for (; _cursor < end; _cursor++)
+        long deadline = System.Diagnostics.Stopwatch.GetTimestamp() +
+                        (long)(BudgetMs * System.Diagnostics.Stopwatch.Frequency / 1000);
+        for (; _cursor < _objects.Count && System.Diagnostics.Stopwatch.GetTimestamp() < deadline; _cursor++)
         {
             var o = _objects[_cursor];
             try

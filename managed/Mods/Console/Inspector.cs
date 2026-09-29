@@ -86,6 +86,16 @@ internal sealed class Inspector
     /// <summary>Once a frame: takes a pick click, re-applies frozen values, advances a caller search.</summary>
     public void Update()
     {
+        try { UpdateUnguarded(); }
+        catch (Exception ex)
+        {
+            _message = $"{ex.GetType().Name}: {ex.Message}";
+            _callersOf = null;
+        }
+    }
+
+    private void UpdateUnguarded()
+    {
         if (Input.TryTakePick(out var click))
         {
             if (click.RightButton) _message = "pick cancelled";
@@ -106,7 +116,7 @@ internal sealed class Inspector
         }
 
         if (_callersOf != null && _callerCursor >= 0)
-            _callers.AddRange(Code.FindCallers(_callersOf, ref _callerCursor, 1500));
+            _callers.AddRange(Code.FindCallers(_callersOf, ref _callerCursor));
     }
 
     private void TakePick(double x, double y)
@@ -139,6 +149,12 @@ internal sealed class Inspector
     private static List<InstanceRef> InstancesAt(double x, double y)
     {
         var found = new List<(InstanceRef Ref, double Area, double Depth)>();
+        // Older runtimes lack the list form: one instance is all they can say.
+        if (Game.BuiltinArity("instance_position_list") is null)
+        {
+            var one = new InstanceRef(Game.CallBuiltin("instance_position", x, y, All));
+            return one.Exists ? new List<InstanceRef> { one } : new List<InstanceRef>();
+        }
         var list = Game.CallBuiltin("ds_list_create");
         try
         {
@@ -171,6 +187,9 @@ internal sealed class Inspector
     private static List<string> Parents(string obj)
     {
         var chain = new List<string>();
+        // An unresolved name would send GmlObject.Find into a full object scan
+        // every couple of seconds, from a tab drawn every frame.
+        if (obj.Length == 0 || obj == "?") return chain;
         var o = GmlObject.Find(obj);
         for (int guard = 0; o is { } cur && guard < 32; guard++)
         {
@@ -261,6 +280,13 @@ internal sealed class Inspector
 
     public void Draw()
     {
+        // The tab reads the game live; whatever it trips over is reported in
+        // the tab, with any scopes it left open closed.
+        UI.Guarded(DrawUnguarded, ex => UI.TextColored(1f, 0.5f, 0.45f, $"{ex.GetType().Name}: {ex.Message}"));
+    }
+
+    private void DrawUnguarded()
+    {
         if (UI.Button(Input.IsPicking ? "Waiting for a click...##pick" : "Pick in game")) Pick();
         UI.SameLine();
         if (UI.Button("Refresh")) Refresh();
@@ -332,7 +358,9 @@ internal sealed class Inspector
             UI.SameLine();
             if (container)
             {
-                if (UI.TreeNode($"{name}  [{type}]  {text}"))
+                // "###": the value is display only; the node's identity is the
+                // name, so a value that changes does not collapse it.
+                if (UI.TreeNode($"{name}  [{type}]  {text}###{name}"))
                 {
                     try { DrawChildren(t.Get(name), 1); } catch (GmlException ex) { UI.TextDisabled(ex.Message); }
                     UI.TreePop();
@@ -367,9 +395,11 @@ internal sealed class Inspector
             _editing = null;
             Refresh();
         }
-        catch (Exception ex) when (ex is ConsoleError or GmlException)
+        catch (Exception ex)
         {
-            _message = ex.Message;
+            // Whatever the expression did wrong is the user's to read, never a
+            // reason to disable the console.
+            _message = ex is ConsoleError or GmlException ? ex.Message : $"{ex.GetType().Name}: {ex.Message}";
         }
     }
 
@@ -395,7 +425,7 @@ internal sealed class Inspector
         string type = SafeType(v);
         if (v.Kind == RValueKind.Array || type == "struct")
         {
-            if (UI.TreeNode($"{label}  [{type}]  {ConsoleMod.Format(v)}##{depth}"))
+            if (UI.TreeNode($"{label}  [{type}]  {ConsoleMod.Format(v)}###{label}"))
             {
                 DrawChildren(v, depth + 1);
                 UI.TreePop();
@@ -542,6 +572,21 @@ internal sealed class Inspector
 
     /// <summary>GameDraw handler: outlines the selection, and while picking, what is under the mouse.</summary>
     public void DrawGame()
+    {
+        // Runs every frame inside the game's draw: a failure here is shown once
+        // and drawing pauses for a moment, rather than disabling the console.
+        if (Environment.TickCount64 < _drawPausedUntil) return;
+        try { DrawGameUnguarded(); }
+        catch (Exception ex)
+        {
+            _message = $"in-game outline paused: {ex.Message}";
+            _drawPausedUntil = Environment.TickCount64 + 5000;
+        }
+    }
+
+    private long _drawPausedUntil;
+
+    private void DrawGameUnguarded()
     {
         if (!Mapping(out var map)) return;
         if (_target is { } t && t.Exists) Outline(t, map, 0x00FFFF, _targetObject);   // yellow (BGR)

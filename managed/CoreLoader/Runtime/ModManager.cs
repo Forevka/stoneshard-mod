@@ -13,7 +13,8 @@ internal enum ModState
 
 internal sealed class LoadedMod
 {
-    public required CoreMod Instance { get; init; }
+    // Set once construction succeeds; everything that reads it runs after that.
+    public CoreMod Instance { get; set; } = null!;
     public required string Path { get; init; }
     public required ModLoadContext Context { get; init; }
     public ModState State { get; set; } = ModState.Loaded;
@@ -35,6 +36,9 @@ internal sealed class ModLoadContext : AssemblyLoadContext
     private static readonly Assembly Self = typeof(CoreMod).Assembly;
     private readonly AssemblyDependencyResolver _resolver;
     private readonly string _directory;
+
+    /// <summary>The mod this context was created for (set before its type is constructed).</summary>
+    public LoadedMod? Owner { get; set; }
 
     public ModLoadContext(string mainAssemblyPath)
         : base(System.IO.Path.GetFileNameWithoutExtension(mainAssemblyPath), isCollectible: true)
@@ -174,22 +178,69 @@ internal static class ModManager
                 return null;
             }
 
-            var mod = (CoreMod)Activator.CreateInstance(info.ModType)!;
-            mod.Info = info;
-            mod.Log = new Logger(info.Name);
-            mod.Directory = System.IO.Path.GetDirectoryName(path)!;
-            mod.Config = new ModConfig(
-                System.IO.Path.Combine(mod.Directory, System.IO.Path.GetFileNameWithoutExtension(path) + ".json"),
-                mod.Log);
+            // The record exists before the mod's constructor runs, and is the
+            // current mod while it does: whatever a constructor or field
+            // initialiser registers belongs to this mod and goes with it.
+            var loaded = new LoadedMod { Path = path, Context = ctx, Generation = ++_generation };
+            ctx.Owner = loaded;
+            var previous = Current;
+            Current = loaded;
+            try
+            {
+                var mod = (CoreMod)Activator.CreateInstance(info.ModType)!;
+                mod.Info = info;
+                mod.Log = new Logger(info.Name);
+                mod.Directory = System.IO.Path.GetDirectoryName(path)!;
+                mod.Config = new ModConfig(
+                    System.IO.Path.Combine(mod.Directory, System.IO.Path.GetFileNameWithoutExtension(path) + ".json"),
+                    mod.Log);
+                loaded.Instance = mod;
+            }
+            catch
+            {
+                // Nothing of a half-built mod may outlive it, nor its context.
+                RemoveRegistrations(loaded);
+                ctx.Unload();
+                throw;
+            }
+            finally
+            {
+                Current = previous;
+            }
 
             Log.Info($"loaded {info.Name} {info.Version} by {info.Author} ({file})");
-            return new LoadedMod { Instance = mod, Path = path, Context = ctx, Generation = ++_generation };
+            return loaded;
         }
         catch (Exception ex)
         {
             Log.Error($"failed to load {file}", ex);
             return null;
         }
+    }
+
+    /// <summary>Everything a mod registered with the loader, torn down. Game thread.</summary>
+    private static void RemoveRegistrations(LoadedMod m)
+    {
+        Hooks.RemoveOwner(m);
+        GameDraw.RemoveOwner(m);
+        Input.RemoveOwner(m);
+        // After OnShutdown, which is where a mod points instances away from
+        // its sprites before they go.
+        Content.RemoveOwner(m);
+        Values.RemoveOwner(m);
+    }
+
+    /// <summary>
+    /// The mod a callback belongs to. On the game thread inside a mod's
+    /// callback that is the current mod; anywhere else (a constructor, a
+    /// Task, a timer) it is read from the load context of the code itself.
+    /// </summary>
+    internal static LoadedMod? OwnerOf(Delegate callback)
+    {
+        if (Current != null && Loader.OnGameThread) return Current;
+        return AssemblyLoadContext.GetLoadContext(callback.Method.Module.Assembly) is ModLoadContext ctx
+            ? ctx.Owner
+            : Loader.OnGameThread ? Current : null;
     }
 
     /// <summary>Hooks from attributes, then OnInitialize. Game thread.</summary>
@@ -207,11 +258,7 @@ internal static class ModManager
         {
             // Only a mod that actually started gets a shutdown.
             if (m.State == ModState.Running) Invoke(m, nameof(CoreMod.OnShutdown), mod => mod.OnShutdown());
-            Hooks.RemoveOwner(m);
-            GameDraw.RemoveOwner(m);
-            // After OnShutdown, which is where a mod points instances away from
-            // its sprites before they go.
-            Content.RemoveOwner(m);
+            RemoveRegistrations(m);
             try { m.Instance.Config.Save(); } catch (Exception ex) { Log.Warning($"saving {m.Instance.Info.Name}'s settings: {ex.Message}"); }
             ModConfig.Unregister(m.Instance.Config);
         }
@@ -219,6 +266,7 @@ internal static class ModManager
         {
             // Whatever failed above, the mod must leave the list and its context.
             ModList.Remove(m);
+            m.Context.Owner = null;
             m.Context.Unload();
             Log.Info($"unloaded {m.Instance.Info.Name}");
         }
@@ -232,17 +280,43 @@ internal static class ModManager
         if (!ModList.Contains(m)) return;
         int index = ModList.IndexOf(m);
         var path = m.Path;
-        Unload(m);
-        if (!File.Exists(path)) return;
-        if (TryLoad(path) is { } fresh)
+        if (!File.Exists(path))
         {
-            ModList.Insert(Math.Clamp(index, 0, ModList.Count), fresh);
-            // Before mods have started (the game is still loading its assets)
-            // the fresh copy waits with the rest.
-            if (Started) Initialize(fresh);
-            Log.Info($"reloaded {fresh.Instance.Info.Name} {fresh.Instance.Info.Version}");
+            Unload(m);
+            return;
         }
+
+        // The new copy is loaded first: if the build is still being written, or
+        // an antivirus holds the file, the running copy stays - and the file is
+        // looked at again shortly - instead of the mod simply disappearing.
+        // The running copy's settings are written first, so the new one reads them.
+        try { m.Instance.Config.Save(); } catch (Exception ex) { Log.Warning($"saving {m.Instance.Info.Name}'s settings: {ex.Message}"); }
+        var fresh = TryLoad(path);
+        if (fresh == null)
+        {
+            if (RetryCounts.AddOrUpdate(path, 1, (_, n) => n + 1) <= 3)
+            {
+                Changed[path] = Environment.TickCount64;
+                Log.Warning($"could not load the new {System.IO.Path.GetFileName(path)} yet; keeping the running copy and trying again");
+            }
+            else
+            {
+                RetryCounts.TryRemove(path, out _);
+                Log.Warning($"giving up on the new {System.IO.Path.GetFileName(path)}; the running copy stays");
+            }
+            return;
+        }
+        RetryCounts.TryRemove(path, out _);
+
+        Unload(m);
+        ModList.Insert(Math.Clamp(index, 0, ModList.Count), fresh);
+        // Before mods have started (the game is still loading its assets)
+        // the fresh copy waits with the rest.
+        if (Started) Initialize(fresh);
+        Log.Info($"reloaded {fresh.Instance.Info.Name} {fresh.Instance.Info.Version}");
     }
+
+    private static readonly ConcurrentDictionary<string, int> RetryCounts = new(StringComparer.OrdinalIgnoreCase);
 
     public static void ReloadAll()
     {
@@ -251,7 +325,11 @@ internal static class ModManager
         foreach (var path in Candidates(ModsDirectory))
         {
             if (ModList.Any(x => string.Equals(x.Path, path, StringComparison.OrdinalIgnoreCase))) continue;
-            if (TryLoad(path) is { } m) { ModList.Add(m); Initialize(m); }
+            if (TryLoad(path) is { } m)
+            {
+                ModList.Add(m);
+                if (Started) Initialize(m);
+            }
         }
     }
 
@@ -382,10 +460,11 @@ internal static class ModManager
         m.State = ModState.Faulted;
         m.Fault = reason;
         Hooks.RemoveOwner(m);
-        // Its drawing and sounds stop; its sprites stay until it unloads, as
-        // instances may still be showing them.
+        // Its drawing and sounds stop, and a pick it armed is cancelled; its
+        // sprites stay until it unloads, as instances may still show them.
         GameDraw.RemoveOwner(m);
         Content.StopSounds(m);
+        Input.RemoveOwner(m);
         if (ex != null) m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded", ex);
         else m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded");
     }

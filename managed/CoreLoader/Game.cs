@@ -129,32 +129,53 @@ public static unsafe class Game
 
         // Variable-name arguments: creating a variable makes the runtime keep a
         // pointer to the NAME's characters, and a pooled string would be freed
-        // under it at the end of the frame. Such names get permanent characters.
-        RValue wrapper = RValue.Undefined;
+        // under it at the end of the frame. Such names are swapped for the
+        // permanent string of that name.
         if (NameArgument(name) is { } ni && ni < args.Length && args[ni].Kind == RValueKind.String)
         {
             args = (RValue[])args.Clone();
-            wrapper = RValue.FromStringPermanent(args[ni].ToString());
-            args[ni] = wrapper;
+            args[ni] = NameValue(args[ni].ToString());
         }
+        return Invoke(self, name, args);
+    }
 
+    /// <summary>
+    /// A builtin whose argument <paramref name="nameIndex"/> is a variable or
+    /// member name, given as C# text: it goes straight to the name's permanent
+    /// string, with no GML string made and converted back per call.
+    /// </summary>
+    internal static RValue CallWithName(Instance self, string builtin, int nameIndex, string variable, params RValue[] others)
+    {
+        Loader.EnsureGameThread();
+        var args = new RValue[others.Length + 1];
+        for (int i = 0, o = 0; i < args.Length; i++)
+            args[i] = i == nameIndex ? NameValue(variable) : others[o++];
+        return Invoke(self, builtin, args);
+    }
+
+    private static RValue Invoke(Instance self, string name, RValue[] args)
+    {
         RValue result = RValue.Undefined;
-        try
+        fixed (byte* n = Utf8.Get(name))
+        fixed (RValue* a = args)
         {
-            fixed (byte* n = Utf8.Get(name))
-            fixed (RValue* a = args)
-            {
-                if (Loader.Api->CallBuiltin(n, &result, a, args.Length, self.Pointer, 0) == 0)
-                    throw new GmlException($"builtin {name} failed (see the loader log)");
-            }
-        }
-        finally
-        {
-            // The small wrapper around the permanent characters is ours to drop;
-            // the characters themselves are never freed.
-            if (wrapper.Kind == RValueKind.String && Values.CanFree) Loader.Api->ValueFree(&wrapper);
+            if (Loader.Api->CallBuiltin(n, &result, a, args.Length, self.Pointer, 0) == 0)
+                throw new GmlException($"builtin {name} failed (see the loader log)");
         }
         return Values.Track(result);
+    }
+
+    // One GML string per variable name, made once and kept for the life of the
+    // process: the runtime may keep a pointer to a new variable's name, and a
+    // name used every frame should not cost a string per call. Only as many as
+    // the names mods actually use. Never pooled, never freed.
+    private static readonly Dictionary<string, RValue> Names = new(StringComparer.Ordinal);
+
+    internal static RValue NameValue(string variable)
+    {
+        if (!Names.TryGetValue(variable, out var v))
+            Names[variable] = v = RValue.FromStringPermanent(variable);
+        return v;
     }
 
     private static int? NameArgument(string builtin) => builtin switch
@@ -192,13 +213,26 @@ public static unsafe class Game
     /// frame, as the mod that queued it (so anything it registers belongs to that
     /// mod, and an exception faults that mod). Dropped if the mod is unloaded first.
     /// </summary>
-    public static void RunOnGameThread(Action action) => Pending.Enqueue((action, Runtime.ModManager.Current));
+    public static void RunOnGameThread(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        // From another thread "the current mod" means nothing: the owner is
+        // read from the code being queued.
+        Pending.Enqueue((action, Runtime.ModManager.OwnerOf(action)));
+    }
 
     internal static void DrainPending(Logger log)
     {
-        while (Pending.TryDequeue(out var item))
+        // Only what was queued before this frame: an action that queues itself
+        // again ("check again next frame") runs next frame, not in an endless
+        // loop that never lets Present return.
+        for (int n = Pending.Count; n > 0 && Pending.TryDequeue(out var item); n--)
         {
             var (a, owner) = item;
+            // Code from a mod that has been unloaded since it queued this.
+            if (owner == null &&
+                System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(a.Method.Module.Assembly) is Runtime.ModLoadContext)
+                continue;
             if (owner == null)
             {
                 try { a(); }

@@ -98,15 +98,29 @@ public sealed class ModConfig
             foreach (var c in All) c.Save();
     }
 
+    // Hand-edited files get the benefit of the doubt: comments and trailing
+    // commas are accepted.
+    private static readonly JsonDocumentOptions Lenient = new()
+    {
+        CommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
     private static JsonObject Load(string path, Logger log)
     {
         try
         {
-            if (File.Exists(path) && JsonNode.Parse(File.ReadAllText(path)) is JsonObject o) return o;
+            if (!File.Exists(path)) return new JsonObject();
+            if (JsonNode.Parse(File.ReadAllText(path), documentOptions: Lenient) is JsonObject o) return o;
+            throw new JsonException("the file does not hold a JSON object");
         }
         catch (Exception ex)
         {
-            log.Warning($"ignoring unreadable settings {path}: {ex.Message}");
+            // Starting from empty settings means the next save overwrites the
+            // file: keep what the user wrote beside it first.
+            string bad = path + ".bad";
+            try { File.Copy(path, bad, overwrite: true); } catch (Exception) { bad = "(could not keep a copy)"; }
+            log.Warning($"ignoring unreadable settings {path}: {ex.Message} - the file was kept as {bad}");
         }
         return new JsonObject();
     }

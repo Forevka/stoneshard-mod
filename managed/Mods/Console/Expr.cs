@@ -32,7 +32,9 @@ internal static class Lexer
                 {
                     i += 2;
                     while (i < src.Length && Uri.IsHexDigit(src[i])) i++;
-                    list.Add(new Token(Tok.Num, src[s..i], long.Parse(src[(s + 2)..i], NumberStyles.HexNumber)));
+                    if (!long.TryParse(src[(s + 2)..i], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out long hex))
+                        throw new ConsoleError($"bad hex number '{src[s..i]}'");
+                    list.Add(new Token(Tok.Num, src[s..i], hex));
                     continue;
                 }
                 while (i < src.Length && (char.IsDigit(src[i]) || src[i] == '.' || src[i] == 'e' || src[i] == 'E' ||
@@ -116,6 +118,8 @@ internal sealed class Evaluator
     {
         _t = Lexer.Lex(line);
         _p = 0;
+        _depth = 0;
+        _places.Clear();
         var v = Statement();
         if (Peek.Kind != Tok.End) throw new ConsoleError($"unexpected '{Peek.Text}'");
 
@@ -127,6 +131,14 @@ internal sealed class Evaluator
         Ans = fresh;
         Values.Free(ref old);
         return v;
+    }
+
+    /// <summary>Drops the reference `ans` holds (the console is going away).</summary>
+    public void Release()
+    {
+        var old = Ans;
+        Ans = RValue.Undefined;
+        Values.Free(ref old);
     }
 
     private Token Peek => _t[_p];
@@ -164,9 +176,29 @@ internal sealed class Evaluator
         public override void Set(RValue v) => Inst.Set(Name, v);
     }
 
+    // Places already resolved on this line, by the token they start at, with
+    // where they end. Statement tries a place, and Primary may try the same
+    // one again after backtracking: the index expression in obj[expr] must
+    // run once (irandom, a script with side effects), not once per attempt.
+    private readonly Dictionary<int, (Place? Place, int End)> _places = new();
+
     // Recognises `global.x`, `obj.var` and `obj[n].var` at the cursor without
     // consuming anything unless it matches.
     private Place? TryPlace()
+    {
+        int start = _p;
+        if (_places.TryGetValue(start, out var known))
+        {
+            if (known.Place != null) _p = known.End;
+            return known.Place;
+        }
+        var place = ResolvePlace();
+        _places[start] = (place, _p);
+        if (place == null) _p = start;
+        return place;
+    }
+
+    private Place? ResolvePlace()
     {
         if (Peek.Kind != Tok.Ident) return null;
         string head = Peek.Text;
@@ -227,7 +259,18 @@ internal sealed class Evaluator
         return Expr();
     }
 
-    private RValue Expr() => Or();
+    // Every nested expression costs a few managed frames on the game thread,
+    // deep inside Present; a line of 500 '(' must be an error, not a stack
+    // overflow nothing can catch.
+    private const int MaxDepth = 64;
+    private int _depth;
+
+    private RValue Expr()
+    {
+        if (++_depth > MaxDepth) throw new ConsoleError($"expression nested more than {MaxDepth} deep");
+        try { return Or(); }
+        finally { _depth--; }
+    }
 
     private RValue Or()
     {
@@ -290,8 +333,18 @@ internal sealed class Evaluator
 
     private RValue Unary()
     {
-        if (IsOp("-")) { _p++; return RValue.FromReal(-Num(Unary(), "'-'")); }
-        if (IsOp("!")) { _p++; return RValue.FromBool(!Truthy(Unary())); }
+        // `------x` recurses without passing through Expr: counted here too.
+        if (IsOp("-") || IsOp("!"))
+        {
+            if (++_depth > MaxDepth) throw new ConsoleError($"expression nested more than {MaxDepth} deep");
+            try
+            {
+                bool neg = Next().Text == "-";
+                var v = Unary();
+                return neg ? RValue.FromReal(-Num(v, "'-'")) : RValue.FromBool(!Truthy(v));
+            }
+            finally { _depth--; }
+        }
         return Primary();
     }
 

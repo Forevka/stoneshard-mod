@@ -20,7 +20,9 @@ public sealed class ScriptSpyMod : CoreMod
         public required HookHandle Before;
         public required HookHandle After;
         public long Calls;
-        public string PendingArgs = "";
+        // A stack, not one slot: a watched script that calls itself (directly
+        // or through others) must pair each result with its own arguments.
+        public readonly Stack<string> PendingArgs = new();
         public readonly Queue<string> Rows = new();
         public bool Paused;
     }
@@ -108,24 +110,39 @@ public sealed class ScriptSpyMod : CoreMod
         }
     }
 
+    // Describing a value asks the game (typeof, struct names); a failure there
+    // is shown in the row, never allowed to disable the spy.
     private static void OnBefore(Watch w, HookCall c)
     {
         w.Calls++;
-        if (w.Paused) return;
-        var parts = new List<string>();
-        for (int i = 0; i < Math.Min(c.ArgCount, MaxArgs); i++) parts.Add(Describe(c.GetArg(i)));
-        if (c.ArgCount > MaxArgs) parts.Add("...");
-        w.PendingArgs = w.Symbol.StartsWith("gml_Object_", StringComparison.Ordinal)
-            ? $"self={c.Self}"
-            : $"({string.Join(", ", parts)})";
+        string text;
+        try
+        {
+            var parts = new List<string>();
+            for (int i = 0; i < Math.Min(c.ArgCount, MaxArgs); i++) parts.Add(Describe(c.GetArg(i)));
+            if (c.ArgCount > MaxArgs) parts.Add("...");
+            text = w.Symbol.StartsWith("gml_Object_", StringComparison.Ordinal)
+                ? $"self={c.Self}"
+                : $"({string.Join(", ", parts)})";
+        }
+        catch (Exception ex)
+        {
+            text = $"(arguments unreadable: {ex.Message})";
+        }
+        // Pushed even while paused, so a call that began before Resume still pairs up.
+        w.PendingArgs.Push(text);
     }
 
     private void OnAfter(Watch w, HookCall c)
     {
+        string args = w.PendingArgs.Count > 0 ? w.PendingArgs.Pop() : "";
         if (w.Paused) return;
+        string result;
+        try { result = Describe(c.Result); }
+        catch (Exception ex) { result = $"(unreadable: {ex.Message})"; }
         string row = w.Symbol.StartsWith("gml_Object_", StringComparison.Ordinal)
-            ? w.PendingArgs
-            : $"{w.PendingArgs} -> {Describe(c.Result)}";
+            ? args
+            : $"{args} -> {result}";
         w.Rows.Enqueue(row);
         while (w.Rows.Count > MaxRows) w.Rows.Dequeue();
 

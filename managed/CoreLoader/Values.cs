@@ -46,14 +46,13 @@ public static unsafe class Values
     public static RValue Keep(RValue v)
     {
         if (!HoldsReference(v)) return v;
-        for (int i = Pool.Count - 1; i >= 0; i--)
+        // Nothing is ever released on a runtime without a free helper: every
+        // value already outlives the frame, and there is no copy to make.
+        if (!CanFree) return v;
+        if (TakeFromPool(v))
         {
-            if (Pool[i].Pointer == v.Pointer && Pool[i].Kind == v.Kind)
-            {
-                Pool.RemoveAt(i);
-                if (v.Kind == RValueKind.Object) Root(v);
-                return v;
-            }
+            if (v.Kind == RValueKind.Object) Root(v);
+            return v;
         }
         return Copy(v);
     }
@@ -62,8 +61,12 @@ public static unsafe class Values
     // C# is invisible to the collector, which frees the struct as soon as GML
     // stops using it. A kept struct is therefore also pushed into a GML array
     // held in a global, where the collector sees it; Free takes it out again.
+    // The C# side keeps its own list too - who rooted what - so a mod that
+    // unloads without freeing loses its roots, and roots wiped with the game's
+    // globals (game_restart, a game resetting globals) are pushed again.
     private const string RootsName = "__coreloader_roots";
     private static bool? _canRoot;
+    private static readonly List<(RValue Value, Runtime.LoadedMod? Owner)> Rooted = new();
 
     private static bool CanRoot => _canRoot ??=
         Game.BuiltinArity("array_push") != null && Game.BuiltinArity("array_delete") != null &&
@@ -71,14 +74,18 @@ public static unsafe class Values
 
     private static RValue Roots(bool create)
     {
-        if (Game.CallBuiltin("variable_global_exists", RootsName).AsBool)
+        if (Globals.Exists(RootsName))
         {
-            var r = Game.CallBuiltin("variable_global_get", RootsName);
+            var r = Globals.Get(RootsName);
             if (r.Kind == RValueKind.Array) return r;
         }
         if (!create) return RValue.Undefined;
-        Game.CallBuiltin("variable_global_set", RootsName, Game.CallBuiltin("array_create", 0));
-        return Game.CallBuiltin("variable_global_get", RootsName);
+        Globals.Set(RootsName, Game.CallBuiltin("array_create", 0));
+        var fresh = Globals.Get(RootsName);
+        // The array was gone: everything still tracked goes back in.
+        if (fresh.Kind == RValueKind.Array)
+            foreach (var (value, _) in Rooted) Game.CallBuiltin("array_push", fresh, value);
+        return fresh;
     }
 
     private static void Root(RValue v)
@@ -88,6 +95,7 @@ public static unsafe class Values
         {
             var roots = Roots(create: true);
             if (roots.Kind == RValueKind.Array) Game.CallBuiltin("array_push", roots, v);
+            Rooted.Add((v, Runtime.ModManager.Current));
         }
         catch (GmlException ex)
         {
@@ -98,6 +106,9 @@ public static unsafe class Values
     private static void Unroot(RValue v)
     {
         if (!CanRoot) return;
+        int tracked = Rooted.FindIndex(r => r.Value.Pointer == v.Pointer);
+        if (tracked < 0) return;
+        Rooted.RemoveAt(tracked);
         try
         {
             var roots = Roots(create: false);
@@ -112,22 +123,31 @@ public static unsafe class Values
         catch (GmlException) { }
     }
 
-    /// <summary>Number of kept structs rooted for the collector (diagnostics).</summary>
-    public static int RootedStructs
+    /// <summary>A mod going away releases the structs it kept and never freed.</summary>
+    internal static void RemoveOwner(Runtime.LoadedMod owner)
     {
-        get
+        foreach (var (value, _) in Rooted.Where(r => r.Owner == owner).ToList())
         {
-            if (!CanRoot) return 0;
-            var roots = Roots(create: false);
-            return roots.Kind == RValueKind.Array ? Gml.ArrayLength(roots) : 0;
+            try { Unroot(value); }
+            catch (Exception ex) { Loader.Log(LogLevel.Warning, "CoreLoader", $"releasing a kept struct: {ex.Message}"); }
         }
     }
 
-    /// <summary>Releases a value obtained with <see cref="Keep"/> (or <see cref="Copy"/>).</summary>
+    /// <summary>Number of kept structs rooted for the collector (diagnostics).</summary>
+    public static int RootedStructs => Rooted.Count;
+
+    /// <summary>
+    /// Releases a value obtained with <see cref="Keep"/> (or <see cref="Copy"/>).
+    /// A value still in this frame's pool may be released early with it too.
+    /// Never free what the game lends you - a hook's arguments or result.
+    /// </summary>
     public static void Free(ref RValue v)
     {
         Loader.EnsureGameThread();
         if (!HoldsReference(v)) { v = RValue.Undefined; return; }
+        // Still pooled: the pool would release it again at the end of the
+        // frame. Taking it out makes this the one release.
+        TakeFromPool(v);
         if (v.Kind == RValueKind.Object) Unroot(v);
         fixed (RValue* p = &v) Loader.Api->ValueFree(p);
         v = RValue.Undefined;
@@ -176,16 +196,17 @@ public static unsafe class Values
         if (!copied && HoldsReference(value)) TakeFromPool(value);
     }
 
-    private static void TakeFromPool(RValue v)
+    private static bool TakeFromPool(RValue v)
     {
         for (int i = Pool.Count - 1; i >= 0; i--)
         {
             if (Pool[i].Pointer == v.Pointer && Pool[i].Kind == v.Kind)
             {
                 Pool.RemoveAt(i);
-                return;
+                return true;
             }
         }
+        return false;
     }
 
     /// <summary>Re-reads whether the runtime's (verified) free/copy helpers are available.</summary>

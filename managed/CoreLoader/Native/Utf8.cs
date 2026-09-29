@@ -9,7 +9,9 @@ internal static unsafe class Utf8
     // UI labels and symbol names are the same few hundred strings every frame,
     // so their encodings are cached instead of re-allocated 60 times a second.
     // Bounded: a mod that formats a fresh string per frame just churns the cache.
-    private static readonly Dictionary<string, byte[]> Cache = new();
+    // Concurrent: reachable from any thread (a builtin's arity looked up from a
+    // mod's Task), and a plain Dictionary written from two threads corrupts.
+    private static readonly ConcurrentDictionary<string, byte[]> Cache = new();
     private const int CacheLimit = 4096;
 
     /// <summary>NUL-terminated UTF-8, cached. Pin with <c>fixed</c> for the call.</summary>
