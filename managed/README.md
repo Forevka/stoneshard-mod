@@ -43,7 +43,10 @@ times a second is written a few times, then summarised.
      `Scripts.dealDamage` is a `ScriptRef6`. The rest keep `Call(params)`;
    - `Objects.<object>.<Event>_<n>`: an `EventRef` for every object event, plus `Objects.<object>.First`
      (its first live instance) and `Objects.<object>.Vars.<name>`, the variable names harvested from
-     live instances as you play (2,020 in the first minute of Dwarf Eats Mountain);
+     live instances as you play (2,020 in the first minute of Dwarf Eats Mountain). `InstanceVars`
+     holds GameMaker's built-in ones (`x`, `y`, `object_index`, ...), which every harvested `Vars` class repeats.
+     A script ref runs as an instance with `CallAs(instance, other, args)`, or `CallAs(instanceRef, args)`
+     for one held by id;
    - `Builtins.*`: typed wrappers that use the argument counts this game's runtime actually registers;
    - `Assets.*`: sprite, room and sound names;
    - `codemap.json`: all of the above, plus addresses, argument counts and variables, for tools.
@@ -143,8 +146,9 @@ only catch as a crash. The `Mods/`, `Tests/` and `Examples/` projects here get i
 | CL0002 | A field or auto-property that holds an `Instance` or a `HookCall`, or a lambda that captures one and is stored, queued or registered (`Game.RunOnGameThread`, `Task.Run`, a field, a collection, `Hooks.Before`/`After`/`NextBefore`/`NextAfter`, `TestHost.Register`, `GameDraw.OnGui`) | An `Instance` is a raw pointer that dangles once the instance is destroyed: hold an `InstanceRef`. A `HookCall` is valid only inside its handler |
 | CL0003 | `Values.Free` on a local read from `HookCall.GetArg` or `HookCall.Result` | The game lends hook arguments and results; freeing one releases the caller's reference |
 
-Keeping a value on purpose (a number, or one owned with `Values.Keep`) is fine: suppress the warning
-on that member with a reason, e.g. in `GlobalSuppressions.cs`:
+Instance fields of a `ref struct` are exempt: it cannot outlive the call that made it. Keeping a
+value on purpose (a number, or one owned with `Values.Keep`) is fine: suppress the warning on that
+member with a reason, e.g. in `GlobalSuppressions.cs`:
 
 ```csharp
 [assembly: SuppressMessage("CoreLoader.Lifetime", "CL0001", Scope = "member",
@@ -333,12 +337,13 @@ commands bad input on purpose. A faulted mod's commands answer with its fault. T
 | Mod | Game | What it does |
 |---|---|---|
 | Console | any | In-game console. Evaluates GML-style expressions against the live game: `instance_number(o_enemy)`, `oSys.gold += 1e6`, `global.x`, `obj[2].hp = 1`, `scr_foo(1, "a")`. Also `find`, `objects`, `vars`, `globals`, `hook`/`unhook` for live call logging, and history. Its **Inspector** tab lets you click any instance in the game (`inspect`) and see its object and parents, every variable (edit with any GML expression, freeze, expand arrays and structs), and read-only code: what each of its events calls and which strings it uses, and who calls those. `code <fn>`, `callers <fn>` and `dump` do the same from the console. The **Objects** tab lists every object with its live instance count, pages through an object's instances with the same variable table, and searches every live instance for a variable name (`where <text>` in the console). The **Globals** tab lists, edits and freezes global variables. Freezes hold across any number of instances and globals until lifted (`frozen`, `unfreeze all`) |
-| ScriptSpy | any | Hook any function by name and watch its arguments and results live. Also logs them; `ScriptSpy.txt` lists watches to start with the game |
+| ScriptSpy | any | Hook any function by name and watch its arguments and results live, with the object each call ran as. Also logs them; `ScriptSpy.txt` lists watches to start with the game. Over the test host: `spy.watch <function> [variable]` (the variable of self is read before and after each call), `spy.read`, `spy.clear`, `spy.unwatch` |
 | SpeedControl | any | Run the game faster or slower (`game_set_speed`) |
 | ContentDemo | any | Runtime content. It loads a spinning coin sprite from a PNG strip and draws it in the game's GUI layer, plays a chime from an OGG file, and can reskin any game sprite by name. Its files ship in `Mods/ContentDemo/assets` |
 | DwarfBoost | Dwarf Eats Mountain | Gold income and unit damage multipliers, resource editor |
 | StoneshardBoost | Stoneshard | XP multiplier (every source goes through `scr_get_XP`), loot multiplier (re-runs `scr_loot`) |
 | StoneshardCheats | Stoneshard | Stats, items (any weapon/armor at any rarity, a stat constructor, every inventory object), potions built from chosen effects, needs/vitals/XP/conditions/psyche, body parts, an enemy roster with Remove, and save import from another machine. Saves are backed up before the first cheat |
+| Reliquary | Stoneshard | Six artifacts with a toll, one per family of the Stoneshard Reliquary design, written only against the generated interop: Stavebound Ember (staff hits add a random element), Gorgoneion (petrify everything in sight, you included), Wolf's Heart (fills with hostiles in sight, spent on Rage), Copper Ring of Faith (a worn ring whose prayer strips effects from foes nearby), Grafted Hand (+40% one-handed damage; the arm never heals again), Pilgrim's Millstone (resistances for dodge and energy). Relics live in vanilla carrier items tagged in their saved data map; hover one in the inventory and press U to activate. Test host: `reliq.*` |
 | HelloMod, InteropExample | any / DEM | Minimal examples |
 
 `Tests/` holds regression mods for the loader itself:

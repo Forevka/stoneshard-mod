@@ -8,6 +8,24 @@ bump may break the mod API or the native CoreApi table; each version says so und
 ## [Unreleased]
 
 ### Added
+- **Reliquary** (Stoneshard): six artifacts that ask for something back, one per family of the
+  Stoneshard Reliquary design - Stavebound Ember, Gorgoneion, Wolf's Heart, Copper Ring of Faith,
+  Grafted Hand of the Hanged Man, Pilgrim's Millstone. Written only against the generated interop.
+  Relics are vanilla carrier items tagged in their saved `data` map, with placeholder icons; they work
+  from the bag (the ring when worn), show a live status line in the game's own tooltip, report in the
+  game's action log, and activate by hovering one and pressing a key (`activateKey`, default U).
+  Test-host commands `reliq.*`.
+- **Interop:** an `InstanceVars` class with GameMaker's built-in instance variables (`x`, `y`, `id`,
+  `object_index`, `sprite_index`, ...), which the variable harvest never sees; every object's `Vars`
+  class repeats them (objects never seen live have no `Vars`; use `InstanceVars`). The interop stamp now carries a format number, so installed interops
+  regenerate when the generated code changes shape.
+- **Analyzers:** instance fields of a `ref struct` no longer raise CL0001/CL0002 - it cannot outlive the call that made it. Static fields of one still do.
+- `ScriptRef.CallAs(InstanceRef self, args)`: run a stub script as an instance held by id.
+- **ScriptSpy** over the test host: `spy.watch <function> [variable]`, `spy.read`, `spy.clear`,
+  `spy.unwatch`. Rows name the object the call ran as, and can track a variable of self before and
+  after the call (which script actually changes HP, say).
+- `deploy-coreloader.ps1` also installs a mod's project dependencies from its `deps.json`, such as a
+  generated `<Game>.Interop.dll`.
 - **UI round 3:** `UI.BeginCombo`/`EndCombo`, `UI.Combo`, `UI.Selectable` (optionally overlap-friendly),
   `UI.SeparatorText`, `UI.InputDouble`/`InputFloat`, `UI.SliderInt`, `UI.SetNextItemWidth`,
   `UI.BeginDisabled`/`EndDisabled`, `UI.InputTextWithHint`, `UI.SameLine(offsetX, spacing)`,

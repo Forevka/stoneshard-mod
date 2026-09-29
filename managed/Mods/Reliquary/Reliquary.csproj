@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Written against Stoneshard's generated interop (Scripts, Objects, Builtins),
+    found through managed\CoreLoader.user.props - see managed\Directory.Build.targets.
+    deploy-coreloader.ps1 ships StoneShard.Interop.dll next to it.
+  -->
+  <PropertyGroup>
+    <AssemblyName>Reliquary</AssemblyName>
+    <InteropGame>StoneShard</InteropGame>
+  </PropertyGroup>
+
+  <!-- Placeholder item sprites ship in a folder named after the mod: Mods/Reliquary/assets. -->
+  <ItemGroup>
+    <None Include="assets\**\*.png" Link="Reliquary\assets\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
