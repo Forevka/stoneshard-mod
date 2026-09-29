@@ -9,7 +9,7 @@
     <!-- Run on the newest installed major if .NET 10 itself is absent. -->
     <RollForward>Major</RollForward>
     <OutputPath>$(ManagedOutRoot)CoreLoader\</OutputPath>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
   </PropertyGroup>
 
 </Project>
