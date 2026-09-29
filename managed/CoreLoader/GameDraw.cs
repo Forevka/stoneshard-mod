@@ -60,6 +60,8 @@ public static class GameDraw
             DropCarrier(stale: false);
             return;
         }
+        // Without a GML bridge no event can be hooked; the Status tab says why.
+        if (!Game.IsGmlReady) return;
         // Fired recently: fine. Otherwise the carrier's instances are gone (a
         // room change) or never drew: pick another - at most twice a second
         // while nothing qualifies, since a search asks the game about every

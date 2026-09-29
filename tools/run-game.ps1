@@ -12,7 +12,9 @@
 
   -TestHost launches the game with CORELOADER_TEST=1, which turns on the
   loader's test host (the pipe tools\coreloader.ps1 talks to), and waits for
-  its "test host ON" line as well.
+  its "test host ON" line as well. It also writes CoreLoader\testhost.enable,
+  which does the same for games Steam relaunches (losing the variable); a
+  launch without -TestHost, or -Stop, removes that file.
 
   The log counts as this run's once it names the pid of a live instance of
   the game ("loaded into pid N"), so a leftover log from the previous run, or
@@ -71,12 +73,27 @@ function Stop-Game {
 }
 
 Stop-Game
-if ($Stop) { exit 0 }
+$marker = Join-Path $GameDir "CoreLoader\testhost.enable"
+if ($Stop) {
+    # A game started later from Steam must not come up with the test host on.
+    if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker }
+    exit 0
+}
 
 if ($Deploy) {
     $deployArgs = @{ GameDir = $GameDir; Mods = $Mods; Configuration = $Configuration }
     if ($CleanMods) { $deployArgs.CleanMods = $true }
     & (Join-Path $PSScriptRoot "deploy-coreloader.ps1") @deployArgs
+}
+
+# Steam relaunches some games through steam.exe, and the variable below does
+# not survive that; the loader also turns the host on for this marker file.
+# A launch without -TestHost (or -Stop) removes it, so the host does not stay on.
+if ($TestHost) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $marker) | Out-Null
+    Set-Content -LiteralPath $marker -Value "written by tools\run-game.ps1 -TestHost; a launch without it removes this file"
+} elseif (Test-Path -LiteralPath $marker) {
+    Remove-Item -LiteralPath $marker
 }
 
 $started = Get-Date

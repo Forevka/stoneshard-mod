@@ -39,6 +39,12 @@ tools\setup-dev.ps1 -GameDir "<extra game folder>"
 Test games:
 - **Dwarf Eats Mountain Demo** (runtime 2024.14): `D:\SteamLibrary\steamapps\common\Dwarf Eats Mountain Demo`.
 - **Stoneshard** (older runtime): `D:\torrent\Stoneshard (Early Access)\Stoneshard`.
+- Extra YYC games, for breadth (`run-game.ps1 -GameDir <dir> [-Exe <name>] -TestHost`, then
+  `tools\smoke-generic.ps1 -GameDir <dir>`): `D:\torrent\Zero Stress King`,
+  `D:\torrent\The.King.is.Watching.v1.3.6` (`-Exe 'The King is Watching.exe'`; it rebuilds its swap
+  chain at startup), and Steam's `TheSpikeCross` and `Slime Trader` (Steam relaunches them, so the
+  test host comes on through `CoreLoader\testhost.enable`). `D:\torrent\Void.War.Build.25426981\...` is
+  VM-compiled: the loader must stand down cleanly there ("not a YYC game").
 
 Log: `<game>\CoreLoader\Logs\coreloader.log`; the previous run's is `coreloader.prev.log`.
 

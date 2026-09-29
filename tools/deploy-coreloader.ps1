@@ -81,4 +81,9 @@ foreach ($m in $Mods) {
     }
 }
 
+# A test-host marker left by run-game.ps1 -TestHost must not outlive a fresh
+# install into normal play; run-game writes it again after deploying.
+$marker = Join-Path $GameDir "CoreLoader\testhost.enable"
+if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker }
+
 Write-Host "CoreLoader installed in $GameDir ($($Mods.Count) mod(s))"

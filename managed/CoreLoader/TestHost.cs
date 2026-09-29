@@ -15,7 +15,7 @@ namespace CoreLoader;
 /// A development-only automation host: a named pipe that lets scripts and
 /// agents drive the running game and read its state back, without clicking
 /// through the overlay. Off unless the game was started with the environment
-/// variable <c>CORELOADER_TEST=1</c>.
+/// variable <c>CORELOADER_TEST=1</c>, or <c>CoreLoader\testhost.enable</c> exists.
 /// </summary>
 /// <remarks>
 /// The protocol is one JSON object per line each way. A request is
@@ -41,10 +41,28 @@ public static partial class TestHost
     private static readonly Logger Log = new("TestHost");
 
     /// <summary>
-    /// Whether this session runs the test host (<c>CORELOADER_TEST=1</c>). Mods
-    /// register their test commands only when it does.
+    /// Whether this session runs the test host (<c>CORELOADER_TEST=1</c>, or a
+    /// <c>CoreLoader\testhost.enable</c> file). Mods register their test
+    /// commands only when it does.
     /// </summary>
-    public static bool Enabled { get; } = Environment.GetEnvironmentVariable("CORELOADER_TEST") == "1";
+    public static bool Enabled { get; } = Environment.GetEnvironmentVariable("CORELOADER_TEST") == "1" || MarkerPresent();
+
+    // Steam relaunches some games through steam.exe, which drops the launching
+    // shell's environment, so the variable never arrives. A marker file in the
+    // loader's folder turns the host on instead (tools\run-game.ps1 -TestHost
+    // writes it, and removes it on a launch without -TestHost). It asks no more
+    // trust than the variable: whoever can write that folder can replace the
+    // loader itself.
+    private const string MarkerFile = "testhost.enable";
+
+    private static unsafe bool MarkerPresent()
+    {
+        // Type initialisation may in principle run before Entry sets the API
+        // table; a null table is a crash no catch could stop.
+        if (Loader.Api == null) return false;
+        try { return File.Exists(Path.Combine(Game.LoaderDirectory, MarkerFile)); }
+        catch (Exception) { return false; }
+    }
 
     /// <summary>The pipe's name (without <c>\\.\pipe\</c>), or null when the host is off.</summary>
     public static string? PipeName { get; private set; }
@@ -148,7 +166,7 @@ public static partial class TestHost
     {
         if (!Enabled)
         {
-            Log.Info("test host off (start the game with CORELOADER_TEST=1 to drive it over a pipe)");
+            Log.Info($"test host off (start the game with CORELOADER_TEST=1, or create CoreLoader\\{MarkerFile}, to drive it over a pipe)");
             return;
         }
         PipeName = $"coreloader-{Environment.ProcessId}";
@@ -163,7 +181,8 @@ public static partial class TestHost
             Log.Warning($"could not write the pipe name file: {ex.Message}");
         }
         new Thread(AcceptLoop) { IsBackground = true, Name = "CoreLoader test host" }.Start();
-        Log.Info($"test host ON (CORELOADER_TEST=1): listening on \\\\.\\pipe\\{PipeName}, current user only. Development use only");
+        string how = Environment.GetEnvironmentVariable("CORELOADER_TEST") == "1" ? "CORELOADER_TEST=1" : $"CoreLoader\\{MarkerFile}";
+        Log.Info($"test host ON ({how}): listening on \\\\.\\pipe\\{PipeName}, current user only. Development use only");
     }
 
     /// <summary>From Entry.Shutdown: the name file goes, so a client does not dial a dead game.</summary>

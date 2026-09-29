@@ -89,6 +89,16 @@ internal static unsafe class InteropGenerator
             return;
         }
         if (_done) return;
+        // No GML bridge (a VM-compiled game, or one whose helpers were not
+        // found): there is nothing to scan, and an attempt only logs failures.
+        // The bridge is settled before the managed runtime starts.
+        if (!Game.IsGmlReady)
+        {
+            _done = true;
+            Status = "not available: the GML bridge is off (see the Status tab)";
+            Log.Info("interop: skipped, the GML bridge is off");
+            return;
+        }
         ++_waitFrames;
         // Builtins resolve a moment after startup, and some games (Stoneshard)
         // only finish loading their sprites, rooms and sounds seconds after

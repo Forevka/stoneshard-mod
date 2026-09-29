@@ -15,7 +15,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
+#include <cwchar>
 #include <unordered_map>
 
 namespace mod::sym {
@@ -82,6 +84,47 @@ const char* GmlStringAt(std::uintptr_t p) {
     return nullptr;
 }
 
+// A VM-compiled game ships its GML as bytecode: data.win beside the exe then
+// holds a non-empty CODE chunk, where a YYC build has none (or an empty one).
+// Only the chunk headers are read. Tells "not a YYC game" apart from "the
+// table shape changed", which call for very different reactions.
+bool DataWinHasBytecode() {
+    wchar_t path[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return false;
+    wchar_t* slash = std::wcsrchr(path, L'\\');
+    if (!slash || (slash - path) + 10 >= MAX_PATH) return false;
+    std::wcscpy(slash + 1, L"data.win");
+
+    HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+
+    auto readAt = [f](std::uint64_t pos, unsigned char (&h)[8]) {
+        LARGE_INTEGER li;
+        li.QuadPart = static_cast<LONGLONG>(pos);
+        DWORD got = 0;
+        return SetFilePointerEx(f, li, nullptr, FILE_BEGIN) && ReadFile(f, h, 8, &got, nullptr) && got == 8;
+    };
+    bool bytecode = false;
+    unsigned char h[8];
+    if (readAt(0, h) && std::memcmp(h, "FORM", 4) == 0) {
+        std::uint32_t formSize;
+        std::memcpy(&formSize, h + 4, 4);
+        const std::uint64_t end = 8ull + formSize;
+        // A few dozen chunks in practice; the cap only guards a corrupt file.
+        std::uint64_t pos = 8;
+        for (int i = 0; i < 256 && pos + 8 <= end && readAt(pos, h); ++i) {
+            std::uint32_t size;
+            std::memcpy(&size, h + 4, 4);
+            if (std::memcmp(h, "CODE", 4) == 0) { bytecode = size > 0; break; }
+            pos += 8ull + size;
+        }
+    }
+    CloseHandle(f);
+    return bytecode;
+}
+
 } // namespace
 
 bool Scan() {
@@ -134,10 +177,15 @@ bool Scan() {
 
     // ---- health check -------------------------------------------------------
     if (g_entries.size() < kMinEntries) {
-        char buf[160];
-        std::snprintf(buf, sizeof(buf),
-                      "only %zu symbols resolved (expected >= %zu) - table shape changed?",
-                      g_entries.size(), kMinEntries);
+        char buf[200];
+        if (DataWinHasBytecode())
+            std::snprintf(buf, sizeof(buf),
+                          "not a YYC game: data.win holds VM bytecode, and CoreLoader needs "
+                          "YYC-compiled code (GML features are off)");
+        else
+            std::snprintf(buf, sizeof(buf),
+                          "only %zu symbols resolved (expected >= %zu) - table shape changed?",
+                          g_entries.size(), kMinEntries);
         g_health  = buf;
         Logf("[!] symbols: %s", g_health.c_str());
         return false;

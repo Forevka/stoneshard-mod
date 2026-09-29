@@ -72,10 +72,12 @@ internal static unsafe class Entry
         // Mods start once the game has its assets: some games (Stoneshard)
         // load sprites, sounds and rooms seconds after the first frame, and a
         // sprite added before that would take a slot the game is about to fill.
-        // A game that never answers still gets its mods after ~30 s.
+        // A game that never answers still gets its mods after ~30 s, and one
+        // without a GML bridge (nothing could ever answer) gets them at once.
         _startWait ??= System.Diagnostics.Stopwatch.StartNew();
         // A check that cannot tell (it faulted) counts as "not yet" until the timeout.
-        if (_startWait.Elapsed < TimeSpan.FromSeconds(30) && !(Game.BuiltinCount > 0 && Game.AssetsLoaded(whenUnsure: false)))
+        if (Game.IsGmlReady && _startWait.Elapsed < TimeSpan.FromSeconds(30) &&
+            !(Game.BuiltinCount > 0 && Game.AssetsLoaded(whenUnsure: false)))
         {
             if (!_announcedWait) { _announcedWait = true; Log.Info("waiting for the game's assets before starting mods"); }
             return;

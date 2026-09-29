@@ -84,6 +84,13 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - `tools\coreloader.ps1` is the client (CLI, or dot-sourced for `Invoke-CoreLoader` / `Wait-CoreLoader`).
     `tools\smoke-stoneshard.ps1` and `tools\smoke-dwarf.ps1` check the commands against a running game.
     `tools\run-game.ps1 -TestHost` starts the game with the host on.
+  - A `CoreLoader\testhost.enable` file also turns the host on, for games Steam relaunches through
+    `steam.exe` (the variable does not survive that). `run-game.ps1 -TestHost` writes it; a launch without
+    `-TestHost`, or `-Stop`, removes it.
+  - `tools\smoke-generic.ps1 -GameDir <game>` checks the core commands and the Console mod against any YYC
+    game. It knows no names from any game and finds its objects, variables and events in the running one.
+- **Tested on four more YYC games:** Zero Stress King, The King is Watching, The Spike Cross and Slime
+  Trader. The generic smoke test passes in all four.
 
 ### Changed
 - **Breaking:** CoreApi version 10 (UI round 3, `last_gml_error`, `instance_from_id`). The managed
@@ -106,6 +113,15 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - zlib is no longer a build dependency.
 
 ### Fixed
+- **Games that rebuild their swap chain no longer fail to start.** The overlay kept its back-buffer view
+  across frames, which held the game's first swap chain alive after the game released it. DXGI then
+  refused the replacement for the same window (`CreateSwapChain ... E_ACCESSDENIED`), and The King is
+  Watching stopped at an error box. The view now lives for one frame only. If the new swap chain is on a
+  new device, the overlay moves to that device.
+- **VM-compiled games are recognised.** When no YYC code is found and `data.win` holds bytecode, the
+  loader says the game is not YYC, instead of suggesting that the table shape changed. Mods start at
+  once instead of after the 30 s asset wait. Interop generation and game drawing stay off instead of
+  logging failures. The game itself runs as before.
 - **StoneshardCheats, Items → "To inventory"** works. It never did, natively either: `scr_inventory_add_weapon`
   takes the inventory as its self, not the player (the game calls it inside `with (o_inventory)`). It now
   runs as the `o_inventory` instance itself (not a child object's instance), with the player as other,

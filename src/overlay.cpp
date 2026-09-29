@@ -130,8 +130,35 @@ void CreateRenderTarget(IDXGISwapChain* swapChain) {
     }
 }
 
+// Some games (The King is Watching) throw their swap chain away and build a new
+// one, on a new device, after the first frames. Our backend's device and
+// context then belong to the dead chain: the ImGui DX11 backend moves to the
+// device of the chain being presented now.
+bool FollowDevice(IDXGISwapChain* swapChain) {
+    ID3D11Device* device = nullptr;
+    if (FAILED(swapChain->GetDevice(IID_PPV_ARGS(&device))) || !device) return false;
+    if (device == g_device) { device->Release(); return true; }
+
+    Logf("swap chain moved to device %p (was %p); overlay follows", device, g_device);
+    OverlayInvalidate();
+    ImGui_ImplDX11_Shutdown();
+    if (g_context) g_context->Release();
+    if (g_device) g_device->Release();
+    g_device = device;   // keeps GetDevice's reference
+    g_device->GetImmediateContext(&g_context);
+    if (!ImGui_ImplDX11_Init(g_device, g_context)) {
+        Logf("[!] ImGui DX11 backend re-init failed; overlay disabled");
+        g_initFailed = true;
+        // No NewFrame runs again, so ImGui's capture flags would stay frozen
+        // and the WndProc could keep eating the game's input.
+        g_visible = false;
+        return false;
+    }
+    return true;
+}
+
 bool EnsureInitialised(IDXGISwapChain* swapChain) {
-    if (g_initialised) return true;
+    if (g_initialised) return !g_initFailed && FollowDevice(swapChain);
     if (g_initFailed)  return false;
 
     if (FAILED(swapChain->GetDevice(IID_PPV_ARGS(&g_device))) || !g_device) {
@@ -192,8 +219,9 @@ void DrawStatusTab() {
     } else {
         ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
                            "Symbol resolver FAILED: %s", sym::HealthMessage());
-        ImGui::TextWrapped("Execution features are disabled. This usually means a game "
-                           "update changed the YYC table layout.");
+        if (std::strncmp(sym::HealthMessage(), "not a YYC game", 14) != 0)
+            ImGui::TextWrapped("Execution features are disabled. This usually means a game "
+                               "update changed the YYC table layout.");
     }
 
     if (gml::Ready()) {
@@ -354,7 +382,9 @@ void OverlayRender(IDXGISwapChain* swapChain) {
     // a current-self global, where the observed instance is the only source).
     gml::ClearObservedSelf();
 
-    if (!overlay) return;
+    // A mod's GML call can resize the game's buffers mid-frame, which drops
+    // our view (OverlayInvalidate); this frame's overlay is then skipped.
+    if (!overlay || !g_rtv) return;
 
     // The DX11 backend restores shaders, buffers and viewports but not the
     // output-merger targets: the game's own are put back by hand, so a game
@@ -367,6 +397,13 @@ void OverlayRender(IDXGISwapChain* swapChain) {
     g_context->OMSetRenderTargets(1, &gameRtv, gameDsv);
     if (gameRtv) gameRtv->Release();
     if (gameDsv) gameDsv->Release();
+
+    // No reference to the back buffer outlives the frame. A view kept across
+    // frames holds the swap chain alive after the game releases it, and DXGI
+    // then refuses the game a new chain for the same window (E_ACCESSDENIED
+    // from CreateSwapChain*). One view per frame costs next to nothing.
+    // (A resize from inside the frame may have dropped it already.)
+    if (g_rtv) { g_rtv->Release(); g_rtv = nullptr; }
 }
 
 void OverlayInvalidate() {

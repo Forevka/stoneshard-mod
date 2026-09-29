@@ -273,8 +273,14 @@ the game and reads its state back without clicking through the overlay.
 `\\.\pipe\coreloader-<pid>`, admits only the user running the game, but anything running as that user
 can then call any script and write any variable. Never set the variable for normal play.
 
+Steam relaunches some games through `steam.exe`, and the variable does not survive that. For those,
+a file `CoreLoader\testhost.enable` in the game folder turns the host on too. `run-game.ps1 -TestHost`
+writes it, and a launch without `-TestHost`, or `-Stop`, removes it.
+
 ```powershell
 tools\run-game.ps1 -Game Stoneshard -TestHost          # launches with CORELOADER_TEST=1
+tools\run-game.ps1 -GameDir "D:\Games\Other" -TestHost # any other game, by folder
+tools\smoke-generic.ps1 -GameDir "D:\Games\Other"      # core + Console checks for any YYC game
 tools\coreloader.ps1 -Game Stoneshard status           # one command, result printed as JSON
 tools\coreloader.ps1 -Game Stoneshard call scr_atr STR
 . tools\coreloader.ps1 -Game Dwarf                     # or, from a script:
