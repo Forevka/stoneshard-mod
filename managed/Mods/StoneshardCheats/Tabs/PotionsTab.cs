@@ -153,6 +153,37 @@ internal sealed class PotionsTab : Tab
         _outcomeNew = true;
         _outcomeOk = ok;
         _outcomeMessage = message;
+        _outcomeSeq++;
+    }
+
+    // Counts outcomes, so a test client can tell the one it armed for from an
+    // earlier one: the build that BuildPotion arms finishes as number _outcomeSeq + 1.
+    private int _outcomeSeq;
+
+    /// <summary>
+    /// The state of the last build, for the test host: still pending, or its
+    /// outcome and which build it was.
+    /// </summary>
+    public object Outcome() => Armed
+        ? new { pending = true, seq = _outcomeSeq }
+        : _outcomeNew
+            ? new { pending = false, seq = _outcomeSeq, ok = _outcomeOk, message = _outcomeMessage }
+            : (object)new { pending = false, seq = _outcomeSeq, ok = _lastOk, message = _lastMessage };
+
+    /// <summary>
+    /// Validates the tags against the effect table, then arms the build (see
+    /// BuildPotion). Returns the outcome number the build will finish as.
+    /// </summary>
+    public int Arm(List<string> tags)
+    {
+        if (_hookError != null) throw new InvalidOperationException(_hookError);
+        if (Armed) throw new InvalidOperationException("a potion build is already armed");
+        if (tags.Count == 0) throw new ArgumentException("no effects given");
+        if (!Catalogue.Done) throw new InvalidOperationException($"the effect table is still loading ({Catalogue.Status})");
+        var unknown = tags.Where(t => !Catalogue.PotionEffects.Any(e => e.Tag == t)).ToList();
+        if (unknown.Count > 0) throw new ArgumentException($"unknown effect tag(s): {string.Join(", ", unknown)}");
+        BuildPotion(tags);
+        return _outcomeSeq + 1;
     }
 
     private void BuildPotion(List<string> tags)
@@ -209,7 +240,7 @@ internal sealed class PotionsTab : Tab
 
     // Older runtimes hand out instance ids as plain numbers; newer ones as typed
     // references whose low 32 bits are the id.
-    private static long IdKey(RValue v) =>
+    internal static long IdKey(RValue v) =>
         v.IsNumber ? (long)v.AsReal : v.Kind == RValueKind.Reference ? v.Int64 & 0xFFFFFFFF : -1;
 
     public override void Draw()
