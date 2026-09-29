@@ -130,7 +130,7 @@ internal sealed class ItemsTab : Tab
             int n = _count, rarity = _rarity;
             Actions.Run($"scr_inventory_add_weapon \"{sel.Display}\" {Gear.RarityName(rarity)}  x{n}", () =>
             {
-                for (int i = 0; i < n; i++) Player.Call("scr_inventory_add_weapon", sel.Display, rarity);
+                for (int i = 0; i < n; i++) AddToInventory(sel.Display, rarity);
             });
         }
         UI.EndDisabled();
@@ -152,6 +152,25 @@ internal sealed class ItemsTab : Tab
         int before = (int)Game.CallBuiltin("instance_number", index).AsReal;
         for (int i = 0; i < count; i++) Player.Call("scr_dialogue_reward_add_item", index);
         return (before, (int)Game.CallBuiltin("instance_number", index).AsReal);
+    }
+
+    /// <summary>
+    /// Puts a weapon or armor straight into the player's inventory. The script
+    /// runs as the INVENTORY, not the player: it takes self as the owning
+    /// container and walks self.itemsContainer, which the player does not have
+    /// (run as the player it throws "invalid with reference"). The game's own
+    /// caller does the same from inside `with (o_inventory)`. Returns the new
+    /// item's id, or noone (-4) when the name is unknown, a unique was already
+    /// found, or the inventory is full (the item then drops to the floor).
+    /// </summary>
+    public static RValue AddToInventory(string displayName, int rarity)
+    {
+        var inventory = GmlObject.Find("o_inventory") is { InstanceCount: > 0 } inv
+            ? inv.Instance(0)
+            : throw new InvalidOperationException("no o_inventory instance: load a save first");
+        if (!Game.CanResolveInstances)
+            throw new InvalidOperationException("this runtime cannot run scripts as an instance by id");
+        return inventory.CallScript("scr_inventory_add_weapon", displayName, rarity);
     }
 
     /// <summary>

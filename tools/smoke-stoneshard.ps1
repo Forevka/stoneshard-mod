@@ -147,6 +147,11 @@ Check "item-give '$Item' returns a live instance" {
     if ($inst.Count -ne 1) { return "$($inst.Count) instance(s)" }
     if (cl builtin instance_exists $inst[0]) { $true } else { "instance $($inst[0]) does not exist" }
 }
+Check "item-inventory '$Item' puts a live item in the inventory" {
+    $r = cl cheats.item-inventory $Item Rare
+    if ($r.id -eq -4) { return "noone (inventory full, or a unique already found)" }
+    if (cl builtin instance_exists $r.id) { $true } else { "item $($r.id) does not exist" }
+}
 Check "object-give $GiveObject -> one more instance" {
     $r = cl cheats.object-give $GiveObject
     if ($r.after -gt $r.before) { $true } else { "$GiveObject count $($r.before) -> $($r.after)" }

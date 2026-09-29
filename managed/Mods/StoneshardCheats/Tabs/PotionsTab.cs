@@ -182,8 +182,12 @@ internal sealed class PotionsTab : Tab
         if (!Catalogue.Done) throw new InvalidOperationException($"the effect table is still loading ({Catalogue.Status})");
         var unknown = tags.Where(t => !Catalogue.PotionEffects.Any(e => e.Tag == t)).ToList();
         if (unknown.Count > 0) throw new ArgumentException($"unknown effect tag(s): {string.Join(", ", unknown)}");
+        // Taken before arming: the give can run the bottle's alarm synchronously,
+        // so the build may already have finished (and counted) when BuildPotion
+        // returns.
+        int expected = _outcomeSeq + 1;
         BuildPotion(tags);
-        return _outcomeSeq + 1;
+        return expected;
     }
 
     private void BuildPotion(List<string> tags)

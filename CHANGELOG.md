@@ -91,6 +91,14 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - The player tracker, the weapon recorder, and self-test phase B (which needed the player) are removed.
   - zlib is no longer a build dependency.
 
+### Fixed
+- **StoneshardCheats, Items → "To inventory"** works. It never did, natively either: `scr_inventory_add_weapon`
+  takes the inventory as its self, not the player (the game calls it inside `with (o_inventory)`). It now
+  runs as the `o_inventory` instance through `InstanceRef.CallScript`. The recovered GML error
+  ("invalid with reference" in `scr_inventory_get_containers`) is what pointed at it.
+- The test host's `cheats.potion` answered the wrong build number when the bottle's alarm ran during the
+  give itself, so a client waiting for the result timed out.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

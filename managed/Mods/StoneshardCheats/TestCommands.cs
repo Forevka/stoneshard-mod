@@ -120,7 +120,16 @@ internal static class TestCommands
             var made = ItemsTab.GiveGear(item.Display, rarity, count, identify: true);
             return new { item = item.Display, source = "gear", rarity = Gear.RarityName(rarity), count, instances = made };
         });
-        Actions.Command("cheats.object-give", "cheats.object-give <object> [count=1]: an object through the quest reward, answers {before, after} instance counts", a =>
+        Actions.Command("cheats.item-inventory", "cheats.item-inventory <display name|id> [rarity=Common]: gear straight into the inventory, answers the new item's id (-4 = noone)", a =>
+        {
+            var item = FindItem(Actions.Str(a, 0, "item"));
+            if (item.Source == ItemSource.Object) throw new ArgumentException($"{item.Display} is an object item; use cheats.object-give");
+            int rarity = a.Count > 1 ? Rarity(a[1]) : Gear.Common;
+            var id = ItemsTab.AddToInventory(item.Display, rarity);
+            double n = id.Kind == RValueKind.Reference ? id.Int64 & 0xFFFFFFFF : id.AsReal;
+            return new { item = item.Display, rarity = Gear.RarityName(rarity), id = n };
+        });
+        Actions.Command("cheats.object-give","cheats.object-give <object> [count=1]: an object through the quest reward, answers {before, after} instance counts", a =>
         {
             string name = Actions.Str(a, 0, "object");
             var obj = GmlObject.Find(name) ?? throw new ArgumentException($"no object named '{name}'");

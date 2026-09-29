@@ -33,7 +33,8 @@ param(
     # The pipe's name (coreloader-<pid>), instead of reading it from the game folder.
     [string] $Pipe,
     [int]    $TimeoutSec = 30,
-    # A self for call/builtin: "current" is the instance the game last ran.
+    # A self for call/builtin: "current" is the instance the game last ran, a
+    # number is an instance id.
     [string] $As,
     [Parameter(Position = 0)] [string] $Command,
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)] [object[]] $Arguments = @()

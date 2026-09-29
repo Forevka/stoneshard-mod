@@ -297,7 +297,7 @@ the frame: `wait-frames n` answers n frames later, and a longer wait is polled f
 |---|---|
 | `ping`, `status`, `mods`, `log [n]` | Liveness, game and bridge state, frame count, each mod's state and fault, the last n log lines |
 | `reload <mod\|all>` | Reloads a mod, as the Loader tab does |
-| `call <script> [args]`, `builtin <name> [args]` | Calls a script or builtin. `"as":"current"` runs it as the instance the game last ran |
+| `call <script> [args]`, `builtin <name> [args]` | Calls a script or builtin. `"as":"current"` runs it as the instance the game last ran; `"as":<instance id>` runs it as that instance (needs `Game.CanResolveInstances`) |
 | `global-get <name>`, `global-set <name> <value>` | Global variables (set answers the value read back) |
 | `instance-get <object> <n> <var>`, `instance-set <object> <n> <var> <value>` | Instance variables of an object's n-th live instance, or of an instance id (`<id> <var>`) |
 | `object-count <object>` | Live instances, children included |

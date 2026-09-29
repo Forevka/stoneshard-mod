@@ -450,13 +450,26 @@ public static class TestHost
         return new { name = fresh.Instance.Info.Name, state = fresh.State.ToString().ToLowerInvariant(), fault = fresh.Fault };
     }
 
-    // There is no way from an instance id to the instance itself, which a
-    // script needs as its self; "current" is whatever the game last ran.
+    // "current" is whatever the game last ran; a number is an instance id,
+    // turned into the instance through the runtime's id table.
     private static Instance Self(Request r)
     {
         if (r.As is not { } a || a.ValueKind is JsonValueKind.Null) return default;
         if (a.ValueKind == JsonValueKind.String && a.GetString() == "current") return Game.CurrentSelf;
-        throw new ArgumentException("\"as\" takes \"current\" (the instance the game is running); a mod can register a command that runs as a specific instance");
+        // Clients on a command line send the id as text, so a numeric string counts.
+        double id = double.NaN;
+        if (a.ValueKind == JsonValueKind.Number) id = a.GetDouble();
+        else if (a.ValueKind == JsonValueKind.String &&
+                 double.TryParse(a.GetString(), System.Globalization.NumberStyles.Float,
+                                 System.Globalization.CultureInfo.InvariantCulture, out var parsed)) id = parsed;
+        if (!double.IsNaN(id))
+        {
+            if (!Game.CanResolveInstances)
+                throw new InvalidOperationException("this runtime's instance id lookup is not proven; use \"as\": \"current\"");
+            return new InstanceRef(RValue.FromReal(id)).Resolve()
+                   ?? throw new ArgumentException($"no live instance with id {id}");
+        }
+        throw new ArgumentException("\"as\" takes \"current\" (the instance the game is running) or an instance id");
     }
 
     private static RValue InstanceVar(JsonElement[] args, bool set)
