@@ -128,6 +128,27 @@ public override void OnInitialize()
 }
 ```
 
+## Analyzers
+
+Mods are compiled with `CoreLoader.Analyzers`, which reports the lifetime mistakes the runtime can
+only catch as a crash. The `Mods/`, `Tests/` and `Examples/` projects here get it from their
+`Directory.Build.props`. Template mods get it from `<game>\CoreLoader\Analyzers\`, where
+`tools\deploy-coreloader.ps1` installs it. It runs in the compiler only; the game never loads it.
+
+| Rule | Reports | Why |
+|---|---|---|
+| CL0001 | A field or auto-property that holds an `RValue` (or an array, collection or tuple of them) | Strings, arrays and structs from the game are pooled and released at the end of the frame. Keep C# data (`AsReal`, `AsString`), or own the value with `Values.Keep` and release it with `Values.Free` |
+| CL0002 | A field or auto-property that holds an `Instance` or a `HookCall`, or a lambda that captures a `HookCall` and is stored or queued (`Game.RunOnGameThread`, `Task.Run`, a field, a collection) | An `Instance` is a raw pointer that dangles once the instance is destroyed: hold an `InstanceRef`. A `HookCall` is valid only inside its handler |
+| CL0003 | `Values.Free` on a local read from `HookCall.GetArg` or `HookCall.Result` | The game lends hook arguments and results; freeing one releases the caller's reference |
+
+Keeping a value on purpose (a number, or one owned with `Values.Keep`) is fine: suppress the warning
+on that member with a reason, e.g. in `GlobalSuppressions.cs`:
+
+```csharp
+[assembly: SuppressMessage("CoreLoader.Lifetime", "CL0001", Scope = "member",
+    Target = "~F:MyMod.MyMod._frozen", Justification = "Values.Keep'd, freed in OnShutdown.")]
+```
+
 ## API at a glance
 
 | Area | What you get |

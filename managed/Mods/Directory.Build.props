@@ -13,5 +13,8 @@
       <Private>false</Private>
       <ExcludeAssets>runtime</ExcludeAssets>
     </ProjectReference>
+    <!-- Compile-time lifetime checks (CL0001-CL0003); never loaded by the game. -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\CoreLoader.Analyzers\CoreLoader.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

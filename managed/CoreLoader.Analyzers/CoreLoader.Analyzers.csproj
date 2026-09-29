@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compile-time checks for mods: the rules CoreLoader enforces at runtime
+    (value lifetimes, what a hook call lends) reported while the mod is written.
+    The compiler loads it; the game never does. It is built next to the
+    runtime, in CoreLoader\Analyzers\, where tools\deploy-coreloader.ps1 copies
+    it into a game and the dotnet-new template picks it up.
+  -->
+  <PropertyGroup>
+    <!-- Analyzers run inside the compiler, in Visual Studio as in dotnet build. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <OutputPath>$(ManagedOutRoot)CoreLoader\Analyzers\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 4.8 = Visual Studio 17.8 / .NET 8 SDK: the oldest compiler that must load it. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+</Project>

@@ -45,6 +45,14 @@ $loaderDir = Join-Path $GameDir "CoreLoader"
 New-Item -ItemType Directory -Force -Path $loaderDir | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $managed "CoreLoader") -File |
     ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $loaderDir -Force }
+# The mod analyzer is for compilers only (template mods reference it from
+# here); the game never loads anything from this folder.
+$analyzer = Join-Path $managed "CoreLoader\Analyzers\CoreLoader.Analyzers.dll"
+if (Test-Path -LiteralPath $analyzer) {
+    $analyzerDir = Join-Path $loaderDir "Analyzers"
+    New-Item -ItemType Directory -Force -Path $analyzerDir | Out-Null
+    Copy-Item -LiteralPath $analyzer -Destination $analyzerDir -Force
+}
 
 $modsDir = Join-Path $GameDir "Mods"
 New-Item -ItemType Directory -Force -Path $modsDir | Out-Null

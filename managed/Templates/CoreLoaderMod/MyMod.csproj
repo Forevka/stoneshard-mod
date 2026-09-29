@@ -25,6 +25,9 @@
       <HintPath>$(CoreLoaderDir)\CoreLoader.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Compile-time lifetime checks (CL0001-CL0003), installed with CoreLoader.
+         The compiler loads it; it is never deployed or loaded by the game. -->
+    <Analyzer Include="$(CoreLoaderDir)\Analyzers\CoreLoader.Analyzers.dll" Condition="Exists('$(CoreLoaderDir)\Analyzers\CoreLoader.Analyzers.dll')" />
   </ItemGroup>
 
 <!--#if (hasInterop) -->
