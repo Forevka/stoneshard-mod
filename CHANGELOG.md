@@ -39,7 +39,9 @@ bump may break the mod API or the native CoreApi table; each version says so und
 
 ### Changed
 - **Breaking:** CoreApi version 10 (UI round 3). The managed runtime requires this exact version.
-- The overlay's top-level tabs are Mods, Symbols and Status. Symbols and Status used to sit under Debug.- Native GML calls with no explicit self use the current self only. The self captured by the remote
+- The overlay's top-level tabs are Mods, Symbols and Status. Symbols and Status used to sit under Debug.
+- `StoneshardCheats` uses `DsMap`/`DsList`, `Hooks.NextAfter` and `ObjectTable` instead of its own copies.
+  The potion hook is only installed while a build is armed.- Native GML calls with no explicit self use the current self only. The self captured by the remote
   command file is gone.
 
 ### Removed

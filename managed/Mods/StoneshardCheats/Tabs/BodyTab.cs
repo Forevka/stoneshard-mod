@@ -94,17 +94,17 @@ internal sealed class BodyTab : Tab
         DrawStatuses();
     }
 
-    private static RValue PartsMap()
+    private static DsMap PartsMap()
     {
-        var map = Player.Require().Get("Body_Parts_map");
-        if (!Ds.MapExists(map)) throw new InvalidOperationException("Body_Parts_map is not readable");
+        var map = new DsMap(Player.Require().Get("Body_Parts_map"));
+        if (!map.Exists) throw new InvalidOperationException("Body_Parts_map is not readable");
         return map;
     }
 
     private static List<(string Key, string Label, double Condition)> ReadParts()
     {
         var parts = new List<(string Key, string Label, double Condition)>();
-        foreach (var (key, value) in Ds.Entries(PartsMap()))
+        foreach (var (key, value) in PartsMap().Entries())
         {
             if (!value.IsNumber) continue;
             int order = Array.FindIndex(Parts, p => p.Key == key);
@@ -128,7 +128,7 @@ internal sealed class BodyTab : Tab
     // established, and guessing a script's arguments is how two earlier ones
     // were made to fault.
     private static void SetCondition(string key, double value) =>
-        Ds.Set(PartsMap(), key, Math.Clamp(value, 0.0, 100.0));
+        PartsMap().Set(key, Math.Clamp(value, 0.0, 100.0));
 
     private static void DrawStatuses()
     {
@@ -140,16 +140,16 @@ internal sealed class BodyTab : Tab
             "read-only: removing one needs a call whose arguments are not established yet, " +
             "and guessing them is how two earlier scripts were made to fault.");
 
-        RValue list;
-        try { list = Player.Require().Get("buffs"); }
-        catch (GmlException) { list = RValue.Undefined; }
-        if (!Ds.ListExists(list))
+        DsList list;
+        try { list = new DsList(Player.Require().Get("buffs")); }
+        catch (GmlException) { list = new DsList(RValue.Undefined); }
+        if (!list.Exists)
         {
             UI.TextDisabled("buffs list not readable");
             return;
         }
 
-        int n = Math.Min(Ds.Count(list), MaxStatuses);
+        int n = Math.Min(list.Count, MaxStatuses);
         if (n == 0)
         {
             UI.TextDisabled("none - no wounds, bleeds or effects active");
@@ -158,7 +158,7 @@ internal sealed class BodyTab : Tab
 
         for (int i = 0; i < n; i++)
         {
-            var entry = Ds.At(list, i);
+            var entry = list.At(i);
             // The entry is an instance reference; its object's name says what the
             // status is, where the bare id says nothing.
             var buff = new InstanceRef(entry);

@@ -44,16 +44,17 @@ internal sealed class PotionsTab : Tab
     // The give is expected to trigger the bottle's alarm on the next step. If
     // nothing fires by then the request is dropped, so a give that failed
     // quietly cannot rewrite the next bottle the game makes on its own.
-    private const long TimeoutMs = 2000;
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
 
     private string? _hookError;
 
-    // The armed request.
-    private bool _armed;
-    private long _armedAt;
+    // The armed request: a one-shot hook on the bottle's Alarm 0.
+    private NextCall? _request;
     // The bottle the give created, or -1 when it could not be singled out.
     private long _armedId = -1;
     private List<string> _wantTags = new();
+
+    private bool Armed => _request is { IsPending: true };
 
     // The outcome of the last request, posted by the hook and collected once by
     // Draw, so it is reported on the frame it arrives rather than every frame.
@@ -71,40 +72,33 @@ internal sealed class PotionsTab : Tab
     public override void Initialize(CheatsMod mod)
     {
         Catalogue.Start();
-        try
+        // The hook itself is only installed while a build is armed; checked up
+        // front so a game without the event says so instead of offering a button.
+        if (Game.FindSymbol(AlarmEvent) == 0)
         {
-            // The whole event body is one call to scr_roll_potion, so this fires
-            // once per potion the game creates - not on every step.
-            Hooks.After(AlarmEvent, OnBottleAlarm);
+            _hookError = $"{AlarmEvent} does not exist in {Game.Name}";
+            Actions.Log.Warning($"potions: {_hookError}");
         }
-        catch (GmlException ex)
-        {
-            _hookError = ex.Message;
-            Actions.Log.Warning($"potions: {ex.Message}");
-        }
+    }
+
+    // Which bottle alarm is ours. The whole event body is one call to
+    // scr_roll_potion, so the hook sees one call per potion the game creates -
+    // not one per step.
+    private bool IsOurBottle(HookCall c)
+    {
+        // A mod skipped the game's own roll: there is no rolled bottle to build on.
+        if (c.Self.IsNull || c.OriginalSkipped) return false;
+        // Aimed at the bottle the give created: any other bottle rolling in the
+        // meantime (loot, a trader restock) is left exactly as the game made it.
+        if (_armedId < 0) return true;
+        try { return IdKey(c.Self.Get("id")) == _armedId; }
+        catch (Exception) { return false; }
     }
 
     // After the game's own roll, which is untouched and always first: it is what
     // makes the bottle a valid potion in the first place; the build only rewrites it.
     private void OnBottleAlarm(HookCall c)
     {
-        // A mod skipped the game's own roll: there is no rolled bottle to build on.
-        if (!_armed || c.Self.IsNull || c.OriginalSkipped) return;
-        if (Expired())
-        {
-            TimedOut();
-            return;
-        }
-        // Aimed at the bottle the give created: any other bottle rolling in the
-        // meantime (loot, a trader restock) is left exactly as the game made it.
-        if (_armedId >= 0)
-        {
-            long self;
-            try { self = IdKey(c.Self.Get("id")); }
-            catch (Exception) { return; }
-            if (self != _armedId) return;
-        }
-
         // This runs inside the game's event: a failure is turned into the outcome
         // message here rather than faulting the mod mid-event.
         try
@@ -120,16 +114,17 @@ internal sealed class PotionsTab : Tab
     // Rewrites the freshly rolled bottle into the potion that was asked for.
     private string Build(Instance bottle)
     {
-        var data = bottle.Get("data");
-        if (!data.IsNumber) throw new InvalidOperationException("the bottle has no data map");
+        var id = bottle.Get("data");
+        if (!id.IsNumber) throw new InvalidOperationException("the bottle has no data map");
+        var data = new DsMap(id);
 
         // `atrdlist` is a plain ds_list of tag strings - [ "good_pt_rage" ] - so
         // it is edited IN PLACE. Its id is never written back with
         // ds_map_replace, which would destroy the nesting.
-        var list = Ds.Get(data, "atrdlist");
-        if (!Ds.ListExists(list)) throw new InvalidOperationException("could not write the effect list: no atrdlist");
-        Ds.Clear(list);
-        foreach (var tag in _wantTags) Ds.Add(list, tag);
+        var list = new DsList(data.Get("atrdlist"));
+        if (!list.Exists) throw new InvalidOperationException("could not write the effect list: no atrdlist");
+        list.Clear();
+        foreach (var tag in _wantTags) list.Add(tag);
 
         // argc = 0, self = the bottle: exactly how scr_roll_potion calls it.
         try
@@ -142,20 +137,19 @@ internal sealed class PotionsTab : Tab
                 "scr_potion_set_param rejected the call - the effect list is written but the name and colour are stale");
         }
 
-        var name = Ds.Get(data, "Name");
+        var name = data.Get("Name");
         if (name.Kind != RValueKind.String) return "built it, but the result could not be read back";
         string text = name.ToString();
         return text.Length == 0 ? "built it" : $"built {text}";
     }
 
-    private bool Expired() => Environment.TickCount64 - _armedAt > TimeoutMs;
-
+    // Called by the loader once the timeout passes with no matching alarm - on
+    // time, even if no bottle alarm ever fires.
     private void TimedOut() =>
-        Finish(false, $"no bottle alarm within {TimeoutMs / 1000} s - the bottle was not given; nothing was built");
+        Finish(false, $"no bottle alarm within {Timeout.TotalSeconds:0} s - the bottle was not given; nothing was built");
 
     private void Finish(bool ok, string message)
     {
-        _armed = false;
         _outcomeNew = true;
         _outcomeOk = ok;
         _outcomeMessage = message;
@@ -163,10 +157,9 @@ internal sealed class PotionsTab : Tab
 
     private void BuildPotion(List<string> tags)
     {
-        // The object's own asset index, from the catalogue rather than a constant.
-        int index = Catalogue.ObjectIndex(BottleObject);
-        if (index < 0) index = GmlObject.Find(BottleObject)?.Index ?? -1;
-        if (index < 0) throw new InvalidOperationException($"{BottleObject} is not in the object table");
+        // The object's own asset index, looked up by name rather than a constant.
+        int index = GmlObject.Find(BottleObject)?.Index
+                    ?? throw new InvalidOperationException($"{BottleObject} is not in the object table");
 
         // Arm first, give the bottle second: the alarm fires on a later step, and
         // the hook does the building then - inside the event frame, the only
@@ -180,17 +173,16 @@ internal sealed class PotionsTab : Tab
         // same behaviour as before the aiming existed.
         var before = BottleIds(index);
         _wantTags = tags;
-        _armed = true;
         _armedId = -1;
-        _armedAt = Environment.TickCount64;
         _outcomeNew = false;
+        _request = Hooks.NextAfter(AlarmEvent, IsOurBottle, OnBottleAlarm, Timeout, TimedOut);
         try
         {
             Player.Call("scr_dialogue_reward_add_item", index);
         }
         catch
         {
-            _armed = false;
+            _request.Dispose();
             throw;
         }
 
@@ -255,10 +247,6 @@ internal sealed class PotionsTab : Tab
             return;
         }
 
-        // A request whose alarm never came is dropped here as well as in the
-        // hook, so the tab stops saying "building..." on time.
-        if (_armed && Expired()) TimedOut();
-
         // Which effects the potion will carry. A set rather than one choice: the
         // whole point of building instead of rolling is combinations the roll
         // tables never produce.
@@ -287,7 +275,7 @@ internal sealed class PotionsTab : Tab
         }
         UI.EndChild();
 
-        UI.BeginDisabled(_armed || chosen.Count == 0 || !Player.Available);
+        UI.BeginDisabled(Armed || chosen.Count == 0 || !Player.Available);
         if (UI.Button("Build this potion", 220f))
             Actions.Run($"build a potion with {chosen.Count} effect(s): {string.Join(", ", chosen)}",
                 () => BuildPotion(chosen));
@@ -295,7 +283,7 @@ internal sealed class PotionsTab : Tab
         UI.SameLine();
         UI.TextDisabled("takes one bottle and rewrites it");
 
-        if (_armed) UI.TextColored(0.95f, 0.8f, 0.35f, "building...");
+        if (Armed) UI.TextColored(0.95f, 0.8f, 0.35f, "building...");
 
         if (_outcomeNew)
         {

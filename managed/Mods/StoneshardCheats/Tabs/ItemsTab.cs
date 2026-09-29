@@ -378,11 +378,11 @@ internal static class Gear
     }
 
     // The item's `data` map, which is where everything lives.
-    private static RValue DataMap(InstanceRef item, string displayName)
+    private static DsMap DataMap(InstanceRef item, string displayName)
     {
         var d = item.Get("data");
         if (!d.IsNumber) throw new InvalidOperationException($"the spawned {displayName} has no data map");
-        return d;
+        return new DsMap(d);
     }
 
     /// <summary>
@@ -424,7 +424,7 @@ internal static class Gear
             {
                 // replace, not add: it sets an existing key and creates a missing
                 // one, which is exactly the "a new stat IS an enchantment" case.
-                Ds.Set(map, f.Key, f.ToValue());
+                map.Set(f.Key, f.ToValue());
             }
             catch (GmlException ex)
             {
@@ -439,11 +439,11 @@ internal static class Gear
     // Walks the map with the game's own iterator rather than parsing json_encode
     // output: the keys and values arrive as values, so a string stays a string
     // and a number stays a number with nothing to re-parse.
-    private static List<Field> ReadFields(RValue map)
+    private static List<Field> ReadFields(DsMap map)
     {
         var nested = NestedKeys(map);
         var fields = new List<Field>();
-        foreach (var (key, val) in Ds.Entries(map))
+        foreach (var (key, val) in map.Entries())
         {
             // Nested lists and maps never become editable fields, so they are
             // also never written back - which is what keeps them intact.
@@ -485,10 +485,10 @@ internal static class Gear
     // quotes or brackets, and a nested map's own keys are not the item's keys.
     // json_encode on a stale or non-map id returns a null string rather than
     // faulting, which makes this safe to try.
-    private static HashSet<string> NestedKeys(RValue map)
+    private static HashSet<string> NestedKeys(DsMap map)
     {
         var keys = new HashSet<string>(StringComparer.Ordinal);
-        string json = Ds.Json(map);
+        string json = map.ToJson();
         if (json.Length == 0 || json == "<null string>") return keys;
 
         int depth = 0;
