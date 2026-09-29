@@ -48,7 +48,4 @@ void* FindScript(const std::string& shortName);
 // Case-insensitive substring filter over all names.
 std::vector<const Entry*> Search(const std::string& needle, std::size_t limit);
 
-// Short names of the built-in console commands, e.g. "sethp", "spawn".
-const std::vector<std::string>& ConsoleCommands();
-
 } // namespace mod::sym

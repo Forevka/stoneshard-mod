@@ -48,10 +48,6 @@ Builtin Find(const std::string& name);
 bool Call(const std::string& name, gml::RValue* result,
           gml::RValue* args, int argc, void* self, void* other = nullptr);
 
-// Reads an instance variable by name via the reflection API. `self` supplies the
-// instance context; GML's -1 ("self") selects it.
-bool GetInstanceVar(void* instance, const char* name, gml::RValue* out);
-
 // ---------------------------------------------------------------- reflection
 //
 // The reflection API takes a GML instance handle as its first argument.
@@ -64,17 +60,11 @@ bool GetInstanceVar(void* instance, const char* name, gml::RValue* out);
 //     attempt fail. The reference is passed straight back through, never
 //     decoded.
 //
-// The handle carries whichever it has plus the CInstance* for `self`, so one
-// call site works for the player and for any other instance.
+// The handle carries the id argument plus the CInstance* for `self`.
 struct Handle {
-    gml::RValue id{};            // set to real -1 by PlayerHandle when no ref resolved
+    gml::RValue id{};            // real -1 ("self") from SelfHandle
     void*       self = nullptr;  // CInstance* passed as the TRoutine's `self`
-    bool        haveRef = false; // true when `id` is a real instance reference
 };
-
-// The local player. The object index is cached; the reference is re-resolved
-// per call rather than held, since the mod does not manage its lifetime.
-Handle PlayerHandle();
 
 // Builds a "self" handle for an arbitrary instance: real -1 plus that
 // CInstance*. This is the path that is known to work.
@@ -83,15 +73,8 @@ Handle SelfHandle(void* instance);
 bool GetVar(const Handle& h, const char* name, gml::RValue* out);
 bool SetVar(const Handle& h, const char* name, const gml::RValue& value);
 
-// Total variable count (-1 on failure). Fills `out` with up to `limit` names
-// (all of them when limit <= 0). The names come back through the game's own
-// array_get rather than by decoding a GML array's memory layout, which was
-// never established.
-int VarNames(const Handle& h, std::vector<std::string>& out, int limit);
-
-// The ABI gate plus the reflection probes that everything reading or writing
-// instance fields depends on. MUST run on the game thread. Runs once per
-// phase; safe to call every frame.
+// The ABI gate that everything calling builtins depends on. MUST run on the
+// game thread. Runs once; safe to call every frame.
 void        SelfTest();
 bool        SelfTestPassed();
 const char* SelfTestReport();

@@ -32,9 +32,7 @@ overlay (**INSERT**) has a *Mods* tab that shows the loader's status and one tab
 
 The log is `CoreLoader\Logs\coreloader.log`. The previous session's log is kept as
 `coreloader.prev.log`, so a crash's trail survives the next launch. An identical line repeated many
-times a second is written a few times, then summarised. The remote command file (a development
-tool that can call any builtin) is only read when the environment variable `CORELOADER_REMOTE=1`
-is set.
+times a second is written a few times, then summarised.
 
 ## The mod-author workflow
 

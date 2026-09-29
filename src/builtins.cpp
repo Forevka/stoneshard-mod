@@ -475,96 +475,12 @@ bool NameArg(const char* name, gml::RValue& out) {
 }
 } // namespace
 
-bool GetInstanceVar(void* instance, const char* name, gml::RValue* out) {
-    if (!instance || !name || !out) return false;
-
-    gml::RValue args[2]{};
-    gml::SetReal(args[0], -1.0);               // GML "self": use the instance context below
-    if (!NameArg(name, args[1])) return false;
-
-    return Call("variable_instance_get", out, args, 2, instance) &&
-           out->kind != gml::kUndefined;
-}
-
 // ---------------------------------------------------------------- reflection
-
-namespace {
-
-double g_playerObjIndex = -1.0;     // asset index is stable; the reference is not
-bool   g_refFailLogged  = false;
-
-// A handle is usable if it is anything the runtime would accept as an instance:
-// a number, or the reference kind instance_find actually returns here.
-bool UsableHandle(const gml::RValue& v) {
-    return v.kind == gml::kReal || v.kind == gml::kInt32 || v.kind == gml::kInt64 ||
-           v.kind == gml::kRef  || v.kind == gml::kObject;
-}
-
-// asset_get_index("o_player") -> instance_find(index, 0).
-//
-// instance_find returns kind 15 (kRef) in this runtime, not a number. The first
-// version of this demanded a real and discarded the answer, which is what made
-// the id path look broken. The reference is handed straight back to the
-// reflection builtins and never decoded.
-bool ResolvePlayerRef(void* self, gml::RValue* out) {
-    if (!self || !out) return false;
-
-    if (g_playerObjIndex < 0.0) {
-        static const char kObject[] = "o_player";   // must outlive the call
-        gml::RValue nameArg{};
-        if (!gml::SetString(nameArg, kObject)) return false;
-
-        gml::RValue idx{};
-        if (!Call("asset_get_index", &idx, &nameArg, 1, self) ||
-            idx.kind != gml::kReal || idx.real < 0.0) {
-            if (!g_refFailLogged) {
-                g_refFailLogged = true;
-                Logf("[!] builtins: asset_get_index(\"o_player\") failed (kind=%d)", idx.kind);
-            }
-            return false;
-        }
-        g_playerObjIndex = idx.real;
-        Logf("builtins: o_player asset index %.0f", g_playerObjIndex);
-    }
-
-    gml::RValue findArgs[2]{};
-    gml::SetReal(findArgs[0], g_playerObjIndex);
-    gml::SetReal(findArgs[1], 0.0);
-
-    gml::RValue inst{};
-    if (!Call("instance_find", &inst, findArgs, 2, self) || !UsableHandle(inst)) {
-        if (!g_refFailLogged) {
-            g_refFailLogged = true;
-            Logf("[!] builtins: instance_find gave an unusable handle (kind=%d)", inst.kind);
-        }
-        return false;
-    }
-
-    *out = inst;
-    return true;
-}
-
-} // namespace
 
 Handle SelfHandle(void* instance) {
     Handle h;
     gml::SetReal(h.id, -1.0);
     h.self = instance;
-    return h;
-}
-
-Handle PlayerHandle() {
-    void* inst = gml::PlayerInstance();
-    Handle h = SelfHandle(inst ? inst : gml::CurrentSelf());
-
-    // Re-resolved per call rather than cached: the mod does not own the
-    // reference's lifetime, and holding one across frames is not worth the risk
-    // for what amounts to two builtin calls.
-    gml::RValue ref{};
-    if (inst && ResolvePlayerRef(inst, &ref)) {
-        h.id      = ref;
-        h.haveRef = true;
-    }
     return h;
 }
 
@@ -591,47 +507,11 @@ bool SetVar(const Handle& h, const char* name, const gml::RValue& value) {
     return Call("variable_instance_set", &ignored, args, 3, h.self);
 }
 
-int VarNames(const Handle& h, std::vector<std::string>& out, int limit) {
-    out.clear();
-
-    gml::RValue one = h.id;
-
-    gml::RValue count{};
-    if (!Call("variable_instance_names_count", &count, &one, 1, h.self) ||
-        count.kind != gml::kReal)
-        return -1;
-    const int n = static_cast<int>(count.real);
-
-    gml::RValue names{};
-    if (!Call("variable_instance_get_names", &names, &one, 1, h.self)) return n;
-
-    // A GML array's memory layout was never established, so index it with the
-    // game's own array_get and hand the array straight back as an argument
-    // rather than decoding it.
-    if (!Find("array_get").fn) {
-        Logf("builtins: array_get is not registered - reporting the count (%d) only", n);
-        return n;
-    }
-
-    const int take = (limit > 0 && limit < n) ? limit : n;
-    for (int i = 0; i < take; ++i) {
-        gml::RValue args[2]{};
-        args[0] = names;
-        gml::SetReal(args[1], static_cast<double>(i));
-
-        gml::RValue s{};
-        if (!Call("array_get", &s, args, 2, h.self)) break;
-        out.push_back(gml::ToString(s));
-    }
-    return n;
-}
-
 // ---------------------------------------------------------------- self-test
 
 namespace {
 
 bool        g_abiDone = false, g_abiOk = false;
-bool        g_reflDone = false;
 std::string g_report = "not run";
 
 // Phase A: the three-call ABI gate. Needs no character, so it runs at the menu.
@@ -680,101 +560,6 @@ void PhaseA(void* self) {
     Logf("builtins: --- phase A %s (%d/3) ---", g_abiOk ? "PASSED" : "FAILED", passed);
 }
 
-// Phase B: reflection. Needs a loaded character, so it waits for one.
-void PhaseB() {
-    const Handle byRef  = PlayerHandle();
-    const Handle bySelf = SelfHandle(gml::PlayerInstance());
-
-    Logf("builtins: --- self-test phase B (self=%p, ref=%s kind=%d) ---",
-         bySelf.self, byRef.haveRef ? "yes" : "no", byRef.id.kind);
-
-    char summary[256];
-    bool refOk = false, selfOk = false, mutatorOk = false, restored = false;
-    int  fieldCount = -1;
-
-    // 1) Read through the instance reference instance_find handed back.
-    gml::RValue vRef{};
-    if (byRef.haveRef && GetVar(byRef, "x", &vRef) && vRef.kind == gml::kReal) {
-        refOk = true;
-        Logf("builtins:   get x by instance ref -> %.2f", vRef.real);
-    } else {
-        Logf("builtins:   get x by instance ref -> FAILED (haveRef=%d kind=%d)",
-             byRef.haveRef ? 1 : 0, vRef.kind);
-    }
-
-    // 2) Read through -1/"self".
-    gml::RValue vSelf{};
-    if (bySelf.self && GetVar(bySelf, "x", &vSelf) && vSelf.kind == gml::kReal) {
-        selfOk = true;
-        Logf("builtins:   get x by -1 (\"self\")  -> %.2f", vSelf.real);
-    } else {
-        Logf("builtins:   get x by -1 (\"self\")  -> FAILED (kind=%d)", vSelf.kind);
-    }
-
-    // 3) Prove variable_instance_set is a real mutator rather than a call that
-    //    merely returns cleanly: nudge x by one, read it back, put it straight
-    //    back. One pixel, fully reversed.
-    //
-    //    Prefer the reference path: driving an instance that is NOT the running
-    //    `self` is the harder case, so proving that one matters more.
-    const Handle* mut      = refOk ? &byRef : (selfOk ? &bySelf : nullptr);
-    const char*   mutVia   = refOk ? "ref" : "self";
-    const double  original = refOk ? vRef.real : (selfOk ? vSelf.real : 0.0);
-
-    if (mut) {
-        gml::RValue nudged{};
-        gml::SetReal(nudged, original + 1.0);
-
-        if (SetVar(*mut, "x", nudged)) {
-            gml::RValue back{};
-            if (GetVar(*mut, "x", &back) && back.kind == gml::kReal) {
-                mutatorOk = (back.real == original + 1.0);
-                Logf("builtins:   set x %.2f -> %.2f via %s, read back %.2f (%s)",
-                     original, original + 1.0, mutVia, back.real,
-                     mutatorOk ? "MUTATOR WORKS" : "write did not take");
-            } else {
-                Logf("builtins:   set x via %s -> could not read back", mutVia);
-            }
-
-            // Always restore, and verify the restore rather than assuming it.
-            gml::RValue restore{};
-            gml::SetReal(restore, original);
-            SetVar(*mut, "x", restore);
-
-            gml::RValue check{};
-            if (GetVar(*mut, "x", &check) && check.kind == gml::kReal)
-                restored = (check.real == original);
-            Logf("builtins:   restore x to %.2f     -> %s", original,
-                 restored ? "ok" : "NOT RESTORED - the player moved one pixel");
-        } else {
-            Logf("builtins:   set x via %s          -> FAILED", mutVia);
-        }
-    } else {
-        Logf("builtins:   mutator test skipped - no working read path");
-    }
-
-    // 4) Field count, plus a sample of the names, so the log shows what
-    //    reflection actually sees on a live player.
-    {
-        const Handle& h = refOk ? byRef : bySelf;
-        std::vector<std::string> names;
-        fieldCount = VarNames(h, names, 12);
-        if (fieldCount >= 0) {
-            Logf("builtins:   o_player has %d instance variables", fieldCount);
-            for (const std::string& n : names) Logf("builtins:     %s", n.c_str());
-        } else {
-            Logf("builtins:   variable_instance_names_count -> FAILED");
-        }
-    }
-
-    std::snprintf(summary, sizeof(summary),
-                  "abi=%s read_by_ref=%s read_by_self=%s mutator=%s(%s) restored=%s fields=%d",
-                  g_abiOk ? "ok" : "FAIL", refOk ? "ok" : "FAIL", selfOk ? "ok" : "FAIL",
-                  mutatorOk ? "ok" : "FAIL", mutVia, restored ? "ok" : "FAIL", fieldCount);
-    g_report = summary;
-    Logf("builtins: --- phase B done: %s ---", g_report.c_str());
-}
-
 } // namespace
 
 bool        SelfTestPassed() { return g_abiOk; }
@@ -792,13 +577,7 @@ void SelfTest() {
     if (!g_abiDone) {
         g_abiDone = true;
         PhaseA(self);
-        g_report = g_abiOk ? "abi=ok, waiting for a character" : "abi=FAIL";
-    }
-
-    // Reflection needs a loaded character; keep retrying until there is one.
-    if (!g_reflDone && g_abiOk && gml::PlayerInstance()) {
-        g_reflDone = true;
-        PhaseB();
+        g_report = g_abiOk ? "abi=ok" : "abi=FAIL";
     }
 }
 

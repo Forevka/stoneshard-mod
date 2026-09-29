@@ -28,7 +28,6 @@ DWORD    g_imageSize = 0;
 
 std::vector<Entry>                          g_entries;
 std::unordered_map<std::string, void*>      g_index;
-std::vector<std::string>                    g_consoleCommands;
 // Same entries ordered by address, so a code pointer can be mapped to a name.
 std::vector<Entry>                          g_byAddress;
 
@@ -89,7 +88,6 @@ bool Scan() {
     g_entries.clear();
     g_byAddress.clear();
     g_index.clear();
-    g_consoleCommands.clear();
     g_healthy = false;
 
     HMODULE game = GetModuleHandleW(nullptr);
@@ -125,24 +123,6 @@ bool Scan() {
 
     const DWORD elapsed = GetTickCount() - started;
 
-    // Harvest the built-in console command names for autocomplete.
-    constexpr char kPrefix[] = "gml_Script_scr_console_";
-    constexpr std::size_t kPrefixLen = sizeof(kPrefix) - 1;
-    for (const Entry& e : g_entries) {
-        if (std::strncmp(e.name, kPrefix, kPrefixLen) != 0) continue;
-        std::string shortName(e.name + kPrefixLen);
-        if (shortName.empty()) continue;
-        // Skip the _help partners and compiler-generated inner functions.
-        if (shortName.size() > 5 &&
-            shortName.compare(shortName.size() - 5, 5, "_help") == 0) continue;
-        if (shortName.find("_gml_") != std::string::npos) continue;
-        g_consoleCommands.push_back(std::move(shortName));
-    }
-    std::sort(g_consoleCommands.begin(), g_consoleCommands.end());
-    g_consoleCommands.erase(
-        std::unique(g_consoleCommands.begin(), g_consoleCommands.end()),
-        g_consoleCommands.end());
-
     g_byAddress = g_entries;
     std::sort(g_byAddress.begin(), g_byAddress.end(),
               [](const Entry& a, const Entry& b) { return a.func < b.func; });
@@ -150,8 +130,7 @@ bool Scan() {
     std::sort(g_entries.begin(), g_entries.end(),
               [](const Entry& a, const Entry& b) { return std::strcmp(a.name, b.name) < 0; });
 
-    Logf("symbols: %zu resolved in %lu ms (%zu console commands)",
-         g_entries.size(), elapsed, g_consoleCommands.size());
+    Logf("symbols: %zu resolved in %lu ms", g_entries.size(), elapsed);
 
     // ---- health check -------------------------------------------------------
     if (g_entries.size() < kMinEntries) {
@@ -201,8 +180,6 @@ std::vector<const Entry*> Search(const std::string& needle, std::size_t limit) {
     }
     return out;
 }
-
-const std::vector<std::string>& ConsoleCommands() { return g_consoleCommands; }
 
 SectionRange TextRange()  { return g_text; }
 SectionRange RdataRange() { return g_rdata; }

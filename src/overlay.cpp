@@ -4,18 +4,8 @@
 // coupled to the ImGui context it feeds.
 
 #include "overlay.h"
-#include "cheats.h"
-#include "console.h"
 #include "gml.h"
 #include "builtins.h"
-#include "inspector.h"
-#include "tracer.h"
-#include "remote.h"
-#include "gamespeed.h"
-#include "loot.h"
-#include "enemies.h"
-#include "rewrite.h"
-#include "savemigrate.h"
 #include "log.h"
 #include "paths.h"
 #include "symbols.h"
@@ -95,9 +85,6 @@ bool IsReleaseMessage(UINT msg) {
 }
 
 LRESULT CALLBACK HookedWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    // The trace lines up keystrokes with what the game ran in response.
-    if (msg == WM_KEYDOWN) tracer::NoteKey(static_cast<int>(wParam));
-
     // The last point where mods can still run on the game thread; DllMain's
     // detach is under the loader lock, where calling into .NET is unsafe.
     if (msg == WM_DESTROY) host::Shutdown();
@@ -201,8 +188,7 @@ void DrawStatusTab() {
 
     if (sym::Healthy()) {
         ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.45f, 1.0f),
-                           "Symbol resolver OK - %zu functions, %zu console commands",
-                           sym::Count(), sym::ConsoleCommands().size());
+                           "Symbol resolver OK - %zu functions", sym::Count());
     } else {
         ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
                            "Symbol resolver FAILED: %s", sym::HealthMessage());
@@ -220,20 +206,6 @@ void DrawStatusTab() {
     } else {
         ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f),
                            "GML bridge unavailable: %s", gml::Status());
-    }
-
-    // Gear giving needs a spawn context. The player tracker supplies one after a
-    // little movement; a recorded game call is the fallback. Worth showing, since
-    // otherwise a greyed-out button looks broken.
-    {
-        double px = 0.0, py = 0.0;
-        const bool ok = gml::PlayerPosition(px, py) || gml::WeaponRecord().valid;
-        if (ok)
-            ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.45f, 1.0f),
-                               "Weapon spawn context OK - gear giving enabled");
-        else
-            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f),
-                               "Locating player - load a save to enable gear giving");
     }
 
     {
@@ -263,7 +235,7 @@ void DrawStatusTab() {
 }
 
 void DrawSymbolsTab() {
-    static char                     query[128] = "scr_console_";
+    static char                     query[128] = "";
     static std::string              lastQuery;
     static std::vector<const sym::Entry*> results;
     static bool                     primed = false;
@@ -299,139 +271,18 @@ void DrawSymbolsTab() {
     ImGui::EndChild();
 }
 
-void DrawTracerPanel() {
-    ImGui::TextWrapped(
-        "Records which game functions run, by detouring the single helper that every "
-        "compiled script calls on entry - about 9,260 functions covered by one hook. The "
-        "hook is only installed while recording, so this costs nothing when idle.");
-
-    if (!tracer::Ready()) {
-        ImGui::TextColored(ImVec4(0.95f, 0.40f, 0.40f, 1.0f),
-                           "Tracer unavailable: %s", tracer::Status());
-        return;
-    }
-    ImGui::TextDisabled("helper resolved at %p", tracer::HelperAddress());
-    ImGui::Separator();
-
-    static int  duration = 3000;
-    static bool stacks   = false;
-    static char filter[64] = "";
-
-    ImGui::SetNextItemWidth(160.0f);
-    ImGui::InputInt("duration (ms)", &duration, 500, 1000);
-    if (duration < 200)   duration = 200;
-    if (duration > 30000) duration = 30000;
-
-    ImGui::SetNextItemWidth(260.0f);
-    ImGui::InputTextWithHint("filter", "substring, empty = everything", filter, sizeof(filter));
-
-    ImGui::Checkbox("capture call stacks", &stacks);
-    ImGui::SameLine();
-    ImGui::TextDisabled("much slower per call - leave off unless needed");
-
-    ImGui::Spacing();
-    if (!tracer::Recording()) {
-        if (ImGui::Button("Start recording", ImVec2(200.0f, 0.0f))) {
-            tracer::Options o;
-            o.durationMs = duration;
-            o.stacks     = stacks;
-            std::snprintf(o.filter, sizeof(o.filter), "%s", filter);
-            tracer::StartRecording(o);
-        }
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.90f, 0.45f, 1.0f));
-        ImGui::Text("RECORDING - %d ms left", tracer::RemainingMs());
-        ImGui::PopStyleColor();
-        if (ImGui::Button("Stop now", ImVec2(200.0f, 0.0f))) tracer::StopRecording();
-    }
-
-    ImGui::Spacing();
-    ImGui::Text("records: %llu    dropped: %llu", tracer::Recorded(), tracer::Dropped());
-    if (!tracer::LastFile().empty())
-        ImGui::TextWrapped("file: %s", tracer::LastFile().c_str());
-    if (tracer::Dropped())
-        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f),
-                           "Ring buffer overflowed - narrow the filter or shorten the burst.");
-}
-
-void DrawBreakpointPanel() {
-    static char symbol[128] = "scr_dialogue_reward_add_item";
-    static bool skip        = false;
-    static int  limit       = 20;
-
-    ImGui::TextWrapped(
-        "Traps a function and reports its arguments, instance context and a resolved call "
-        "stack. It does NOT halt the game: the overlay renders on the game's own thread, so "
-        "blocking here would freeze the UI too - a hang rather than a pause.");
-
-    ImGui::SetNextItemWidth(340.0f);
-    ImGui::InputText("symbol", symbol, sizeof(symbol));
-    ImGui::SetNextItemWidth(120.0f);
-    ImGui::InputInt("hit limit", &limit);
-    if (limit < 1) limit = 1;
-
-    ImGui::Checkbox("skip the original call", &skip);
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f),
-                       "suppresses real behaviour - can corrupt state");
-
-    const auto& bp = tracer::Breakpoint();
-    if (!bp.active) {
-        if (ImGui::Button("Arm breakpoint", ImVec2(200.0f, 0.0f)))
-            tracer::SetBreakpoint(symbol, skip, limit);
-    } else {
-        ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.45f, 1.0f),
-                           "ARMED on %s - %u hit(s)", bp.symbol.c_str(), bp.hits);
-        if (ImGui::Button("Clear", ImVec2(200.0f, 0.0f))) tracer::ClearBreakpoint();
-    }
-
-    if (!bp.lastReport.empty()) {
-        ImGui::Spacing();
-        ImGui::SeparatorText("Last hit");
-        ImGui::BeginChild("##bpout", ImVec2(0.0f, 220.0f), true,
-                          ImGuiWindowFlags_HorizontalScrollbar);
-        ImGui::TextUnformatted(bp.lastReport.c_str());
-        ImGui::EndChild();
-    }
-}
-
-void DrawDebugTab() {
-    if (ImGui::BeginTabBar("##debugtabs")) {
-        if (ImGui::BeginTabItem("Tracer"))    { DrawTracerPanel();               ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Inspector")) { inspector::DrawInspectorTab();   ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Breakpoints")) { DrawBreakpointPanel();     ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Rewrite"))   { rewrite::DrawRewriteTab();   ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Symbols"))   { DrawSymbolsTab();            ImGui::EndTabItem(); }
-        if (ImGui::BeginTabItem("Status"))    { DrawStatusTab();             ImGui::EndTabItem(); }
-        ImGui::EndTabBar();
-    }
-}
-
 void DrawUI() {
     ImGui::SetNextWindowSize(ImVec2(660.0f, 480.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(40.0f, 40.0f), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("CoreLoader");
 
-    // The native Stoneshard tools predate the generic loader and name that
-    // game's own scripts and objects; in any other game they would only show
-    // errors, so they appear only where they apply. Its console scripts are
-    // the fingerprint.
-    static const bool stoneshard = sym::Find("gml_Script_scr_console_sethp") != nullptr;
-
-    // Ordered by who wants them: mods first, the game-specific tools next, the
-    // tooling that dissects the game last.
+    // Ordered by who wants them: mods first, the tooling that dissects the
+    // game and the loader's own health last.
     if (ImGui::BeginTabBar("##tabs")) {
-        if (ImGui::BeginTabItem("Mods"))    { host::DrawModsTab();          ImGui::EndTabItem(); }
-        if (stoneshard) {
-            if (ImGui::BeginTabItem("Cheats"))  { cheats::DrawCheatsTab();      ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem("Enemies")) { enemies::DrawEnemiesTab();   ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem("Loot"))    { loot::DrawLootTab();          ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem("Speed"))   { gamespeed::DrawSpeedTab();    ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem("Saves"))   { savemigrate::DrawSavesTab();  ImGui::EndTabItem(); }
-            if (ImGui::BeginTabItem("Console")) { console::DrawConsoleTab();    ImGui::EndTabItem(); }
-        }
-        if (ImGui::BeginTabItem("Debug"))   { DrawDebugTab();               ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Mods"))    { host::DrawModsTab();   ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Symbols")) { DrawSymbolsTab();      ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Status"))  { DrawStatusTab();       ImGui::EndTabItem(); }
         ImGui::EndTabBar();
     }
 
@@ -441,7 +292,7 @@ void DrawUI() {
 } // namespace
 
 void OverlayRender(IDXGISwapChain* swapChain) {
-    // A GML call made during this frame (by a mod, or the console) can present
+    // A GML call made during this frame (by a mod) can present
     // again from inside it; ImGui's frame and the mods' frame are already
     // open, so the nested Present only lets the game draw.
     static thread_local bool inRender = false;
@@ -469,27 +320,12 @@ void OverlayRender(IDXGISwapChain* swapChain) {
 
     ++g_frameCount;
 
-    tracer::Tick();
-    // Re-assert the chosen game speed if the engine has moved it back.
-    gamespeed::Tick();
-    // Retires tracked enemy instances once their room stops stepping.
-    enemies::Tick();
-
-    // The remote command file can call any builtin and write memory; it is a
-    // development tool, on only when asked for.
-    static const bool remoteOn = [] {
-        char v[8] = {};
-        return GetEnvironmentVariableA("CORELOADER_REMOTE", v, sizeof(v)) > 0 && v[0] == '1';
-    }();
-    if (remoteOn) remote::Poll();
-
     // We are on the game's render thread here, which is where GML must be
     // called from. Give the game a moment to run its own code first so the
     // borrowed `self` instance is populated.
     if (g_frameCount > 120) {
         gml::AbiSelfTest();
-        // Phase A runs as soon as the registry resolves; phase B waits for a
-        // character, so this keeps being called until one is loaded.
+        // Runs once the registry resolves and the game has run some GML.
         builtins::SelfTest();
     }
 

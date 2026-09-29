@@ -12,7 +12,9 @@ bump may break the mod API or the native CoreApi table; each version says so und
   `UI.SeparatorText`, `UI.InputDouble`/`InputFloat`, `UI.SliderInt`, `UI.SetNextItemWidth`,
   `UI.BeginDisabled`/`EndDisabled`, `UI.InputTextWithHint`, `UI.SameLine(offsetX, spacing)`,
   `UI.TextWrapped`, `UI.Spacing`, sized `UI.Button`, `UI.SmallButton`, `UI.ProgressBar`,
-  `UI.PushTextColor`/`PopTextColor`, `UI.Tooltip`, and `UI.Clipped` for long lists.
+  `UI.PushTextColor`/`PopTextColor`, `UI.Tooltip`, `UI.Clipped` for long lists, and
+  `UI.ItemDeactivatedAfterEdit` for committing an edit once, when the user lets go of the widget.
+  `UI.ProgressBar` fills the row at width 0 and leaves room on the right at a negative width.
   - Combos, disabled blocks, text colours and clippers are tracked scopes: a mod that throws inside
     one is unwound like any other scope.
 - `WidgetProbe` test mod.
@@ -27,6 +29,19 @@ bump may break the mod API or the native CoreApi table; each version says so und
 
 ### Changed
 - **Breaking:** CoreApi version 10 (UI round 3). The managed runtime requires this exact version.
+- The overlay's top-level tabs are Mods, Symbols and Status. Symbols and Status used to sit under Debug.
+- Native GML calls with no explicit self use the current self only. The self captured by the remote
+  command file is gone.
+
+### Removed
+- **The native Stoneshard tools.** `version.dll` no longer contains any game-specific code.
+  - The Cheats, Enemies, Loot, Speed, Saves and Console tabs are replaced by the `StoneshardCheats`,
+    `StoneshardBoost` and `SpeedControl` mods, and by the C# Console mod and its Inspector.
+  - The script tracer, the breakpoints, the argument-rewriting hooks panel, and the native inspector are
+    removed without a replacement.
+  - The remote command file (`CORELOADER_REMOTE`, `debug-cmd.txt`) is removed.
+  - The player tracker, the weapon recorder, and self-test phase B (which needed the player) are removed.
+  - zlib is no longer a build dependency.
 
 ## [0.4.0] - 2026-09-29
 

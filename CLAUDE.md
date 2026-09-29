@@ -2,20 +2,19 @@
 
 CoreLoader is a mod loader for **any YYC-compiled GameMaker game**. A `version.dll` proxy (native
 C++, `src/`) finds the game's compiled GML and runtime helpers by pattern, hosts .NET 10, and
-loads C# mods (`managed/`). It began as a Stoneshard-only native cheat mod; those tools still live
-in `src/` and show only in Stoneshard.
+loads C# mods (`managed/`). It began as a Stoneshard-only native cheat mod; those tools are now
+the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 
-- User-facing guide: `managed/README.md` (mod authoring and API). `README.md` covers the native
-  Stoneshard tools.
+- User-facing guide: `managed/README.md` (mod authoring and API). `README.md` is the project overview.
 - History: `CHANGELOG.md`. **Update it with every user-visible change** (see Versioning).
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/` | Native loader. `dllmain.cpp` (init thread), `symbols.cpp` (gml_* table), `gml.cpp` (runtime bridge: strings, calls, value free/copy, self-tests), `builtins.cpp` (builtin registry), `hookengine.cpp` (thunk detours shared by native and managed users), `overlay.cpp` (ImGui, WndProc, pick mode, per-frame tick), `host/` (.NET hosting, `core_api.h/.cpp` = the C ABI). Everything else is Stoneshard-only legacy tooling |
+| `src/` | Native loader. `dllmain.cpp` (init thread), `symbols.cpp` (gml_* table), `gml.cpp` (runtime bridge: strings, calls, value free/copy, self-tests), `builtins.cpp` (builtin registry), `hookengine.cpp` (thunk detours shared by native and managed users), `overlay.cpp` (ImGui, WndProc, pick mode, per-frame tick), `host/` (.NET hosting, `core_api.h/.cpp` = the C ABI), `hooks.cpp` (D3D11 Present hook), `proxy.cpp`, `paths.cpp`, `log.cpp` |
 | `managed/CoreLoader/` | The runtime mods reference: `Game`, `Hooks`, `Values`, `RValue`, `Globals`/`GmlObject`/`InstanceRef`, `UI`, `Content`, `GameDraw`, `Input`, `Code`, `ModConfig`; `Runtime/` = entry points, mod manager (hot reload), interop generator |
-| `managed/Mods/` | Shipped mods (Console + Inspector, ScriptSpy, GlobalsEditor, InstanceInspector, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost) |
+| `managed/Mods/` | Shipped mods (Console + Inspector, ScriptSpy, GlobalsEditor, InstanceInspector, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost, StoneshardCheats) |
 | `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, CoexistProbe, FaultyGuiMod, ReflectionProbe, VarProbeMod, WidgetProbe (every UI widget, and scope unwind under faults) |
 | `managed/Examples/`, `managed/Templates/CoreLoaderMod/` | HelloMod, InteropExample; the `dotnet new coreloader-mod` template |
 | `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, RE scripts |
@@ -120,7 +119,7 @@ the mods table in `managed/README.md`.
 - Vote across many functions, then validate the winner structurally, then prove it by behaviour
   (see `VerifyValueLifetime`).
 - Fail closed: a missing helper means the feature is unavailable. It is never a guess.
-- Anything game-specific is gated: Stoneshard-only code checks that `gml_Script_scr_console_sethp` exists.
+- Native code stays game-agnostic. Anything game-specific is a C# mod gated with `[CoreModGame]`.
 
 **Calling into the game natively:**
 - Use `gml::CallAs` / `CallEvent` / `builtins::Call`. They are SEH-guarded.

@@ -41,20 +41,6 @@ FetchContent_Declare(minhook
 )
 FetchContent_MakeAvailable(minhook)
 
-
-# zlib. Save files are zlib(<json><md5><NUL>), and the md5 is salted with the
-# save's own FOLDER PATH - so a save copied into a different character slot
-# fails its own checksum. Re-signing an imported save therefore means
-# decompressing it, recomputing the hash against the new path, and
-# recompressing. MD5 itself comes from bcrypt, which ships with Windows.
-FetchContent_Declare(zlib
-    GIT_REPOSITORY https://github.com/madler/zlib.git
-    GIT_TAG        v1.3.1
-    GIT_SHALLOW    TRUE
-)
-set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(zlib)
-
 set(MINHOOK_SOURCES
     ${minhook_SOURCE_DIR}/src/buffer.c
     ${minhook_SOURCE_DIR}/src/hook.c
@@ -83,22 +69,6 @@ add_library(stoneshard_mod SHARED
     src/symbols.cpp
     src/gml.cpp
     src/builtins.cpp
-    src/console.cpp
-    src/cheats.cpp
-    src/assets.cpp
-    src/items.cpp
-    src/potions.cpp
-    src/character.cpp
-    src/body.cpp
-    src/gamespeed.cpp
-    src/rewrite.cpp
-    src/loot.cpp
-    src/enemies.cpp
-    src/savemigrate.cpp
-    src/tracer.cpp
-    src/remote.cpp
-    src/inspector.cpp
-    src/savebackup.cpp
     src/hookengine.cpp
     src/host/core_api.cpp
     src/host/dotnet_host.cpp
@@ -111,11 +81,9 @@ target_include_directories(stoneshard_mod PRIVATE
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
     ${minhook_SOURCE_DIR}/include
-    ${zlib_SOURCE_DIR}
-    ${zlib_BINARY_DIR}
 )
 
-target_link_libraries(stoneshard_mod PRIVATE d3d11 dxgi bcrypt ole32 shell32 zlibstatic)
+target_link_libraries(stoneshard_mod PRIVATE d3d11 dxgi)
 
 # Log + imgui.ini live here, NEVER in the game folder.
 target_compile_definitions(stoneshard_mod PRIVATE

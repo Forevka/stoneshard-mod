@@ -9,18 +9,16 @@ namespace mod::paths {
 namespace {
 
 std::string    g_dir;
-bool           g_overridden = false;
 std::once_flag g_once;
 
 // Called from the init thread (via LogInit) and later from the game thread
-// (via remote::Poll), so the resolution itself has to be safe to race.
+// (imgui.ini), so the resolution itself has to be safe to race.
 void Resolve() {
     std::call_once(g_once, [] {
         char        buf[MAX_PATH * 4];
         const DWORD n = GetEnvironmentVariableA("SSMOD_DATA_DIR", buf, sizeof(buf));
         if (n > 0 && n < sizeof(buf)) {
-            g_dir        = buf;
-            g_overridden = true;
+            g_dir = buf;
             while (!g_dir.empty() && (g_dir.back() == '\\' || g_dir.back() == '/'))
                 g_dir.pop_back();
         }
@@ -84,7 +82,5 @@ void Resolve() {
 const std::string& DataDir() { Resolve(); return g_dir; }
 
 std::string File(const char* name) { return DataDir() + "\\" + name; }
-
-bool Overridden() { Resolve(); return g_overridden; }
 
 } // namespace mod::paths

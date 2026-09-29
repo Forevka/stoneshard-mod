@@ -100,7 +100,7 @@ std::string ToString(const RValue& v);
 // `self`/`other` default to the game's current-instance global when null.
 bool Call(void* func, RValue* result, RValue** args, int argc);
 
-// Same, but with an explicit instance context - used to replay a captured call.
+// Same, but with an explicit instance context.
 bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, void* other);
 
 // Object events compile to a SMALLER signature than scripts:
@@ -117,38 +117,8 @@ bool CallByName(const std::string& symbol, RValue* result, RValue** args, int ar
 void AbiSelfTest();
 bool AbiProven();
 
-// ---------------------------------------------------------------- observation
-//
-// Rather than infer a script's signature from disassembly, detour it and let the
-// GAME call it: that records the exact self/other instances, argument count and
-// argument values it really uses. Replaying those removes all the guesswork.
-
-struct Capture {
-    bool                     valid = false;
-    void*                    self  = nullptr;
-    void*                    other = nullptr;
-    int                      argc  = 0;
-    std::vector<std::string> args;      // "kind=N value" per argument, for display
-    std::vector<RValue>      raw;       // the exact values, for replay
-    std::string              symbol;
-    std::string              caller;   // function that invoked it
-    unsigned                 hits = 0;
-};
-
-// A dedicated, always-on recorder for scr_weapon_loot. Gear can only be spawned
-// by replaying a genuine call (the spawn point and instance cannot be
-// synthesised), so the mod keeps the most recent one on hand and the UI needs no
-// capture ritual. Independent of the user-driven capture above.
-// Tracks the player instance every frame and works out where x/y live inside a
-// CInstance by watching which doubles change as the player moves. With those we
-// can build a weapon-spawn call from scratch - no enemy spawn needed - and drop
-// the item at the player's feet rather than at some recorded NPC.
-bool  InstallPlayerTracker();
-void* PlayerInstance();
-bool  PlayerPosition(double& x, double& y);
-
-// Bounded, fault-tolerant read of game memory. Used by the inspector to walk a
-// CInstance without risking a fault on a short allocation.
+// Bounded, fault-tolerant read of game memory, for walking a CInstance
+// without risking a fault on a short allocation.
 bool  ReadMemory(const void* src, void* dst, int bytes);
 
 // Whatever instance the game last ran code as. Null until the game has run
@@ -168,16 +138,5 @@ void ClearObservedSelf();
 
 // Whether this runtime exposes a current-self global (older runtimes do).
 bool HasSelfGlobal();
-
-bool           InstallWeaponRecorder();
-const Capture& WeaponRecord();
-
-bool           InstallCapture(const std::string& symbol);
-const Capture& LastCapture();
-
-// When a capture exists, use its self/other for our own calls instead of the
-// borrowed current-instance global.
-void SetUseCapturedContext(bool on);
-bool UseCapturedContext();
 
 } // namespace mod::gml

@@ -20,8 +20,6 @@
 #include "hookengine.h"
 #include "log.h"
 #include "symbols.h"
-#include "builtins.h"
-#include "tracer.h"
 
 #include <windows.h>
 #include <intrin.h>
@@ -43,10 +41,6 @@ using ScriptFn    = RValue* (*)(void* self, void* other, RValue* result,
 // Object events take only the instance pair.
 using EventFn     = void (*)(void* self, void* other);
 
-// Defined with the player tracker further down; the weapon recorder feeds it a
-// known instance/x/y triple so the position offset can be found exactly.
-void CalibrateFromKnown(const void* inst, double x, double y);
-
 SetStringFn g_setString    = nullptr;
 
 // Value lifetime: FREE_RValue(v) drops the reference a string/array/struct
@@ -60,18 +54,6 @@ CopyFn      g_copy = nullptr;
 // leaves kind and flags to the (inlined) caller. The self-test tells them apart.
 bool        g_copyIsPost = false;
 void**      g_pCurrentSelf = nullptr;
-
-// Recorded from a genuine call by the game; see InstallCapture below.
-Capture     g_capture;
-bool        g_useCaptured     = true;
-int         g_captureHook     = -1;      // hook-engine id of the capture target
-void*       g_capturedFn      = nullptr;
-
-// Always-on recorder for the weapon spawner, kept separate from the
-// user-driven capture so the two never contend for one hook slot.
-Capture     g_weaponRec;
-bool        g_weaponRecording = false;
-bool        g_capturedIsEvent = false;
 
 bool        g_ready  = false;
 std::string g_status = "not initialised";
@@ -377,7 +359,16 @@ namespace {
 bool g_lifetimeVerified = false;
 bool g_lifetimeTested   = false;
 
-bool SafeRead(const void* src, void* dst, int n);   // defined with the player tracker
+// Reads game memory defensively: an allocation may be smaller than the window
+// read, and a fault here must not take the game down.
+bool SafeRead(const void* src, void* dst, int n) {
+    __try {
+        std::memcpy(dst, src, static_cast<std::size_t>(n));
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
 
 int RefCountOf(const RValue& v) {
     int rc = -1;
@@ -740,16 +731,10 @@ bool InManagedCode() { return t_managedDepth > 0; }
 const char* LastError() { return g_lastError; }
 
 bool Call(void* func, RValue* result, RValue** args, int argc) {
-    // Prefer a self/other pair recorded from a genuine call - many scripts only
-    // behave when run as the right instance. Otherwise borrow whatever instance
-    // the game last ran code as, since a null self would fault.
-    void* self  = CurrentSelf();
-    void* other = self;
-    if (g_useCaptured && g_capture.valid && g_capture.self) {
-        self  = g_capture.self;
-        other = g_capture.other;
-    }
-    return CallAs(func, result, args, argc, self, other);
+    // Borrow whatever instance the game last ran code as, since a null self
+    // would fault.
+    void* self = CurrentSelf();
+    return CallAs(func, result, args, argc, self, self);
 }
 
 bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, void* other) {
@@ -787,126 +772,10 @@ bool CallByName(const std::string& symbol, RValue* result, RValue** args, int ar
     return Call(fn, result, args, argc);
 }
 
-// ------------------------------------------------------------- observation
-
 namespace {
-
-// Scripts and events share one handler through the hook engine: an event is
-// simply a call without arguments.
-void CaptureBefore(hk::Call* c, void*) {
-    void* self = c->self;
-    void* other = c->other;
-    const int argc = c->argc;
-    RValue** args = c->args;
-    // Who invoked us matters as much as the arguments: it names the routine that
-    // actually builds the thing we are trying to reproduce.
-    const char* caller  = sym::OwnerOf(hk::CurrentCaller());
-    g_capture.self  = self;
-    g_capture.other = other;
-    g_capture.argc  = argc;
-    g_capture.args.clear();
-    g_capture.raw.clear();
-    ++g_capture.hits;
-
-    if (args) {
-        for (int i = 0; i < argc && i < 12; ++i) {
-            char line[160];
-            if (args[i]) {
-                std::snprintf(line, sizeof(line), "kind=%d %s",
-                              args[i]->kind, ToString(*args[i]).c_str());
-            } else {
-                std::snprintf(line, sizeof(line), "<null>");
-            }
-            g_capture.args.emplace_back(line);
-            // Keep the exact value too: argument 1 is a REF, which we cannot
-            // construct ourselves and can only replay.
-            g_capture.raw.push_back(args[i] ? *args[i] : RValue{});
-        }
-    }
-    g_capture.valid  = true;
-    g_capture.caller = caller ? caller : "<unknown>";
-
-    // The game calls this often; a few samples are plenty and keep the log usable.
-    if (g_capture.hits <= 5) {
-        Logf("capture: %s called by the game - self=%p other=%p argc=%d",
-             g_capture.symbol.c_str(), self, other, argc);
-        Logf("capture:    <- called from %s", caller ? caller : "<unknown>");
-        for (std::size_t i = 0; i < g_capture.args.size(); ++i)
-            Logf("capture:    arg[%zu] %s", i, g_capture.args[i].c_str());
-    }
-}
-
-// Records every scr_weapon_loot the game makes, so a replay is always available
-// without the player having to run a capture by hand.
-void WeaponRecBefore(hk::Call* c, void*) {
-    void* self = c->self;
-    void* other = c->other;
-    const int argc = c->argc;
-    RValue** args = c->args;
-    if (args && argc > 0) {
-        const int n = argc > 16 ? 16 : argc;
-        g_weaponRec.raw.assign(static_cast<std::size_t>(n), RValue{});
-        for (int i = 0; i < n; ++i)
-            if (args[i]) g_weaponRec.raw[static_cast<std::size_t>(i)] = *args[i];
-        g_weaponRec.self  = self;
-        g_weaponRec.other = other;
-        g_weaponRec.argc  = argc;
-        if (!g_weaponRec.valid)
-            Logf("weapon recorder: first sample captured (argc=%d)", argc);
-        g_weaponRec.valid = true;
-        // A real call gives an instance together with the exact x/y it was
-        // handed - a known answer for locating the position fields.
-        if (argc > 2 && args[1] && args[2] &&
-            args[1]->kind == kReal && args[2]->kind == kReal)
-            CalibrateFromKnown(self, args[1]->real, args[2]->real);
-        ++g_weaponRec.hits;
-    }
-}
-
 bool g_abiTested = false;
 bool g_abiProven = false;
-
 } // namespace
-
-bool InstallCapture(const std::string& symbol) {
-    void* fn = sym::Find(symbol);
-    if (!fn) {
-        fn = sym::Find("gml_Script_" + symbol);
-        if (!fn) { Logf("[!] capture: symbol not found: %s", symbol.c_str()); return false; }
-    }
-    // Re-targeting must work: the whole point of the tool is to move it from one
-    // function to the next while hunting a signature.
-    if (g_capturedFn) {
-        if (g_capturedFn == fn) {
-            Logf("capture: already watching %s - resetting samples", symbol.c_str());
-            const std::string keep = g_capture.symbol;
-            g_capture = Capture{};
-            g_capture.symbol = keep;
-            return true;
-        }
-        hk::RemoveNative(g_captureHook, &CaptureBefore, nullptr, nullptr);
-        Logf("capture: stopped watching %s", g_capture.symbol.c_str());
-        g_capturedFn  = nullptr;
-        g_captureHook = -1;
-    }
-
-    const bool isEvent = IsEventSymbol(symbol);
-    // Through the shared hook engine, so capturing never fights a mod's hook
-    // on the same function.
-    g_captureHook = hk::AddNative(fn, isEvent ? hk::Kind::Event : hk::Kind::Script,
-                                  &CaptureBefore, nullptr, nullptr);
-    if (g_captureHook < 0) {
-        Logf("[!] capture: could not hook %s", symbol.c_str());
-        return false;
-    }
-
-    g_capturedFn      = fn;
-    g_capturedIsEvent = isEvent;
-    g_capture         = Capture{};
-    g_capture.symbol  = symbol;
-    Logf("capture: watching %s at %p - trigger it in game", symbol.c_str(), fn);
-    return true;
-}
 
 bool IsEventSymbol(const std::string& symbol) {
     return symbol.rfind("gml_Object_", 0) == 0 || symbol.rfind("gml_RoomCC_", 0) == 0;
@@ -917,14 +786,7 @@ bool CallEvent(void* func, void* self, void* other) {
 
     // No instance given: fall back the same way Call() does, since an event
     // always runs as some instance and a null self would fault immediately.
-    if (!self) {
-        if (g_useCaptured && g_capture.valid && g_capture.self) {
-            self  = g_capture.self;
-            other = g_capture.other;
-        } else {
-            self = CurrentSelf();
-        }
-    }
+    if (!self) self = CurrentSelf();
     if (!self) return false;
 
     std::call_once(g_vehOnce, [] { AddVectoredExceptionHandler(1, &ExceptionProbe); });
@@ -942,163 +804,6 @@ bool CallEvent(void* func, void* self, void* other) {
     else                Logf("[!] gml: exception 0x%08lX in event %p", code, func);
     return false;
 }
-
-const Capture& LastCapture()  { return g_capture; }
-const Capture& WeaponRecord() { return g_weaponRec; }
-
-// ---------------------------------------------------------------- player
-
-namespace {
-
-void*    g_playerInst       = nullptr;
-ULONGLONG g_playerSeenAt    = 0;     // GetTickCount64 of o_player's last Step
-bool     g_playerTracking   = false;
-int      g_posOffset        = -1;    // byte offset of x inside the CInstance
-bool     g_posExact         = false; // true once derived from a known-answer sample
-bool     g_posFromReflection = false;
-int      g_posCandidate     = -1;
-int      g_posCandidateHits = 0;
-
-constexpr int kSnapshotBytes = 0x200;
-unsigned char g_prevSnap[kSnapshotBytes];
-bool          g_haveSnap = false;
-
-// World coordinates are hundreds to thousands of pixels. Rejecting zero and
-// near-zero matters: the first attempt at this latched onto a field that merely
-// wobbled around 0.0, and the game then dropped items at the tile origin.
-bool PlausibleCoord(double v) {
-    if (v != v) return false;                       // NaN
-    const double a = v < 0.0 ? -v : v;
-    return a > 8.0 && a < 1.0e6;
-}
-
-// Reads instance bytes defensively: the allocation may be smaller than our
-// window, and faulting inside a per-frame hook would take the game down.
-bool SafeRead(const void* src, void* dst, int n) {
-    __try {
-        std::memcpy(dst, src, static_cast<std::size_t>(n));
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-
-// Exact calibration. A recorded scr_weapon_loot call hands us an instance plus
-// the very x/y it was given, so the offset can be found by matching rather than
-// guessing. This always wins over the movement heuristic below.
-void CalibrateFromKnown(const void* inst, double x, double y) {
-    if (g_posExact || !inst) return;
-    if (!PlausibleCoord(x) || !PlausibleCoord(y)) return;
-
-    unsigned char buf[kSnapshotBytes];
-    if (!SafeRead(inst, buf, kSnapshotBytes)) return;
-
-    for (int off = 0; off + 16 <= kSnapshotBytes; off += 8) {
-        double a, b;
-        std::memcpy(&a, buf + off, 8);
-        std::memcpy(&b, buf + off + 8, 8);
-        if (a == x && b == y) {
-            g_posOffset = off;
-            g_posExact  = true;
-            Logf("player tracker: position offset 0x%X confirmed against a real spawn "
-                 "(x=%.1f y=%.1f)", off, x, y);
-            return;
-        }
-    }
-}
-
-// Fallback heuristic. The first version of this took the first offset that
-// looked like movement and stopped there, so an unrelated low field always won
-// and the real coordinates were never reached. Instead, score every candidate
-// across many frames and take the one that consistently behaves like a
-// position - adjacent doubles, sane magnitude, small per-frame deltas.
-constexpr int kMaxCandidates = 64;
-int g_candOff[kMaxCandidates];
-int g_candHits[kMaxCandidates];
-int g_candCount  = 0;
-int g_calibFrames = 0;
-
-void NoteCandidate(int off) {
-    for (int i = 0; i < g_candCount; ++i)
-        if (g_candOff[i] == off) { ++g_candHits[i]; return; }
-    if (g_candCount < kMaxCandidates) {
-        g_candOff[g_candCount]  = off;
-        g_candHits[g_candCount] = 1;
-        ++g_candCount;
-    }
-}
-
-void CalibratePosition(const void* inst) {
-    if (g_posExact || g_posOffset >= 0 || !inst) return;
-
-    unsigned char cur[kSnapshotBytes];
-    if (!SafeRead(inst, cur, kSnapshotBytes)) return;
-
-    if (!g_haveSnap) {
-        std::memcpy(g_prevSnap, cur, kSnapshotBytes);
-        g_haveSnap = true;
-        return;
-    }
-
-    bool moved = false;
-    for (int off = 0; off + 16 <= kSnapshotBytes; off += 8) {
-        double oldX, newX, oldY, newY;
-        std::memcpy(&oldX, g_prevSnap + off, 8);
-        std::memcpy(&newX, cur + off, 8);
-        std::memcpy(&oldY, g_prevSnap + off + 8, 8);
-        std::memcpy(&newY, cur + off + 8, 8);
-
-        if (!PlausibleCoord(newX) || !PlausibleCoord(newY)) continue;
-        if (!PlausibleCoord(oldX) || !PlausibleCoord(oldY)) continue;
-
-        const double dx = newX - oldX, dy = newY - oldY;
-        if (dx == 0.0 && dy == 0.0) continue;                  // needs movement
-        if (dx < -64.0 || dx > 64.0 || dy < -64.0 || dy > 64.0) continue;
-
-        NoteCandidate(off);
-        moved = true;
-    }
-    std::memcpy(g_prevSnap, cur, kSnapshotBytes);
-    if (!moved) return;
-
-    // Decide once there is enough evidence, and only if one candidate clearly wins.
-    if (++g_calibFrames < 40) return;
-
-    int best = -1, bestHits = 0, secondHits = 0;
-    for (int i = 0; i < g_candCount; ++i) {
-        if (g_candHits[i] > bestHits) { secondHits = bestHits; best = g_candOff[i]; bestHits = g_candHits[i]; }
-        else if (g_candHits[i] > secondHits) { secondHits = g_candHits[i]; }
-    }
-    if (best < 0 || bestHits < 12 || bestHits < secondHits + 4) {
-        g_calibFrames = 0;                                     // keep gathering
-        return;
-    }
-
-    double vx, vy;
-    std::memcpy(&vx, cur + best, 8);
-    std::memcpy(&vy, cur + best + 8, 8);
-    g_posOffset = best;
-    Logf("player tracker: position at instance+0x%X by movement (x=%.1f y=%.1f, %d/%d votes)",
-         best, vx, vy, bestHits, secondHits);
-}
-
-void PlayerStepBefore(hk::Call* c, void*) {
-    void* self = c->self;
-    if (self) {
-        if (!g_playerInst) Logf("player tracker: player instance %p", self);
-        g_playerInst = self;
-        g_playerSeenAt = GetTickCount64();
-        CalibratePosition(self);
-
-        // Feeds the activity log so movement can be lined up against the
-        // script trace on a shared clock.
-        double px = 0.0, py = 0.0;
-        const bool havePos = PlayerPosition(px, py);
-        tracer::NotePlayerStep(px, py, havePos);
-    }
-}
-
-} // namespace
 
 // Every page of [p, p+n) committed, readable and not a guard page. Touching a
 // guard page (a thread's stack growth sentinel) would fault once and silently
@@ -1124,17 +829,6 @@ bool ReadMemory(const void* src, void* dst, int bytes) {
     if (!src || !dst || bytes <= 0 || bytes > 1 << 20) return false;
     if (!PlainReadable(src, static_cast<std::size_t>(bytes))) return false;
     return SafeRead(src, dst, bytes);
-}
-
-// The player is only known while its Step runs. After quitting to the menu or
-// through a room/save transition the instance may be destroyed and its memory
-// reused - writing through a remembered pointer would land in another object.
-void* PlayerInstance() {
-    if (g_playerInst && GetTickCount64() - g_playerSeenAt > 1000) {
-        Logf("player tracker: o_player stopped stepping; forgetting %p", g_playerInst);
-        g_playerInst = nullptr;
-    }
-    return g_playerInst;
 }
 
 namespace {
@@ -1167,71 +861,6 @@ void* CurrentSelf() {
     }
     return g_observedSelf.load(std::memory_order_relaxed);
 }
-
-bool PlayerPosition(double& x, double& y) {
-    if (!PlayerInstance()) return false;
-
-    // Preferred: ask the game for "x"/"y" by NAME through GameMaker's reflection
-    // API. Two earlier attempts guessed the CInstance layout by watching which
-    // doubles changed while walking; both latched onto the wrong field. Reading
-    // the named variable removes the guesswork entirely, and it stays correct
-    // across game updates because nothing is pinned to an offset.
-    gml::RValue vx{}, vy{};
-    if (builtins::GetInstanceVar(g_playerInst, "x", &vx) &&
-        builtins::GetInstanceVar(g_playerInst, "y", &vy) &&
-        vx.kind == kReal && vy.kind == kReal) {
-        if (!g_posFromReflection) {
-            Logf("player position via reflection: x=%.2f y=%.2f", vx.real, vy.real);
-            g_posFromReflection = true;
-        }
-        x = vx.real;
-        y = vy.real;
-        return true;
-    }
-
-    // Fallback: the offset the movement heuristic settled on, if it ever did.
-    if (g_posOffset < 0) return false;
-    const auto* base = static_cast<const unsigned char*>(g_playerInst) + g_posOffset;
-    double bx, by;
-    if (!SafeRead(base, &bx, 8) || !SafeRead(base + 8, &by, 8)) return false;
-    if (!PlausibleCoord(bx) || !PlausibleCoord(by)) return false;
-    x = bx;
-    y = by;
-    return true;
-}
-
-bool InstallPlayerTracker() {
-    if (g_playerTracking) return true;
-    void* fn = sym::Find("gml_Object_o_player_Step_0");
-    if (!fn) { Logf("[!] player tracker: o_player Step not found"); return false; }
-
-    // Shared hook engine: C# mods can hook o_player's Step alongside this.
-    if (hk::AddNative(fn, hk::Kind::Event, &PlayerStepBefore, nullptr, nullptr) < 0) {
-        Logf("[!] player tracker: hook failed");
-        return false;
-    }
-    g_playerTracking = true;
-    Logf("player tracker: watching o_player Step");
-    return true;
-}
-
-bool InstallWeaponRecorder() {
-    if (g_weaponRecording) return true;
-    void* fn = sym::Find("gml_Script_scr_weapon_loot");
-    if (!fn) { Logf("[!] weapon recorder: scr_weapon_loot not found"); return false; }
-
-    if (hk::AddNative(fn, hk::Kind::Script, &WeaponRecBefore, nullptr, nullptr) < 0) {
-        Logf("[!] weapon recorder: hook failed");
-        return false;
-    }
-    g_weaponRecording = true;
-    g_weaponRec.symbol = "scr_weapon_loot";
-    Logf("weapon recorder: watching scr_weapon_loot");
-    return true;
-}
-
-void SetUseCapturedContext(bool on) { g_useCaptured = on; }
-bool UseCapturedContext()           { return g_useCaptured; }
 
 bool AbiProven() { return g_abiProven; }
 
