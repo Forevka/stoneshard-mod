@@ -28,6 +28,18 @@ bump may break the mod API or the native CoreApi table; each version says so und
   time budget (`Start`, `Ready`, `Progress`, `Status`, `Complete`). `GmlObject.All()` now uses it, so
   only the first call walks the asset indices.
   - `GmlObject.Parent`, `Ancestors()`, `IsA(name)`, `Children()` and `GmlObject.FromIndex(index)`.
+- **GML error messages.** A script, event or builtin the game rejects now fails with the runtime's own
+  error text: `GmlException` reads `call to X failed: <message> (in <script>, line N)` instead of
+  "see the loader log", and the log names the script and the message. The loader decodes the C++
+  exception's RTTI (`YYGMLException` in both known runtimes) and reads the thrown error struct's
+  `message`, `script` and `line`; other exceptions are reported by type or code. CoreApi
+  `last_gml_error`.
+- **Instances by id.** `InstanceRef.Resolve()` gives the live `Instance` for an id or instance
+  reference, `Game.CallScriptAs(InstanceRef, name, args)` and `InstanceRef.CallScript` run a script as
+  it, and `Game.CanResolveInstances` says whether this runtime supports it. The runtime's id table is
+  found by pattern and proven on the live game (the current instance's own id must resolve to it, and
+  bogus ids to nothing); until then, or if the proof fails, `Resolve` returns null. CoreApi
+  `instance_from_id`.
 - **`StoneshardCheats` mod:** the native Stoneshard cheat tabs, ported to C#. Tabs: Stats, Items, Potions,
   Character, Body, Enemies and Saves.
   - Character scripts run as the player. The player instance comes from a hook on `o_player`'s Step event,
@@ -46,7 +58,8 @@ bump may break the mod API or the native CoreApi table; each version says so und
   and for an optional log pattern.
 
 ### Changed
-- **Breaking:** CoreApi version 10 (UI round 3). The managed runtime requires this exact version.
+- **Breaking:** CoreApi version 10 (UI round 3, `last_gml_error`, `instance_from_id`). The managed
+  runtime requires this exact version.
 - The overlay's top-level tabs are Mods, Symbols and Status. Symbols and Status used to sit under Debug.
 - `StoneshardCheats` uses `DsMap`/`DsList`, `Hooks.NextAfter` and `ObjectTable` instead of its own copies.
   The potion hook is only installed while a build is armed.- Native GML calls with no explicit self use the current self only. The self captured by the remote

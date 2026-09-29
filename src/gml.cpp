@@ -17,6 +17,7 @@
 //       which matters because some scripts dereference `self`.
 
 #include "gml.h"
+#include "builtins.h"
 #include "hookengine.h"
 #include "log.h"
 #include "symbols.h"
@@ -290,7 +291,25 @@ std::uintptr_t BestValidatedQuiet(const std::unordered_map<std::uintptr_t, int>&
     return 0;
 }
 
+// Whether the image carries an RTTI type of this decorated name. Type
+// descriptors sit in .data or .rdata depending on the toolchain.
+bool HasTypeName(const char* decorated) {
+    const std::size_t n = std::strlen(decorated) + 1;   // with the terminator
+    for (const auto range : {sym::DataRange(), sym::RdataRange()}) {
+        if (!range.hi) continue;
+        for (auto p = reinterpret_cast<const char*>(range.lo); p + n <= reinterpret_cast<const char*>(range.hi);) {
+            p = static_cast<const char*>(std::memchr(p, decorated[0], reinterpret_cast<const char*>(range.hi) - p));
+            if (!p || p + n > reinterpret_cast<const char*>(range.hi)) break;
+            if (std::memcmp(p, decorated, n) == 0) return true;
+            ++p;
+        }
+    }
+    return false;
+}
+
 } // namespace
+
+bool ScanInstanceLookup();   // below, with the rest of the id lookup
 
 bool Init() {
     g_ready = false;
@@ -343,6 +362,14 @@ bool Init() {
 
     g_setString    = reinterpret_cast<SetStringFn>(setStr);
     g_pCurrentSelf = selfP ? reinterpret_cast<void**>(selfP) : nullptr;
+
+    // Neither is needed for the bridge itself; each reports its own status.
+    // Both run before g_ready is published: the game thread starts using what
+    // they set (the id table, the lookup state) as soon as the bridge is ready.
+    Logf("gml: GML error text: %s", HasTypeName(".?AVYYGMLException@@")
+             ? "the runtime throws YYGMLException; failed calls report its message"
+             : "no YYGMLException in this runtime; failed calls report the exception type or code only");
+    if (ScanInstanceLookup()) Logf("gml: instance lookup: table found; proven on the game thread before use");
 
     g_ready  = true;
     g_status = "ok";
@@ -621,13 +648,33 @@ namespace {
 
 // 0xE06D7363 is a C++ throw. When the game's GML runtime rejects a call it
 // raises one of these rather than faulting, and the thrown object carries the
-// error text - which is far more useful than "it failed". A vectored handler
-// lets us read that text without disturbing normal exception handling: we only
-// look, then always continue the search.
+// error - which is far more useful than "it failed". A vectored handler sees
+// the throw first and only looks: it copies what it needs and always lets the
+// search continue, so the game's own try/catch works exactly as before.
+//
+// The throw's parameters are MSVC's: [1] the thrown object, [2] its ThrowInfo,
+// [3] the image base the ThrowInfo's RVAs are relative to. ThrowInfo leads to a
+// CatchableTypeArray whose first entry is the most-derived type, each with an
+// RTTI TypeDescriptor naming it (".?AVYYGMLException@@"). Both runtimes seen so
+// far (Stoneshard's and 2024.14) throw YYGMLException for a GML runtime error
+// and for GML's `throw`: a 16-byte object that is just the thrown RValue - for
+// a runtime error a struct with message, longMessage, script, line and
+// stacktrace, built by the runtime's error reporter just before the throw.
 constexpr DWORD kCppException = 0xE06D7363;
 
 thread_local int   g_inCall = 0;   // depth: calls nest (a hook can call back into the game)
 thread_local char  g_lastError[512] = {};
+
+// What the last C++ throw during a guarded call carried. Filled by the
+// vectored handler, so only plain data and fault-guarded reads.
+struct Thrown {
+    bool   valid = false;
+    char   type[96] = {};       // most-derived type, demangled ("YYGMLException")
+    bool   hasValue = false;    // a YYGMLException: `value` is its RValue
+    RValue value{};
+    char   what[256] = {};      // a std::exception: what()
+};
+thread_local Thrown t_thrown;
 
 bool ReadableString(const char* p, std::size_t minLen) {
     if (!p) return false;
@@ -644,29 +691,85 @@ bool ReadableString(const char* p, std::size_t minLen) {
     }
 }
 
+// ".?AVYYGMLException@@" -> "YYGMLException", ".?AVbad_alloc@std@@" ->
+// "std::bad_alloc". Templates and anything unusual keep the decorated name.
+// No allocation: this runs inside the vectored handler.
+void Demangle(const char* decorated, char* out, std::size_t cap) {
+    std::snprintf(out, cap, "%s", decorated);
+    if (std::strncmp(decorated, ".?AV", 4) != 0 && std::strncmp(decorated, ".?AU", 4) != 0) return;
+    const char* body = decorated + 4;
+    const std::size_t len = std::strlen(body);
+    if (len < 3 || std::strcmp(body + len - 2, "@@") != 0 || std::strchr(body, '?')) return;
+    // Name parts are innermost first: "bad_alloc@std" is std::bad_alloc, so
+    // they are emitted from the last one back.
+    std::size_t end = len - 2, n = 0;
+    while (end > 0 && n + 1 < cap) {
+        std::size_t start = end;
+        while (start > 0 && body[start - 1] != '@') --start;
+        if (n > 0) n += static_cast<std::size_t>(std::snprintf(out + n, cap - n, "::"));
+        if (n + 1 >= cap) break;
+        n += static_cast<std::size_t>(std::snprintf(out + n, cap - n, "%.*s", static_cast<int>(end - start), body + start));
+        end = start > 0 ? start - 1 : 0;
+    }
+    out[std::min(n, cap - 1)] = '\0';
+}
+
+// Everything is read through SafeRead: the parameters come from whoever threw,
+// and a malformed record must cost nothing but the message.
+void DecodeThrow(const EXCEPTION_RECORD* er) {
+    if (er->NumberParameters < 4) return;   // x64 throws carry the image base
+    const auto obj  = static_cast<std::uintptr_t>(er->ExceptionInformation[1]);
+    const auto info = static_cast<std::uintptr_t>(er->ExceptionInformation[2]);
+    const auto base = static_cast<std::uintptr_t>(er->ExceptionInformation[3]);
+    if (!obj || !info || !base) return;   // a rethrow (`throw;`) keeps what the first throw recorded
+
+    std::int32_t ctaRva = 0, count = 0;
+    if (!SafeRead(reinterpret_cast<const void*>(info + 12), &ctaRva, 4) || ctaRva <= 0) return;
+    const std::uintptr_t cta = base + static_cast<std::uint32_t>(ctaRva);
+    if (!SafeRead(reinterpret_cast<const void*>(cta), &count, 4) || count <= 0 || count > 32) return;
+
+    // Written in place: a throw from deep recursion reaches this handler with
+    // little stack left, so no copy of the record lives on it.
+    Thrown& t = t_thrown;
+    t.valid = false;
+    t.type[0] = '\0';
+    t.hasValue = false;
+    t.what[0] = '\0';
+    for (std::int32_t i = 0; i < count; ++i) {
+        std::int32_t ctRva = 0;
+        if (!SafeRead(reinterpret_cast<const void*>(cta + 4 + 4 * i), &ctRva, 4) || ctRva <= 0) return;
+        // CatchableType: properties, pType, thisDisplacement {mdisp, pdisp, vdisp}, sizeOrOffset, copyFunction.
+        struct { std::uint32_t props; std::int32_t type, mdisp, pdisp, vdisp, size, copy; } ct{};
+        if (!SafeRead(reinterpret_cast<const void*>(base + static_cast<std::uint32_t>(ctRva)), &ct, sizeof(ct)) ||
+            ct.type <= 0)
+            return;
+        // TypeDescriptor: vtable, spare, then the decorated name.
+        char name[96] = {};
+        const char* namePtr = reinterpret_cast<const char*>(base + static_cast<std::uint32_t>(ct.type) + 16);
+        if (!ReadableString(namePtr, 4) || !SafeRead(namePtr, name, sizeof(name) - 1)) return;
+        name[sizeof(name) - 1] = '\0';
+
+        if (i == 0) Demangle(name, t.type, sizeof(t.type));
+        if (std::strcmp(name, ".?AVYYGMLException@@") == 0 && ct.size == sizeof(RValue) && ct.mdisp == 0 &&
+            SafeRead(reinterpret_cast<const void*>(obj), &t.value, sizeof(RValue)))
+            t.hasValue = true;
+        // std::exception: vtable, then {const char* what; bool doFree}.
+        if (std::strcmp(name, ".?AVexception@std@@") == 0 && ct.mdisp >= 0) {
+            const char* what = nullptr;
+            if (SafeRead(reinterpret_cast<const void*>(obj + ct.mdisp + 8), &what, sizeof(what)) &&
+                ReadableString(what, 1))
+                SafeRead(what, t.what, static_cast<int>(strnlen(what, sizeof(t.what) - 1)));
+        }
+    }
+    t.valid = true;
+}
+
 LONG CALLBACK ExceptionProbe(EXCEPTION_POINTERS* info) {
     if (g_inCall <= 0) return EXCEPTION_CONTINUE_SEARCH;
     const EXCEPTION_RECORD* er = info->ExceptionRecord;
     if (er->ExceptionCode != kCppException) return EXCEPTION_CONTINUE_SEARCH;
-    if (er->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
-
-    // ExceptionInformation[1] points at the thrown object. Rather than decode
-    // MSVC's throw metadata, scan the first few slots for a pointer to text.
-    auto* obj = reinterpret_cast<const char* const*>(er->ExceptionInformation[1]);
-    if (!obj) return EXCEPTION_CONTINUE_SEARCH;
-
     __try {
-        for (int i = 0; i < 8; ++i) {
-            const char* candidate = obj[i];
-            if (ReadableString(candidate, 8)) {
-                std::snprintf(g_lastError, sizeof(g_lastError), "%s", candidate);
-                return EXCEPTION_CONTINUE_SEARCH;
-            }
-        }
-        // Some throws hold the text inline.
-        if (ReadableString(reinterpret_cast<const char*>(obj), 8))
-            std::snprintf(g_lastError, sizeof(g_lastError), "%s",
-                          reinterpret_cast<const char*>(obj));
+        DecodeThrow(er);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     return EXCEPTION_CONTINUE_SEARCH;
@@ -715,12 +818,45 @@ bool GuardedEvent(EventFn fn, void* self, void* other, DWORD* code) {
     }
 }
 
-struct InCall {
-    InCall()  { ++g_inCall; }
-    ~InCall() { --g_inCall; }
-    InCall(const InCall&) = delete;
-    InCall& operator=(const InCall&) = delete;
-};
+thread_local bool t_explaining = false;
+
+// The text a thrown value stands for. A GML runtime error is a struct: its
+// `message` is the one-line reason, and `script`/`line` say where. Anything
+// else a script threw (`throw "text"`, a number, a user struct) is shown as is.
+std::string ThrownText(const RValue& v, void* self) {
+    const std::int32_t kind = v.kind & 0x00FFFFFF;
+    if (kind != kObject) return kind == kUnset ? std::string() : ToString(v);
+
+    // Members are read through the runtime (variable_struct_get): the struct's
+    // layout is the runtime's business. A read that fails leaves that part out.
+    auto member = [&](const char* name) {
+        RValue out{};
+        if (!builtins::StructGet(v, name, &out, self)) return std::string();
+        std::string s = (out.kind & 0x00FFFFFF) == kString || (out.kind & 0x00FFFFFF) == kReal ? ToString(out)
+                                                                                              : std::string();
+        FreeValue(out);   // variable_struct_get hands out its own reference
+        return s;
+    };
+    std::string text = member("message");
+    if (text.empty()) text = member("longMessage");
+    if (text.empty()) return "a struct was thrown";
+    const std::string script = member("script");
+    if (!script.empty()) {
+        const std::string line = member("line");
+        text += " (in " + script + (line.empty() || line == "0" ? "" : ", line " + line) + ")";
+    }
+    return text;
+}
+
+const char* Describe(DWORD code) {
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION: return "access violation";
+    case EXCEPTION_STACK_OVERFLOW:   return "stack overflow";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO: return "integer division by zero";
+    case EXCEPTION_ILLEGAL_INSTRUCTION: return "illegal instruction";
+    default: return "exception";
+    }
+}
 
 } // namespace
 
@@ -729,6 +865,43 @@ ManagedScope::~ManagedScope() { --t_managedDepth; }
 bool InManagedCode() { return t_managedDepth > 0; }
 
 const char* LastError() { return g_lastError; }
+void        ClearLastError() { g_lastError[0] = '\0'; }
+
+ErrorProbe::ErrorProbe() {
+    std::call_once(g_vehOnce, [] { AddVectoredExceptionHandler(1, &ExceptionProbe); });
+    g_lastError[0] = '\0';
+    t_thrown.valid = false;
+    ++g_inCall;
+}
+
+ErrorProbe::~ErrorProbe() { --g_inCall; }
+
+const char* ExplainFailure(unsigned long code, void* self) {
+    // Taken before anything else runs: reading a struct member is itself a
+    // guarded call, and its probe starts by clearing what was recorded.
+    const Thrown thrown = t_thrown;
+    t_thrown.valid = false;
+
+    std::string text;
+    if (code == kCppException && thrown.valid) {
+        // Explaining a failure while explaining one would recurse for as long
+        // as reading the error struct itself throws; the inner one gets no text.
+        if (thrown.hasValue && !t_explaining && Ready()) {
+            t_explaining = true;
+            text = ThrownText(thrown.value, self ? self : CurrentSelf());
+            t_explaining = false;
+        }
+        if (text.empty() && thrown.what[0]) text = thrown.what;
+        if (text.empty()) text = std::string(thrown.type[0] ? thrown.type : "a C++ exception") + ", no message recovered";
+        else if (!thrown.hasValue) text = std::string(thrown.type) + ": " + text;
+    } else {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "%s 0x%08lX, no message recovered", Describe(code), code);
+        text = buf;
+    }
+    std::snprintf(g_lastError, sizeof(g_lastError), "%s", text.c_str());
+    return g_lastError;
+}
 
 bool Call(void* func, RValue* result, RValue** args, int argc) {
     // Borrow whatever instance the game last ran code as, since a null self
@@ -740,9 +913,6 @@ bool Call(void* func, RValue* result, RValue** args, int argc) {
 bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, void* other) {
     if (!g_ready || !func || !result) return false;
 
-    std::call_once(g_vehOnce, [] { AddVectoredExceptionHandler(1, &ExceptionProbe); });
-    g_lastError[0] = '\0';
-
     result->ptr   = nullptr;
     result->flags = 0;
     result->kind  = kUnset;
@@ -750,16 +920,13 @@ bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, voi
     DWORD code = 0;
     bool ok;
     {
-        InCall scope;   // restored even if a GML exception passes through to the game
+        ErrorProbe probe;   // restored even if a GML exception passes through to the game
         ok = GuardedScript(reinterpret_cast<ScriptFn>(func), self, other, result, argc, args, &code);
     }
     if (ok) return true;
     AfterGuardedFault(code);
-    if (g_lastError[0])
-        Logf("[!] gml: %s rejected the call: %s",
-             code == kCppException ? "the game" : "fault", g_lastError);
-    else
-        Logf("[!] gml: exception 0x%08lX calling %p (no message recovered)", code, func);
+    const char* owner = sym::OwnerOf(func);
+    Logf("[!] gml: %s failed (0x%08lX): %s", owner ? owner : "script", code, ExplainFailure(code, self));
     return false;
 }
 
@@ -789,19 +956,16 @@ bool CallEvent(void* func, void* self, void* other) {
     if (!self) self = CurrentSelf();
     if (!self) return false;
 
-    std::call_once(g_vehOnce, [] { AddVectoredExceptionHandler(1, &ExceptionProbe); });
-    g_lastError[0] = '\0';
-
     DWORD code = 0;
     bool ok;
     {
-        InCall scope;
+        ErrorProbe probe;
         ok = GuardedEvent(reinterpret_cast<EventFn>(func), self, other ? other : self, &code);
     }
     if (ok) return true;
     AfterGuardedFault(code);
-    if (g_lastError[0]) Logf("[!] gml: event rejected: %s", g_lastError);
-    else                Logf("[!] gml: exception 0x%08lX in event %p", code, func);
+    const char* owner = sym::OwnerOf(func);
+    Logf("[!] gml: event %s failed (0x%08lX): %s", owner ? owner : "?", code, ExplainFailure(code, self));
     return false;
 }
 
@@ -938,6 +1102,273 @@ void AbiSelfTest() {
     Logf("gml: --- ABI self-test %s (%d/%d checks%s) ---",
          g_abiProven ? "PASSED" : "FAILED", passed, ran,
          ran < 3 ? "; script probes absent in this game" : "");
+}
+
+// ------------------------------------------------------------ id -> instance
+//
+// The runner keeps every instance in a hash map keyed by id (CInstance's
+// ms_ID2Instance). No function wraps the lookup - it is inlined wherever an id
+// is resolved (instance iterators, `with`, instance_exists) - so it is the MAP
+// that is located, from the shape all those copies share:
+//     cmp   id, 100000            ; ids below are object indices
+//     jge   ...
+//     movsxd rcx, dword [rip+M]   ; mask   (map + 8)
+//     mov   rax, qword [rip+B]    ; buckets (map + 0)
+//     and   rcx, id ; add rcx, rcx ; mov rdx, [rax+rcx*8]   ; 16-byte buckets
+//     cmp   dword [rdx+10h], id   ; node key; next at +8, CInstance* at +18h
+// Identical in Stoneshard's runtime and 2024.14. The layout is then PROVEN on
+// the live game before it is used (VerifyInstanceLookup).
+
+namespace {
+
+constexpr std::int32_t kFirstInstanceId = 100000;
+
+std::uintptr_t g_idMap = 0;
+
+enum class Lookup { Pending, Proven, Failed };
+Lookup      g_lookup = Lookup::Pending;
+std::string g_lookupStatus = "not proven yet (needs a live instance)";
+int         g_lookupRetries = 0;
+// High halves of the kind-15 references proven to name instances (a runtime
+// can use one for `id` and another for what instance_find returns).
+std::int64_t g_refTags[2] = {};
+int          g_refTagCount = 0;
+
+bool RipOperand(std::uintptr_t at, unsigned char op, std::uintptr_t& target) {
+    const auto* b = reinterpret_cast<const unsigned char*>(at);
+    if ((b[0] & 0xF8) != 0x48 || b[1] != op || (b[2] & 0xC7) != 0x05) return false;
+    std::int32_t disp;
+    std::memcpy(&disp, b + 3, 4);
+    target = at + 7 + static_cast<std::intptr_t>(disp);
+    return true;
+}
+
+// `cmp dword [reg+10h], r32` - [REX] 39 /r, mod=01, disp8 = 0x10.
+bool HasKeyCompare(std::uintptr_t from, std::size_t window) {
+    for (std::size_t i = 0; i < window; ++i) {
+        const auto* b = reinterpret_cast<const unsigned char*>(from + i);
+        const std::size_t r = (b[0] & 0xF0) == 0x40 ? 1 : 0;
+        if (b[r] == 0x39 && (b[r + 1] & 0xC0) == 0x40 && (b[r + 1] & 0x07) != 0x04 && b[r + 2] == 0x10) return true;
+    }
+    return false;
+}
+
+// The id threshold, 100000 (or 99999 for a `jle`), as an imm32 shortly before.
+bool HasIdThreshold(std::uintptr_t before, std::size_t window) {
+    static const unsigned char k100000[] = {0xA0, 0x86, 0x01, 0x00};
+    static const unsigned char k99999[]  = {0x9F, 0x86, 0x01, 0x00};
+    const std::uintptr_t from = before - window;
+    for (std::size_t i = 0; i + 4 <= window; ++i) {
+        const void* p = reinterpret_cast<const void*>(from + i);
+        if (std::memcmp(p, k100000, 4) == 0 || std::memcmp(p, k99999, 4) == 0) return true;
+    }
+    return false;
+}
+
+void TallyIdMap(std::unordered_map<std::uintptr_t, int>& votes) {
+    const auto tx = sym::TextRange();
+    const auto data = sym::DataRange();
+    for (std::uintptr_t at = tx.lo + 96; at + 64 < tx.hi; ++at) {
+        const auto* b = reinterpret_cast<const unsigned char*>(at);
+        if (b[1] != 0x63) continue;   // cheap reject before decoding
+        std::uintptr_t mask = 0;
+        if (!RipOperand(at, 0x63, mask)) continue;
+        std::uintptr_t buckets = 0;
+        bool paired = false;
+        for (std::size_t k = 7; k < 16 && !paired; ++k)
+            paired = RipOperand(at + k, 0x8B, buckets) && buckets + 8 == mask;
+        if (!paired || !data.contains(buckets)) continue;
+        if (!HasKeyCompare(at + 7, 40) || !HasIdThreshold(at, 96)) continue;
+        ++votes[buckets];
+    }
+}
+
+void* LookupId(std::int32_t id) {
+    if (!g_idMap || id < kFirstInstanceId) return nullptr;
+    std::uintptr_t buckets = 0;
+    std::int32_t   mask = 0;
+    if (!SafeRead(reinterpret_cast<const void*>(g_idMap), &buckets, sizeof(buckets)) ||
+        !SafeRead(reinterpret_cast<const void*>(g_idMap + 8), &mask, sizeof(mask)))
+        return nullptr;
+    // A power-of-two table: anything else is not the map this code expects.
+    const auto umask = static_cast<std::uint32_t>(mask);
+    if (!buckets || mask <= 0 || (umask & (umask + 1)) != 0) return nullptr;
+
+    std::uintptr_t node = 0;
+    const std::uintptr_t slot = buckets + static_cast<std::uintptr_t>(id & mask) * 16;
+    if (!SafeRead(reinterpret_cast<const void*>(slot), &node, sizeof(node))) return nullptr;
+    struct Node { std::uintptr_t prev, next; std::int32_t key, pad; void* value; };
+    for (int hops = 0; node && hops < 4096; ++hops) {
+        Node n{};
+        if (!SafeRead(reinterpret_cast<const void*>(node), &n, sizeof(n))) return nullptr;
+        if (n.key == id) return n.value;
+        node = n.next;
+    }
+    return nullptr;
+}
+
+// An instance id from a GML value: a whole number, or a kind-15 reference
+// whose low half is the id (the high half says what it refers to).
+bool IdOf(const RValue& v, std::int32_t& id, bool& isRef, std::int64_t& tag) {
+    isRef = false;
+    switch (v.kind & 0x00FFFFFF) {
+    case kReal:
+        if (!(v.real >= 0.0 && v.real <= 2147483647.0) || v.real != static_cast<double>(static_cast<std::int32_t>(v.real)))
+            return false;
+        id = static_cast<std::int32_t>(v.real);
+        return true;
+    case kInt32: id = v.i32; return true;
+    case kInt64:
+        if (v.i64 < 0 || v.i64 > 0x7FFFFFFF) return false;
+        id = static_cast<std::int32_t>(v.i64);
+        return true;
+    case kRef:
+        isRef = true;
+        tag   = v.i64 >> 32;
+        id    = static_cast<std::int32_t>(v.i64 & 0xFFFFFFFF);
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool RefTagProven(std::int64_t tag) {
+    for (int i = 0; i < g_refTagCount; ++i)
+        if (g_refTags[i] == tag) return true;
+    return false;
+}
+
+void NoteRefTag(std::int64_t tag) {
+    if (!RefTagProven(tag) && g_refTagCount < 2) g_refTags[g_refTagCount++] = tag;
+}
+
+void LookupFailed(const std::string& why) {
+    g_lookup = Lookup::Failed;
+    g_lookupStatus = "unavailable: " + why;
+    Logf("[!] gml: instance lookup %s", g_lookupStatus.c_str());
+}
+
+// Reads an instance's `id` through the runtime and resolves it.
+bool ReadId(void* instance, std::int32_t& id, bool& isRef, std::int64_t& tag) {
+    RValue v{};
+    return builtins::GetVar(builtins::SelfHandle(instance), "id", &v) && IdOf(v, id, isRef, tag);
+}
+
+} // namespace
+
+bool        InstanceLookupProven() { return g_lookup == Lookup::Proven; }
+const char* InstanceLookupStatus() { return g_lookupStatus.c_str(); }
+
+bool ScanInstanceLookup() {
+    std::unordered_map<std::uintptr_t, int> votes;
+    TallyIdMap(votes);
+    g_idMap = Winner(votes, 3, "instance id table");
+    if (!g_idMap) LookupFailed("the runtime's instance id table was not found");
+    return g_idMap != 0;
+}
+
+void VerifyInstanceLookup() {
+    if (g_lookup != Lookup::Pending || !g_ready || !g_idMap || !builtins::Ready()) return;
+    void* self = CurrentSelf();
+    if (!self || !LooksLikeInstance(self)) return;   // nothing to prove with yet
+
+    // Every half second rather than every frame: an attempt that cannot
+    // conclude (below) makes builtin calls, and may log a failed one.
+    static int calls = 0;
+    if (calls++ % 30 != 0) return;
+
+    // The borrowed self can be something other than a live object instance:
+    // a struct running a method (no object_index), or an instance destroyed
+    // since it was observed. Neither says anything about the table, so such
+    // attempts only retry, for a while.
+    auto inconclusive = [](const char* why) {
+        if (++g_lookupRetries >= 40) LookupFailed(why);
+    };
+    RValue args[2]{};
+    std::int32_t objectIndex = -1;
+    bool objRef = false;
+    std::int64_t objTag = 0;
+    if (!builtins::GetVar(builtins::SelfHandle(self), "object_index", &args[0]) ||
+        !IdOf(args[0], objectIndex, objRef, objTag)) {
+        inconclusive("the current self never had an object_index");
+        return;
+    }
+    std::int32_t id = 0;
+    bool isRef = false;
+    std::int64_t tag = 0;
+    RValue idValue{};
+    if (!builtins::GetVar(builtins::SelfHandle(self), "id", &idValue) || !IdOf(idValue, id, isRef, tag) ||
+        id < kFirstInstanceId) {
+        inconclusive("could not read the current instance's id");
+        return;
+    }
+    RValue live{};
+    if (!builtins::Call("instance_exists", &live, &idValue, 1, self) || live.real == 0.0) {
+        inconclusive("the current self was never a live instance");
+        return;
+    }
+
+    void* found = LookupId(id);
+    if (found != self) {
+        // A live instance whose id finds another pointer (or none) is what a
+        // wrong table looks like; a few in a row settle it.
+        static int mismatches = 0;
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "id %d of self %p looked up to %p", id, self, found);
+        Logf("[!] gml: instance lookup check: %s", buf);
+        if (++mismatches >= 5) LookupFailed(buf);
+        return;
+    }
+    if (LookupId(0x7FFFFFF0) || LookupId(id ^ 0x40000000)) {
+        LookupFailed("a bogus id resolved to an instance");
+        return;
+    }
+    if (isRef) NoteRefTag(tag);
+
+    // instance_find may hand out references even where `id` reads as a
+    // number: whatever it returns for self's own object must resolve to an
+    // instance whose `id` is that same number, which proves its reference kind.
+    RValue found0{};
+    {
+        SetReal(args[1], 0.0);
+        std::int32_t fid = 0, back = 0;
+        bool fRef = false, bRef = false;
+        std::int64_t fTag = 0, bTag = 0;
+        if (builtins::Call("instance_find", &found0, args, 2, self) && IdOf(found0, fid, fRef, fTag)) {
+            void* p = LookupId(fid);
+            if (!p || !ReadId(p, back, bRef, bTag) || back != fid) {
+                LookupFailed("instance_find's result did not resolve to the instance it names");
+                return;
+            }
+            if (fRef) NoteRefTag(fTag);
+        }
+    }
+
+    g_lookup = Lookup::Proven;
+    char buf[200];
+    std::snprintf(buf, sizeof(buf), "proven (table %p; self %p id %d found; bogus ids rejected; %d reference kind%s)",
+                  reinterpret_cast<void*>(g_idMap), self, id, g_refTagCount, g_refTagCount == 1 ? "" : "s");
+    g_lookupStatus = buf;
+    Logf("gml: instance lookup %s", g_lookupStatus.c_str());
+}
+
+void* InstanceFromId(const RValue& v) {
+    VerifyInstanceLookup();   // a mod may ask before the frame tick has proven it
+    if (g_lookup != Lookup::Proven) return nullptr;
+    std::int32_t id = 0;
+    bool isRef = false;
+    std::int64_t tag = 0;
+    if (!IdOf(v, id, isRef, tag) || (isRef && !RefTagProven(tag))) return nullptr;
+    void* p = LookupId(id);
+    if (!p || !LooksLikeInstance(p)) return nullptr;
+
+    // The table also holds deactivated instances and ones being destroyed;
+    // instance_exists is the runtime's own word on whether it is live.
+    RValue args[1] = {v};
+    RValue live{};
+    if (!builtins::Call("instance_exists", &live, args, 1, p)) return nullptr;
+    const std::int32_t kind = live.kind & 0x00FFFFFF;
+    return (kind == kReal || kind == kBool) && live.real != 0.0 ? p : nullptr;
 }
 
 } // namespace mod::gml

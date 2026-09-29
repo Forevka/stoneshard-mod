@@ -19,6 +19,7 @@
 #include "symbols.h"
 
 #include <windows.h>
+#include <malloc.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -431,6 +432,20 @@ Builtin Find(const std::string& name) {
     return it == g_map.end() ? Builtin{} : it->second;
 }
 
+namespace {
+// The fault guard lives in a function of its own: __try cannot share a
+// function with objects that need unwinding (the ErrorProbe in Call).
+bool GuardedCall(TRoutine fn, gml::RValue* result, void* self, void* other, int argc, gml::RValue* args,
+                 DWORD* code) {
+    __try {
+        fn(result, self, other, argc, args);
+        return true;
+    } __except (*code = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+} // namespace
+
 bool Call(const std::string& name, gml::RValue* result,
           gml::RValue* args, int argc, void* self, void* other) {
     const Builtin b = Find(name);
@@ -444,14 +459,17 @@ bool Call(const std::string& name, gml::RValue* result,
     result->flags = 0;
     result->kind  = gml::kUndefined;
 
-    auto fn = reinterpret_cast<TRoutine>(b.fn);
-    __try {
-        fn(result, self, other ? other : self, argc, args);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        Logf("[!] builtins: exception 0x%08lX calling %s", GetExceptionCode(), name.c_str());
-        return false;
+    DWORD code = 0;
+    bool ok;
+    {
+        gml::ErrorProbe probe;   // records the GML error a failing builtin throws
+        ok = GuardedCall(reinterpret_cast<TRoutine>(b.fn), result, self, other ? other : self, argc, args,
+                         &code);
     }
-    return true;
+    if (ok) return true;
+    if (code == EXCEPTION_STACK_OVERFLOW) _resetstkoflw();
+    Logf("[!] builtins: %s failed (0x%08lX): %s", name.c_str(), code, gml::ExplainFailure(code, self));
+    return false;
 }
 
 namespace {
@@ -505,6 +523,15 @@ bool SetVar(const Handle& h, const char* name, const gml::RValue& value) {
 
     gml::RValue ignored{};
     return Call("variable_instance_set", &ignored, args, 3, h.self);
+}
+
+bool StructGet(const gml::RValue& structValue, const char* name, gml::RValue* out, void* self) {
+    if (!name || !out) return false;
+    gml::RValue args[2]{};
+    args[0] = structValue;
+    if (!NameArg(name, args[1])) return false;
+    return Call("variable_struct_get", out, args, 2, self) &&
+           out->kind != gml::kUndefined && out->kind != gml::kUnset;
 }
 
 // ---------------------------------------------------------------- self-test

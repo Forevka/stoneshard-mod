@@ -155,8 +155,8 @@ on that member with a reason, e.g. in `GlobalSuppressions.cs`:
 |---|---|
 | `CoreMod` | `OnInitialize`, `OnUpdate` (every frame), `OnGUI` (the mod's own tab), `OnShutdown`, plus `Log`, `Config`, `Directory` |
 | `Hooks` | `Before`/`After` on any `gml_Script_*` or `gml_Object_*`, or the `[HookBefore]`/`[HookAfter]` attributes. The `HookCall` passed to a handler exposes `Self`, `Other`, `GetArg`/`SetArg`, `Result`, `SkipOriginal()` and `CallOriginal()`. `NextBefore`/`NextAfter` run code once, inside the next matching call, with a timeout |
-| `Game` | `Name`, `Symbols`, `CallScript`, `CallEvent`, `CallBuiltin`, `BuiltinArity`, `CurrentSelf`, `RunOnGameThread` |
-| `Globals`, `GmlObject`, `InstanceRef` | Read and write global and instance variables by name, list objects and live instances. `GmlObject.Parent`, `Ancestors()`, `IsA(name)`, `Children()` walk the object hierarchy |
+| `Game` | `Name`, `Symbols`, `CallScript`, `CallScriptAs` (as an `Instance`, or as the instance an `InstanceRef` names), `CallEvent`, `CallBuiltin`, `BuiltinArity`, `CurrentSelf`, `CanResolveInstances`, `RunOnGameThread`. A call the game rejects throws `GmlException` with the GML error's message, e.g. `call to scr_x failed: Variable ... not set before reading it. (in gml_Script_scr_x, line 12)` |
+| `Globals`, `GmlObject`, `InstanceRef` | Read and write global and instance variables by name, list objects and live instances. `GmlObject.Parent`, `Ancestors()`, `IsA(name)`, `Children()` walk the object hierarchy. `InstanceRef.Resolve()` turns an id into the live `Instance` (null if it is gone, or if this runtime's id lookup could not be proven), and `InstanceRef.CallScript` runs a script as it |
 | `ObjectTable` | The object table (index, name, parent), read once over a few frames and cached: `Start()`, `Ready`, `Progress`, `Status`, `Complete()` |
 | `DsMap`, `DsList` | ds_map and ds_list by id: `Exists`, `Count`, `Get`/`Set`/`Has`/`Remove`, `Entries()`, `ToJson()`; `At`, `Add`, `Insert`, `RemoveAt`, `Clear`, `Items()` |
 | `Gml` | `TypeOf`, arrays and structs through the runtime's own builtins |

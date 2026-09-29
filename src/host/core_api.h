@@ -40,7 +40,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 10;  // 10: ui round 3 (combo, selectable, disabled, clipper, is_item_deactivated_after_edit, ...)   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
+constexpr std::int32_t kCoreApiVersion = 10;  // 10: ui round 3 (combo, selectable, disabled, clipper, is_item_deactivated_after_edit, ...), last_gml_error, instance_from_id   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -214,6 +214,19 @@ struct CoreApi {
     // after its value changed: the moment to commit an edit, once, instead of
     // writing on every frame of a drag.
     std::int32_t (*ui_is_item_deactivated_after_edit)();
+
+    // Why the last failed call_script / call_event / call_builtin on this
+    // thread failed: the GML error's message ("... (in gml_Script_x, line 12)")
+    // when the runtime threw one, else the exception's type or code followed
+    // by "no message recovered". Only meaningful right after a failed call;
+    // empty when that call was refused before reaching the game. Never null.
+    const char*  (*last_gml_error)();
+    // The live CInstance for an instance id - a number, or a kind-15 instance
+    // reference as instance_find returns on newer runtimes - or null when there
+    // is no such active instance, or when this runtime's id lookup could not be
+    // proven. With id null it is a probe, not a lookup: non-null (and not an
+    // instance) once the lookup is proven, null otherwise. Game thread only.
+    void*        (*instance_from_id)(const CoreRValue* id);
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

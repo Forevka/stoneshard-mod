@@ -73,6 +73,10 @@ Handle SelfHandle(void* instance);
 bool GetVar(const Handle& h, const char* name, gml::RValue* out);
 bool SetVar(const Handle& h, const char* name, const gml::RValue& value);
 
+// A struct member by name (variable_struct_get). `self` is only what the
+// builtin is handed as its instance. False if the member is missing.
+bool StructGet(const gml::RValue& structValue, const char* name, gml::RValue* out, void* self);
+
 // The ABI gate that everything calling builtins depends on. MUST run on the
 // game thread. Runs once; safe to call every frame.
 void        SelfTest();
