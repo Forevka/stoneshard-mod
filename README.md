@@ -3,10 +3,44 @@
 A mod loader for **any YYC-compiled GameMaker game**. A `version.dll` proxy finds the game's
 compiled GML and the runtime's helpers by pattern, hosts .NET and loads C# mods, with a Dear ImGui
 overlay (**INSERT** toggles it). Nothing is hardcoded: every function, object and asset is resolved
-by name at runtime, so a patch that moves addresses around costs nothing. It is verified on
-Stoneshard and Dwarf Eats Mountain, and it generates a typed interop project from the running game.
+by name at runtime, so a patch that moves addresses around costs nothing. It works on six YYC games
+so far (see [Tested on](#tested-on)), and it generates a typed interop project from the running game.
 
 Writing mods, the API and the shipped mods: **[managed/README.md](managed/README.md)**.
+
+## Tested on
+
+CoreLoader works only with **YYC** builds, where the game's GML is compiled to native code in the
+exe. A **VM** build keeps its GML as bytecode in `data.win` (a non-empty `CODE` chunk), so there is
+nothing for the loader to find. In a VM game the loader stands down: it says so in its log and the
+game runs as usual. Mods still load, but they cannot touch the game.
+
+| Game | Store | Build | GML functions | Loader | Console mod | Notes |
+|---|---|---|---|---|---|---|
+| Stoneshard (Early Access) | Steam | YYC, older runtime | 34,167 | ✅ | ✅ | The main target. The Stoneshard mods and the full `smoke-stoneshard.ps1` suite run here |
+| Dwarf Eats Mountain Demo | Steam | YYC, runtime 2024.14 | 4,968 | ✅ | ✅ | The second reference game, on the newer runtime |
+| The Spike Cross | Steam | YYC | 48,206 | ✅ | ✅ | Steam relaunches it (see below) |
+| The King is Watching 1.3.6 | GOG | YYC | 14,511 | ✅ | ✅ | Rebuilds its swap chain at startup; fixed in the overlay |
+| Zero Stress King | GOG | YYC | 1,833 | ✅ | ✅ | |
+| Slime Trader | Steam | YYC | 1,478 | ✅ | ✅ | Steam relaunches it (see below) |
+| Void War | GOG | **VM** | 0 | ⛔ not supported | Loads, no game access | Detected as "not a YYC game"; the game runs unaffected |
+
+"✅" means the loader starts, proves its GML bridge by a live call, and generates interop. The overlay
+draws, and `tools\smoke-generic.ps1` passes all its checks (29) in that game. It checks builtin and
+script calls, globals, instance variables, and object and event lookup. It also checks the Console
+mod's expressions and commands, hooking and unhooking a live event, and that game errors are
+reported without disabling a mod. Tested with CoreLoader 0.4.0 plus the unreleased changes, on
+2026-09-29.
+
+To try another game, install CoreLoader with the Console mod and run the generic smoke test:
+
+```powershell
+tools\run-game.ps1 -GameDir "<game folder>" -Deploy -Mods Console -CleanMods -TestHost
+tools\smoke-generic.ps1 -GameDir "<game folder>"
+```
+
+Steam relaunches some games through `steam.exe`, which drops the `CORELOADER_TEST` variable.
+`-TestHost` also writes a `CoreLoader\testhost.enable` marker, which covers those games.
 
 CoreLoader began as a native cheat mod for Stoneshard. Those tools are now C# mods
 (`StoneshardCheats`, `StoneshardBoost`, `SpeedControl`), and `version.dll` holds no game-specific code.
