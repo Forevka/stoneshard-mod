@@ -228,6 +228,7 @@ internal static class ModManager
         // its sprites before they go.
         Content.RemoveOwner(m);
         Values.RemoveOwner(m);
+        TestHost.RemoveOwner(m);
     }
 
     /// <summary>

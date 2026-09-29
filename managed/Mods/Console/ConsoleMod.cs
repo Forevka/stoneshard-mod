@@ -31,6 +31,28 @@ public sealed class ConsoleMod : CoreMod
         Print($"CoreLoader console - {Game.Name}. Type 'help'.", 0.6f, 0.8f, 1f);
         _inspector = new Inspector(_eval, Print, () => Path.Combine(Directory, "Console", "dumps"));
         _gameDrawing = GameDraw.OnGui(_inspector.DrawGame);
+        if (TestHost.Enabled)
+            TestHost.Register("console", args => RunForTest(string.Join(' ', args.Select(a =>
+                    a.ValueKind == System.Text.Json.JsonValueKind.String ? a.GetString() : a.GetRawText()))),
+                "console <line>: runs a console line (expression or command), answers its output");
+    }
+
+    // Output of the line being run for the test host; null otherwise.
+    private List<string>? _capture;
+    private bool _failed;
+
+    // The same Execute the input line uses, with its output captured. A line
+    // the console reports as an error answers ok:false with that output.
+    private string RunForTest(string line)
+    {
+        var captured = _capture = new List<string>();
+        _failed = false;
+        try { Execute(line, remember: false); }
+        finally { _capture = null; }
+        // The "> line" echo comes first, one captured line per line of input.
+        string output = string.Join("\n", captured.Skip(line.Split('\n').Length));
+        if (_failed) throw new InvalidOperationException(output);
+        return output;
     }
 
     public override void OnUpdate()
@@ -93,9 +115,9 @@ public sealed class ConsoleMod : CoreMod
 
     // ------------------------------------------------------------ execution
 
-    private void Execute(string line)
+    private void Execute(string line, bool remember = true)
     {
-        if (_history.Count == 0 || _history[^1] != line) _history.Add(line);
+        if (remember && (_history.Count == 0 || _history[^1] != line)) _history.Add(line);
         if (_history.Count > 200) _history.RemoveRange(0, _history.Count - 200);
         Print("> " + line, 0.55f, 0.55f, 0.6f);
         try
@@ -106,9 +128,9 @@ public sealed class ConsoleMod : CoreMod
                 Print(Format(v), 0.85f, 0.95f, 0.85f);
             }
         }
-        catch (ConsoleError ex) { Print(ex.Message, 1f, 0.5f, 0.45f); }
-        catch (GmlException ex) { Print("game: " + ex.Message, 1f, 0.5f, 0.45f); }
-        catch (Exception ex) { Print($"{ex.GetType().Name}: {ex.Message}", 1f, 0.5f, 0.45f); }
+        catch (ConsoleError ex) { _failed = true; Print(ex.Message, 1f, 0.5f, 0.45f); }
+        catch (GmlException ex) { _failed = true; Print("game: " + ex.Message, 1f, 0.5f, 0.45f); }
+        catch (Exception ex) { _failed = true; Print($"{ex.GetType().Name}: {ex.Message}", 1f, 0.5f, 0.45f); }
     }
 
     private bool TryCommand(string line)
@@ -349,6 +371,7 @@ public sealed class ConsoleMod : CoreMod
     {
         foreach (var l in text.Split('\n'))
         {
+            _capture?.Add(l);
             _lines.Add((l, r, g, b));
             if (_lines.Count > MaxLines) _lines.RemoveAt(0);
         }

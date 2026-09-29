@@ -26,7 +26,7 @@ internal sealed class EnemiesTab : Tab
     /// kind-15 reference, neither of which is pooled, so it survives the frame;
     /// whether the instance behind it still does is checked with Exists.
     /// </summary>
-    private sealed record Enemy(
+    internal sealed record Enemy(
         InstanceRef Ref, string Key, string Name, string Race, string Type,
         double? Hp, double? MaxHp, double? Level, double? X, double? Y, double? Dist);
 
@@ -170,35 +170,45 @@ internal sealed class EnemiesTab : Tab
 
         try
         {
-            if (GmlObject.Find(ObjectName) is not { } obj)
-            {
-                _roster.Clear();
-                _reported = -1;
-                _error = $"unknown object '{ObjectName}'";
-                return;
-            }
-
-            // Ask the game how many there are first: it is one call, it is the
-            // honest answer, and it is what the listed count gets compared against.
-            _reported = obj.InstanceCount;
-
-            (double X, double Y)? player = Player.Available ? Player.Position : null;
-
-            var built = new List<Enemy>(Math.Max(0, _reported));
-            foreach (var r in obj.Instances())
-            {
-                if (r.Id.IsUndefined || !r.Exists) continue;
-                built.Add(Describe(r, player));
-            }
-
-            // Nearest first: the one you care about is the one about to hit you.
-            // Rows with no known distance sink to the bottom rather than sorting as zero.
-            _roster = built.OrderBy(e => e.Dist ?? double.MaxValue).ToList();
+            _roster = ReadRoster(out _reported);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _roster.Clear();
+            _reported = -1;
+            _error = ex.Message;
         }
         catch (GmlException ex)
         {
             _error = $"refresh failed: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Every live enemy, nearest first, and how many the game itself reports.
+    /// Shared by the tab and the test host's cheats.enemies.
+    /// </summary>
+    public static List<Enemy> ReadRoster(out int reported)
+    {
+        if (GmlObject.Find(ObjectName) is not { } obj)
+            throw new InvalidOperationException($"unknown object '{ObjectName}'");
+
+        // Ask the game how many there are first: it is one call, it is the
+        // honest answer, and it is what the listed count gets compared against.
+        reported = obj.InstanceCount;
+
+        (double X, double Y)? player = Player.Available ? Player.Position : null;
+
+        var built = new List<Enemy>(Math.Max(0, reported));
+        foreach (var r in obj.Instances())
+        {
+            if (r.Id.IsUndefined || !r.Exists) continue;
+            built.Add(Describe(r, player));
+        }
+
+        // Nearest first: the one you care about is the one about to hit you.
+        // Rows with no known distance sink to the bottom rather than sorting as zero.
+        return built.OrderBy(e => e.Dist ?? double.MaxValue).ToList();
     }
 
     // Field names taken from a live o_player dump: o_player and o_enemy are both
@@ -270,22 +280,27 @@ internal sealed class EnemiesTab : Tab
 
     private void Remove(Enemy e)
     {
-        Actions.Run($"instance_destroy {e.Name} ({e.Key})", () =>
-        {
-            if (!e.Ref.Exists) throw new InvalidOperationException($"{e.Name} is already gone");
-
-            // The reference form: destroys the instance named by the argument.
-            // The player is passed as self because builtins are handed one even
-            // when they ignore it, and a null self is not worth the risk - so
-            // with no player there is no remove (Require throws "no player").
-            Game.CallBuiltinAs(Player.Require(), "instance_destroy", e.Ref.Id);
-
-            // instance_exists skips an instance that has been destroyed, so a
-            // survivor here means the call was accepted but did nothing.
-            if (e.Ref.Exists) Actions.Report($"{e.Name} still exists after instance_destroy", ok: false);
-        });
+        Actions.Run($"instance_destroy {e.Name} ({e.Key})", () => Destroy(e));
         if (e.Key == _selectedKey) _selectedKey = null;
         Refresh();
+    }
+
+    /// <summary>Destroys the enemy; returns whether it is really gone.</summary>
+    public static bool Destroy(Enemy e)
+    {
+        if (!e.Ref.Exists) throw new InvalidOperationException($"{e.Name} is already gone");
+
+        // The reference form: destroys the instance named by the argument.
+        // The player is passed as self because builtins are handed one even
+        // when they ignore it, and a null self is not worth the risk - so
+        // with no player there is no remove (Require throws "no player").
+        Game.CallBuiltinAs(Player.Require(), "instance_destroy", e.Ref.Id);
+
+        // instance_exists skips an instance that has been destroyed, so a
+        // survivor here means the call was accepted but did nothing.
+        if (!e.Ref.Exists) return true;
+        Actions.Report($"{e.Name} still exists after instance_destroy", ok: false);
+        return false;
     }
 
     private void LogVars(Enemy e)

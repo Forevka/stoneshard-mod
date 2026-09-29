@@ -101,7 +101,7 @@ internal sealed class BodyTab : Tab
         return map;
     }
 
-    private static List<(string Key, string Label, double Condition)> ReadParts()
+    public static List<(string Key, string Label, double Condition)> ReadParts()
     {
         var parts = new List<(string Key, string Label, double Condition)>();
         foreach (var (key, value) in PartsMap().Entries())
@@ -127,7 +127,7 @@ internal sealed class BodyTab : Tab
     // scr_bodyPartsConditionChange is not used: its arguments are not
     // established, and guessing a script's arguments is how two earlier ones
     // were made to fault.
-    private static void SetCondition(string key, double value) =>
+    public static void SetCondition(string key, double value) =>
         PartsMap().Set(key, Math.Clamp(value, 0.0, 100.0));
 
     private static void DrawStatuses()

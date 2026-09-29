@@ -56,13 +56,29 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - `tools\game-saves.ps1`: backs up, restores and hash-verifies a game's save folder around a test run.
 - `tools\run-game.ps1`: restarts a test game (optionally deploying first) and waits for its mods to load
   and for an optional log pattern.
+- **Test host (development only):** with `CORELOADER_TEST=1`, the loader serves a named pipe
+  (`coreloader-<pid>`, current user only; the name is written to `CoreLoader\Logs\testhost.pipe`) that
+  takes line-delimited JSON commands and runs them on the game thread. It replaces the removed remote
+  command file.
+  - Built-in commands: `ping`, `status`, `log`, `mods`, `reload`, `call`, `builtin`, `global-get`/`-set`,
+    `instance-get`/`-set`, `object-count`, `wait-frames`, `list-commands`.
+  - `TestHost.Register(name, handler, help)` lets a mod add commands; they belong to the mod and go when it
+    unloads. A handler that throws answers `ok:false` and does not fault the mod. `TestHost.Enabled` says
+    whether the session runs the host.
+  - The Console mod registers `console <line>`. StoneshardCheats registers `cheats.*`, one command per cheat,
+    each calling the same method as its button and answering with the value read back.
+  - `tools\coreloader.ps1` is the client (CLI, or dot-sourced for `Invoke-CoreLoader` / `Wait-CoreLoader`).
+    `tools\smoke-stoneshard.ps1` and `tools\smoke-dwarf.ps1` check the commands against a running game.
+    `tools\run-game.ps1 -TestHost` starts the game with the host on.
 
 ### Changed
 - **Breaking:** CoreApi version 10 (UI round 3, `last_gml_error`, `instance_from_id`). The managed
   runtime requires this exact version.
 - The overlay's top-level tabs are Mods, Symbols and Status. Symbols and Status used to sit under Debug.
 - `StoneshardCheats` uses `DsMap`/`DsList`, `Hooks.NextAfter` and `ObjectTable` instead of its own copies.
-  The potion hook is only installed while a build is armed.- Native GML calls with no explicit self use the current self only. The self captured by the remote
+  The potion hook is only installed while a build is armed.
+- StoneshardCheats: an action's result lines now appear under its echo in the panel.
+- Native GML calls with no explicit self use the current self only. The self captured by the remote
   command file is gone.
 
 ### Removed

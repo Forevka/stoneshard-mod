@@ -18,7 +18,7 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 | `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, CoexistProbe, FaultyGuiMod, ReflectionProbe, VarProbeMod, WidgetProbe (every UI widget, and scope unwind under faults) |
 | `managed/Examples/`, `managed/Templates/CoreLoaderMod/` | HelloMod, InteropExample; the `dotnet new coreloader-mod` template |
 | `managed/CoreLoader.Analyzers/` (+ `.Tests`) | Roslyn analyzer every mod compiles with: CL0001-CL0003 lifetime rules (see `managed/README.md#analyzers`) |
-| `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, `run-game.ps1`, `game-saves.ps1`, RE scripts |
+| `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, `run-game.ps1`, `game-saves.ps1`, `coreloader.ps1` (test-host client), `smoke-*.ps1`, RE scripts |
 
 ## Build, deploy, run
 
@@ -57,6 +57,14 @@ Testing notes:
 - `$b = tools\game-saves.ps1 backup -Game Stoneshard` (prints the backup path); afterwards
   `tools\game-saves.ps1 restore -From $b` and `verify -From $b` (exit 1 on any difference). Restore
   deletes only `character_N` folders missing from the backup.
+- **Drive the game through the test host, not the mouse.** `tools\run-game.ps1 ... -TestHost` starts the
+  game with `CORELOADER_TEST=1`; then `tools\coreloader.ps1 -Game Stoneshard|Dwarf <cmd> [args]` (exit 0
+  ok, 1 command failed, 2 game unreachable, 3 no answer in time), or dot-source it for `Invoke-CoreLoader` / `Wait-CoreLoader`.
+  `list-commands` lists everything: core (`status`, `log`, `reload`, `call`, `builtin`, `global-*`,
+  `instance-*`, `object-count`, `wait-frames`), `console <line>`, and `cheats.*`. Poll for anything that
+  takes time; the host never blocks a frame. Protocol: `managed/README.md#test-host`.
+- Smoke tests: `tools\smoke-dwarf.ps1` (core + Console) and `tools\smoke-stoneshard.ps1` (every `cheats.*`
+  command, with read-backs; needs a loaded save; never let the game save afterwards). PASS/FAIL per check.
 - To load a save: first **back up `%LOCALAPPDATA%\StoneShard`** (`game-saves.ps1 backup`). Then at 1920x1080: title, space, Play (1660,552), Continue (1660,552), and wait ~30 s. **Kill the game without saving** afterwards.
 - UI automation is Python + pyautogui (`C:\Python314\python.exe`). ImGui needs a slow click: mouse down, ~150 ms, mouse up. Screenshot, read the image, act.
 - Regression mods to deploy after risky changes:

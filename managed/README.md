@@ -166,6 +166,7 @@ on that member with a reason, e.g. in `GlobalSuppressions.cs`:
 | `Content` | New sprites from PNG (`AddSprite`), reskins of the game's own sprites (`ReplaceSprite`) and sounds from OGG (`AddSound`), loaded at runtime. `Sprite.Draw`, `Sound.Play`/`Stop` |
 | `GameDraw` | `OnGui(handler)`: draw into the game's own GUI layer each frame with `draw_*` builtins and your sprites |
 | `Input` | Pick mode: `ArmPick()`, then `TryTakePick(out click)` gives the next click outside the overlay (the game never sees it), in window pixels and room coordinates |
+| `TestHost` | Development only: `Enabled`, and `Register(name, handler, help)` for commands a test script sends over the test host's pipe (see [Test host](#test-host)) |
 | `Code` | Read-only views of compiled code: `Describe(fn)` lists the scripts, events and builtins a function calls and the strings it uses; `FindCallers(fn)` finds what calls it |
 
 The rules the loader enforces:
@@ -261,6 +262,63 @@ public override void OnGUI()
 `Parent` and `Ancestors()` work before the table is ready, by asking the runtime directly.
 `Children()` needs every object's parent, so before `Ready` it finishes the table on the spot, in
 one frame.
+
+## Test host
+
+For automated testing, the loader can take commands over a named pipe: a script (or an agent) drives
+the game and reads its state back without clicking through the overlay.
+
+**Development only.** It is off unless the game is started with the environment variable
+`CORELOADER_TEST=1`, and the log says which way it went (`test host ON` / `test host off`). The pipe,
+`\\.\pipe\coreloader-<pid>`, admits only the user running the game, but anything running as that user
+can then call any script and write any variable. Never set the variable for normal play.
+
+```powershell
+tools\run-game.ps1 -Game Stoneshard -TestHost          # launches with CORELOADER_TEST=1
+tools\coreloader.ps1 -Game Stoneshard status           # one command, result printed as JSON
+tools\coreloader.ps1 -Game Stoneshard call scr_atr STR
+. tools\coreloader.ps1 -Game Dwarf                     # or, from a script:
+Invoke-CoreLoader builtin string_upper "abc"           #   returns the result, throws on failure
+Wait-CoreLoader { (Invoke-CoreLoader object-count o_enemy) -gt 0 } -TimeoutSec 30
+```
+
+The protocol is one JSON object per line each way:
+`{"id":1,"cmd":"call","args":["scr_foo",1,"a"]}` is answered with `{"id":1,"ok":true,"result":...}`
+or `{"id":1,"ok":false,"error":"..."}`. The pipe's name is also written to
+`CoreLoader\Logs\testhost.pipe`. Arguments are numbers, strings, booleans or null. Results are
+numbers, strings, booleans, null (undefined) and arrays. An instance or asset reference becomes its id
+as a number, which can be passed back. Any other value becomes its GML string.
+
+Commands run on the game thread at the start of a frame, never on the pipe's thread. Nothing blocks
+the frame: `wait-frames n` answers n frames later, and a longer wait is polled from the client
+(`Wait-CoreLoader`).
+
+| Command | Does |
+|---|---|
+| `ping`, `status`, `mods`, `log [n]` | Liveness, game and bridge state, frame count, each mod's state and fault, the last n log lines |
+| `reload <mod\|all>` | Reloads a mod, as the Loader tab does |
+| `call <script> [args]`, `builtin <name> [args]` | Calls a script or builtin. `"as":"current"` runs it as the instance the game last ran |
+| `global-get <name>`, `global-set <name> <value>` | Global variables (set answers the value read back) |
+| `instance-get <object> <n> <var>`, `instance-set <object> <n> <var> <value>` | Instance variables of an object's n-th live instance, or of an instance id (`<id> <var>`) |
+| `object-count <object>` | Live instances, children included |
+| `wait-frames [n]`, `list-commands` | Wait n frames; every command with its help, including mods' |
+
+A mod adds its own commands, usually only when the host is on:
+
+```csharp
+public override void OnInitialize()
+{
+    if (TestHost.Enabled)
+        TestHost.Register("mymod.gold", args => { Globals.Set("gold", args[0].GetDouble()); return Globals.Get("gold"); },
+            "mymod.gold <n>: sets the gold, answers it read back");
+}
+```
+
+A command belongs to the mod that registered it and goes when the mod unloads or hot-reloads. A
+handler that throws answers `ok:false` with the message and does **not** fault the mod: a test feeds
+commands bad input on purpose. A faulted mod's commands answer with its fault. The Console mod adds
+`console <line>`, and StoneshardCheats adds `cheats.*` (see `list-commands`).
+`tools\smoke-stoneshard.ps1` and `tools\smoke-dwarf.ps1` exercise them against a running game.
 
 ## Mods in this repository
 

@@ -84,13 +84,16 @@ internal sealed class CharacterTab : Tab
         UI.InputDouble("##xpamt", ref _xpAmount, 10, 100, "%.0f");
         UI.SameLine();
         double xp = _xpAmount;
-        Actions.CallRow("Grant XP", "scr_get_XP", $"scr_get_XP {xp:0}", () => Player.Call("scr_get_XP", xp));
+        Actions.CallRow("Grant XP", "scr_get_XP", $"scr_get_XP {xp:0}", () => GrantXp(xp));
         UI.TextDisabled("levels you up if it crosses the threshold");
 
         DrawConditions();
         DrawPsyche();
         DrawLocks();
     }
+
+    /// <summary>XP through the game's real level-up path.</summary>
+    public static void GrantXp(double amount) => Player.Call("scr_get_XP", amount);
 
     // Every attribute call runs AS the player: scr_atr resolves its attribute
     // against `self`, and whatever instance the game last ran is not reliably
@@ -116,7 +119,7 @@ internal sealed class CharacterTab : Tab
         UI.SetNextItemWidth(220f);
         if (UI.SliderInt($"{a.Label}##atr_{a.Key}", ref value, 0, a.Soft)) AttrEdits[a.Key] = value;
         if (UI.ItemDeactivatedAfterEdit && AttrEdits.Remove(a.Key, out var v))
-            Actions.Run($"scr_atr_set \"{a.Key}\" {v}", () => Player.Call("scr_atr_set", a.Key, v));
+            Actions.Run($"scr_atr_set \"{a.Key}\" {v}", () => StatsTab.SetAttr(a.Key, v));
         UI.SameLine();
         UI.TextDisabled(live == Math.Round(live) ? a.Key : $"{a.Key} {live:0.##}");
     }
@@ -182,7 +185,12 @@ internal sealed class CharacterTab : Tab
         UI.TextDisabled("a potion's buff read 199");
 
         UI.BeginDisabled(_condChoice < 0 || _condChoice >= conds.Count);
-        if (UI.Button("Apply condition", 200f)) ApplyClicked(conds[_condChoice], _condDuration);
+        if (UI.Button("Apply condition", 200f))
+        {
+            var c = conds[_condChoice];
+            int duration = _condDuration;
+            Actions.Run($"apply {c.Name} ({c.Display}) for {duration} ticks", () => ApplyCounted(c, duration));
+        }
         UI.EndDisabled();
         UI.SameLine();
         UI.TextDisabled("creates the instance and points it at you");
@@ -193,15 +201,18 @@ internal sealed class CharacterTab : Tab
             "magnitude. Making numbers up here is what broke this last time.");
     }
 
-    private static void ApplyClicked(Condition c, int duration)
+    /// <summary>
+    /// Applies a status and reports the player's status count before and after.
+    /// Throws if the apply itself fails. Run inside <see cref="Actions.Run"/>.
+    /// </summary>
+    public static (int Before, int After) ApplyCounted(Condition c, int duration)
     {
         // Count before and after: the apply can report success because the
         // instance was created and written, while the game still declines to
         // take it up. Showing both numbers makes that visible instead of
         // leaving a button that lies.
         int before = ActiveConditionCount();
-        if (!Actions.Run($"apply {c.Name} ({c.Display}) for {duration} ticks", () => ApplyCondition(c, duration)))
-            return;
+        ApplyCondition(c, duration);
         int after = ActiveConditionCount();
 
         if (before < 0 || after < 0)
@@ -212,6 +223,7 @@ internal sealed class CharacterTab : Tab
             Actions.Report($"{c.Name} ({c.Display}) -> applied; player now carries {after} status(es), was {before}");
         else
             Actions.Report($"{c.Name} ({c.Display}) -> created and registered, but the list still reads {after} - the game dropped it", false);
+        return (before, after);
     }
 
     // Applying a status is not a script call at all - it is creating an instance.
@@ -317,7 +329,7 @@ internal sealed class CharacterTab : Tab
     // be read at all. -1 ("not readable") is a different answer from 0
     // ("readable, and empty"); an earlier version conflated them and made a bad
     // apply look like a clean one.
-    private static int ActiveConditionCount()
+    public static int ActiveConditionCount()
     {
         try
         {
@@ -375,18 +387,20 @@ internal sealed class CharacterTab : Tab
             if (UI.ItemDeactivatedAfterEdit && _psyEdits.Remove(f.Key, out var v))
             {
                 string key = f.Key;
-                Actions.Run($"psyData.{key} = {v:0.##}", () => PsyMap().Set(key, v));
+                Actions.Run($"psyData.{key} = {v:0.##}", () => SetPsy(key, v));
             }
         }
         UI.EndChild();
     }
 
-    private static DsMap PsyMap()
+    public static DsMap PsyMap()
     {
         var map = new DsMap(Player.Require().Get("psyData"));
         if (!map.Exists) throw new InvalidOperationException("psyData is not readable");
         return map;
     }
+
+    public static void SetPsy(string key, double value) => PsyMap().Set(key, value);
 
     private void ReadPsyche()
     {

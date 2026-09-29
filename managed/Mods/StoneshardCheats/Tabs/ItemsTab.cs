@@ -98,10 +98,7 @@ internal sealed class ItemsTab : Tab
             if (UI.Button("Give item", 220f))
             {
                 int n = _count;
-                Actions.Run($"scr_dialogue_reward_add_item {sel.Index}  x{n}  ({sel.Id})", () =>
-                {
-                    for (int i = 0; i < n; i++) Player.Call("scr_dialogue_reward_add_item", sel.Index);
-                });
+                Actions.Run($"scr_dialogue_reward_add_item {sel.Index}  x{n}  ({sel.Id})", () => GiveObject(sel.Index, n));
             }
             UI.EndDisabled();
             UI.SameLine();
@@ -124,12 +121,8 @@ internal sealed class ItemsTab : Tab
         {
             int n = _count, rarity = _rarity;
             // scr_weapon_loot(name, x, y, chance, rarity): chance 100 is certain.
-            Actions.Run($"scr_weapon_loot \"{sel.Display}\" at the player +48, 100, {Gear.RarityName(rarity)}  x{n}", () =>
-            {
-                var (px, py) = Player.Position;
-                for (int i = 0; i < n; i++) Player.Call("scr_weapon_loot", sel.Display, px + 48, py, 100, rarity);
-                Actions.Report("spawned on the ground at your feet - walk over it");
-            });
+            Actions.Run($"scr_weapon_loot \"{sel.Display}\" at the player +48, 100, {Gear.RarityName(rarity)}  x{n}",
+                () => GiveGear(sel.Display, rarity, n));
         }
         UI.SameLine();
         if (UI.Button("To inventory", 140f))
@@ -148,6 +141,36 @@ internal sealed class ItemsTab : Tab
         }
 
         DrawConstructor(sel, ready);
+    }
+
+    /// <summary>
+    /// Gives an object <paramref name="count"/> times through the quest-reward
+    /// flow. Returns how many instances of it existed before and after.
+    /// </summary>
+    public static (int Before, int After) GiveObject(int index, int count)
+    {
+        int before = (int)Game.CallBuiltin("instance_number", index).AsReal;
+        for (int i = 0; i < count; i++) Player.Call("scr_dialogue_reward_add_item", index);
+        return (before, (int)Game.CallBuiltin("instance_number", index).AsReal);
+    }
+
+    /// <summary>
+    /// Spawns gear on the ground beside the player through scr_weapon_loot.
+    /// With <paramref name="identify"/>, each spawn goes through Gear.Spawn,
+    /// which also finds the instance it made (and fails if it cannot); the
+    /// button does without, since a player only needs the item on the floor.
+    /// </summary>
+    public static List<InstanceRef> GiveGear(string displayName, int rarity, int count, bool identify = false)
+    {
+        var made = new List<InstanceRef>(count);
+        var (px, py) = Player.Position;
+        for (int i = 0; i < count; i++)
+        {
+            if (identify) made.Add(Gear.Spawn(displayName, rarity));
+            else Player.Call("scr_weapon_loot", displayName, px + 48, py, 100, rarity);
+        }
+        Actions.Report("spawned on the ground at your feet - walk over it");
+        return made;
     }
 
     private void Refilter(IReadOnlyList<Item> items, IReadOnlyList<string> cats)

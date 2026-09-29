@@ -38,6 +38,7 @@ public sealed class CheatsMod : CoreMod
         Actions.Log = Log;
         Hooks.Before("gml_Object_o_player_Step_0", Player.OnStep);
         foreach (var t in _tabs) t.Initialize(this);
+        TestCommands.Register(_tabs.OfType<PotionsTab>().Single());
     }
 
     public override void OnGUI()
