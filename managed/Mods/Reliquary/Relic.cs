@@ -77,6 +77,13 @@ internal abstract class Relic
     /// <summary>The player lost <paramref name="amount"/> HP to <paramref name="attacker"/> (HP is already down).</summary>
     public virtual void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker) { }
 
+    /// <summary>
+    /// A tick of damage over time (a bleed) has just left the player's HP at
+    /// zero, and the game has not acted on it yet (see ReliquaryMod.SaveIfDying).
+    /// A save sets HP above zero.
+    /// </summary>
+    public virtual void OnPlayerDying(RelicItem item, InstanceRef player) { }
+
     /// <summary>The player took <paramref name="amount"/> HP off <paramref name="victim"/>.</summary>
     public virtual void OnEnemyDamaged(RelicItem item, InstanceRef player, InstanceRef victim, double amount) { }
 
@@ -103,6 +110,9 @@ internal interface IRelicHost
     void Before(Relic relic, ScriptRef script, HookHandler handler);
 
     void After(Relic relic, ScriptRef script, HookHandler handler);
+
+    /// <summary>The same, on an object event (<c>Objects.o_x.Other_24</c>).</summary>
+    void Before(Relic relic, EventRef evt, HookHandler handler);
 
     void Log(string text);
 }

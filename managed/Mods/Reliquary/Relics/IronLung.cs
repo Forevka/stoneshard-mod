@@ -70,13 +70,18 @@ internal sealed class IronLung : Relic
         Breathe(item, player);
     }
 
-    // The need goes through the game's attribute setter, as the character
-    // cheats do: writing the variable alone would not reach the game's own
-    // bookkeeping of the need.
+    // The need goes through the game's attribute getter and setter, as the
+    // character cheats do: the instance variable is not where the game keeps
+    // it (live, it read 0 while scr_atr answered 50).
     private static void ClearFatigue(InstanceRef player)
     {
-        var fatigue = player.Get(Objects.o_player.Vars.Fatigue);
-        if (fatigue.IsNumber && fatigue.AsReal > 0) Scripts.scr_atr_set.CallAs(player, Objects.o_player.Vars.Fatigue, 0);
+        // A refusal costs only this; the rest of the lung's turn still runs.
+        try
+        {
+            var fatigue = Scripts.scr_atr.CallAs(player, Objects.o_player.Vars.Fatigue);
+            if (fatigue.IsNumber && fatigue.AsReal > 0) Scripts.scr_atr_set.CallAs(player, Objects.o_player.Vars.Fatigue, 0);
+        }
+        catch (GmlException) { }
     }
 
     private static void DoubleTorsoDamage(RelicItem item, InstanceRef player)

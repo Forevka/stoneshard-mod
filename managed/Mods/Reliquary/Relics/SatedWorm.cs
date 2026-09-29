@@ -7,13 +7,12 @@ namespace Reliquary.Relics;
 /// Vessels: it eats first.
 /// </summary>
 /// <remarks>
-/// Eating is watched on scr_consum_use, and only when the consumable is food
-/// (a child of o_inv_food_parent): potions, bandages and the rest pass by
-/// untouched. While the worm holds a charge, that call is skipped - the meal
-/// is refused - and the game's log says why. Which instance scr_consum_use
-/// runs as is not established; if it is not the food item, the food check
-/// fails and the worm neither fills nor blocks, which is the harmless way to
-/// be wrong.
+/// Only food counts (a child of o_inv_food_parent); potions, bandages and the
+/// rest pass by untouched. Eating from the bag runs the food's use event
+/// (o_inv_food_parent Other_24), which logs the meal, calls scr_consum_use as
+/// the food item and spends it. While the worm holds a charge, that event is
+/// skipped - the meal is refused and the food stays in the bag. Otherwise the
+/// meal's Hunger value is read in scr_consum_use and becomes the charge.
 ///
 /// The design turns fullness into temporary Max Health. Raising max_hp from
 /// the stat layer is avoided on purpose: the game rescales current HP when its
@@ -48,14 +47,26 @@ internal sealed class SatedWorm : Relic
 
     public override void Install(IRelicHost host)
     {
+        // Eating from the bag runs the food's use event, which logs the meal,
+        // calls scr_consum_use and then spends the item. Refusing here keeps
+        // the food in the bag; refusing only inside scr_consum_use (live) left
+        // the meal logged and the item gone with nothing eaten.
+        host.Before(this, Objects.o_inv_food_parent.Other_24, c =>
+        {
+            if (host.Active(this) is not { } item || item.Get("fill") <= 0 || !IsFood(c.Self)) return;
+            c.SkipOriginal();
+            World.Say("~r~The Sated Worm~/~ will not let you eat: it is still full.");
+        });
         host.Before(this, Scripts.scr_consum_use, c =>
         {
             _pendingFill = 0;
             if (host.Active(this) is not { } item || !IsFood(c.Self)) return;
+            // Any other way food reaches scr_consum_use is still refused; the
+            // food may be spent anyway on that path, so say why nothing happened.
             if (item.Get("fill") > 0)
             {
                 c.SkipOriginal();
-                World.Say("~r~The Sated Worm~/~ will not let you eat: it is still full.");
+                World.Say("~r~The Sated Worm~/~ takes the meal from your mouth: it is still full.");
                 return;
             }
             _pendingFill = Math.Min(Full, HungerValue(c.Self) * FillPerHunger);

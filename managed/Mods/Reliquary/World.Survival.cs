@@ -81,11 +81,13 @@ internal static partial class World
     /// <summary>
     /// Breaks a piece of gear the game's own way: its `data` keeps durability
     /// as Duration (out of MaxDuration), and at zero the game treats it as broken.
+    /// False for gear that was broken already: nothing broke this time.
     /// </summary>
     public static bool BreakGear(InstanceRef gear)
     {
         var data = new DsMap(gear.Get("data"));
-        if (!data.Exists || !data.Get("Duration").IsNumber) return false;
+        var duration = data.Exists ? data.Get("Duration") : RValue.Undefined;
+        if (!duration.IsNumber || duration.AsReal <= 0) return false;
         data.Set("Duration", 0);
         return true;
     }

@@ -20,8 +20,9 @@ namespace Reliquary.Relics;
 /// destroying a worn item's instance has not been proven safe for the
 /// inventory, and a relic must never corrupt a save.
 ///
-/// Lethal interception relies on scr_save_damage_received running (with HP
-/// already at zero) before the game acts on the death - to be confirmed live.
+/// A killing hit is caught inside scr_save_damage_received (live: a 22-damage
+/// bite at 3 HP, and the player lived). Bleeding never passes that hook; its
+/// tick is caught as scr_pure_damage returns (see ReliquaryMod.SaveIfDying).
 /// </remarks>
 internal sealed class PallbearersCoin : Relic
 {
@@ -54,7 +55,12 @@ internal sealed class PallbearersCoin : Relic
         }, "reliq.coin.teleport on|off: lets Pallbearer's Coin try scr_teleport before its fallback (EXPERIMENTAL)");
     }
 
-    public override void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker)
+    public override void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker) => Save(item, player);
+
+    // Bleeding and other damage over time never pass the damage hook.
+    public override void OnPlayerDying(RelicItem item, InstanceRef player) => Save(item, player);
+
+    private static void Save(RelicItem item, InstanceRef player)
     {
         if (!item.Carried || World.Num(player, Objects.o_player.Vars.HP) > 0) return;
         // A player already at 0 at the end of the last frame is already dying: saving

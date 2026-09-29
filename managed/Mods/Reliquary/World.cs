@@ -222,7 +222,13 @@ internal static partial class World
     /// <summary>A line in the game's own action log. Accepts its colour tags (~y~ ... ~/~).</summary>
     public static void Say(string text)
     {
-        try { Scripts.scr_actionsLogAddMessage.Call(text); }
+        // Run as the player: some hooks (scr_consum_use's, live) have no
+        // current instance, and a call without one is refused.
+        try
+        {
+            if (Player is { } player) Scripts.scr_actionsLogAddMessage.CallAs(player, text);
+            else Scripts.scr_actionsLogAddMessage.Call(text);
+        }
         catch (GmlException) { /* the log is cosmetic; a relic never fails over it */ }
     }
 }

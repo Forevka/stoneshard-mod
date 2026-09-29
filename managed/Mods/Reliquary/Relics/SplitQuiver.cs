@@ -41,9 +41,12 @@ internal sealed class SplitQuiver : Relic
         if (!Shooting || World.Tiles(player, victim) <= 1) return;
 
         double share = amount * Share;
+        // InstanceRef is a struct: without the cast, "no other foe" would come
+        // back as a default ref that passes the pattern below and hurts nobody.
         var other = World.Hostiles(player)
             .Where(e => World.IdKey(e.Id) != World.IdKey(victim.Id) && World.Alive(e))
             .OrderBy(e => World.Tiles(player, e))
+            .Cast<InstanceRef?>()
             .FirstOrDefault();
         if (other is { } target)
         {

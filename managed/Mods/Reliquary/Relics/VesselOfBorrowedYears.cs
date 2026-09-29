@@ -13,8 +13,8 @@ namespace Reliquary.Relics;
 /// vessel ends the saving, never the debt. The game rebuilds stats from
 /// scratch each time, so the loss is recomputed, not compounded.
 ///
-/// Lethal interception relies on scr_save_damage_received running (with HP
-/// already at zero) before the game acts on the death - to be confirmed live.
+/// A killing hit is caught inside scr_save_damage_received; bleeding and other
+/// damage over time as scr_pure_damage returns (see ReliquaryMod.SaveIfDying).
 /// </remarks>
 internal sealed class VesselOfBorrowedYears : Relic
 {
@@ -37,7 +37,12 @@ internal sealed class VesselOfBorrowedYears : Relic
 
     private static double Saves(InstanceRef player) => World.PsyNum(player, KeySaves) ?? 0;
 
-    public override void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker)
+    public override void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker) => Save(item, player);
+
+    // Bleeding and other damage over time never pass the damage hook.
+    public override void OnPlayerDying(RelicItem item, InstanceRef player) => Save(item, player);
+
+    private static void Save(RelicItem item, InstanceRef player)
     {
         if (!item.Carried || World.Num(player, Objects.o_player.Vars.HP) > 0) return;
         // A player already at 0 at the end of the last frame is already dying: saving
@@ -49,9 +54,10 @@ internal sealed class VesselOfBorrowedYears : Relic
         World.PsySet(player, KeySaves, saves);
         World.Recalculate(player);
 
-        // 25% of what Max Health will be after this save's loss.
-        double max = World.MaxHp(player) * (1 - LossPerSave);
-        player.Set(Objects.o_player.Vars.HP, Math.Max(1, Math.Round(max * Restore)));
+        // 25% of Max Health as it stands; the recalculation asked for above
+        // lowers both by this save's loss (OnPlayerStats scales HP with the
+        // maximum), which leaves 25% of the new maximum.
+        player.Set(Objects.o_player.Vars.HP, Math.Max(1, Math.Round(World.MaxHp(player) * Restore)));
         World.Say($"~y~Vessel of Borrowed Years~/~ refuses your death. It has now taken " +
                   $"~r~{(1 - Math.Pow(1 - LossPerSave, saves)) * 100:0.#}%~/~ of your life.");
     }
@@ -66,6 +72,12 @@ internal sealed class VesselOfBorrowedYears : Relic
         // Multiplicative, so it never reaches zero on its own, but with no floor it gets close.
         double kept = Math.Max(1, max * Math.Pow(1 - LossPerSave, saves));
         stats.Add(Objects.o_player.Vars.max_hp, kept - max);
+        // The recalculation that just ran rebuilt Max Health from our lowered
+        // value back to its base and scaled current HP up with it. Scale it
+        // down by the same ratio, or every recalculation heals (live, +6% per
+        // recalculation at two saves).
+        double hp = stats.Get(Objects.o_player.Vars.HP);
+        if (hp > 0) stats.Add(Objects.o_player.Vars.HP, hp * kept / max - hp);
     }
 
     public override string Status(RelicItem item) =>

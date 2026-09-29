@@ -9,16 +9,20 @@ using StoneShard;
 namespace Reliquary;
 
 /// <summary>
-/// Stoneshard Reliquary: artifacts that ask for something back. Twenty-three relics from the design,
-/// all six families of it, built only from the generated interop
+/// Stoneshard Reliquary: artifacts that ask for something back. Twenty-two of the design's
+/// twenty-three relics (the Censer waits for a working mechanism), all six families, built only
+/// from the generated interop
 /// and what the running game showed through the test host.
 /// </summary>
 /// <remarks>
-/// Three hooks carry everything, each found by watching the live game:
+/// Four hooks carry everything, each found by watching the live game:
 ///   * scr_atr_calc (after, as the player) - the stat layer;
 ///   * scr_global_turn_end (after, once per player turn, as the player) - the tick;
 ///   * scr_save_damage_received (after, as whoever was hit, args attacker and
-///     amount) - damage both ways.
+///     amount) - damage both ways;
+///   * scr_pure_damage (after, as the bleed or other status ticking) - damage
+///     over time, which the one above never sees; only lethal saves use it.
+/// Relics add their own through Relic.Install.
 /// Activation is hover-and-key: an inventory item under the mouse has
 /// inmouse = true, and vanilla offers passive items no "Use" entry to hang one on.
 /// </remarks>
@@ -54,8 +58,11 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
         new FacelessMirror(), new SplitQuiver(), new CinderRosary(), new EchoingBell(), new DebtorsKnot(), new WeepingCandle(),
         // Panic buttons and scaling passives.
         new PallbearersCoin(), new VesselOfBorrowedYears(), new ReliquaryOfSaintMardun(), new UsurersScale(), new SunderedGate(),
-        // Auras, grafts and needs.
-        new Censer(), new LodestoneIdol(), new SurveyorsChain(), new IronLung(), new OathStone(), new SatedWorm(),
+        // Auras, grafts and needs. The Censer is left out until it has a real
+        // way to stop abilities: o_db_lock_skills showed no effect live, and
+        // o_db_mute is the Seal of Shackles, whose expiry crashed the game. A
+        // Censer already in a bag is skipped by the scan, an inert valuable.
+        new LodestoneIdol(), new SurveyorsChain(), new IronLung(), new OathStone(), new SatedWorm(),
     };
 
     private Carriers _carriers = null!;
@@ -81,6 +88,7 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
         Scripts.scr_atr_calc.After(OnStatsCalculated);
         Scripts.scr_global_turn_end.After(OnTurnEnd);
         Scripts.scr_save_damage_received.After(OnDamage);
+        Scripts.scr_pure_damage.After(_ => SaveIfDying());
 
         foreach (var relic in _relics) Guard(relic, "install", () => relic.Install(this));
 
@@ -230,6 +238,28 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
         }
     }
 
+    // Damage over time never passes scr_save_damage_received. A bleed's tick
+    // takes its HP through scr_pure_damage and the game declares the death
+    // later in the same frame (live: "Dirwin dies." came before the player's
+    // next Step), so the saves run as soon as that call returns. Hits do not
+    // go through scr_pure_damage (live: a wolf's bites never called it), so
+    // this never runs ahead of the negators on the damage path.
+    private void SaveIfDying()
+    {
+        InstanceRef player;
+        try
+        {
+            if (World.Player is not { } p || World.Num(p, Objects.o_player.Vars.HP) > 0) return;
+            player = p;
+        }
+        catch (GmlException) { return; }
+        foreach (var item in Active())
+        {
+            Guard(item.Relic, "dying", () => item.Relic.OnPlayerDying(item, player));
+            if (World.Num(player, Objects.o_player.Vars.HP) > 0) break;
+        }
+    }
+
     // ------------------------------------------------------------ IRelicHost
 
     RelicItem? IRelicHost.Active(Relic relic) => Active().FirstOrDefault(i => i.Relic == relic);
@@ -237,20 +267,23 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
     void IRelicHost.Guard(Relic relic, string what, Action action) => Guard(relic, what, action);
 
     void IRelicHost.Before(Relic relic, ScriptRef script, HookHandler handler) =>
-        script.Before(c => Guarded(relic, script, handler, c));
+        script.Before(c => Guarded(relic, script.Symbol, handler, c));
 
     void IRelicHost.After(Relic relic, ScriptRef script, HookHandler handler) =>
-        script.After(c => Guarded(relic, script, handler, c));
+        script.After(c => Guarded(relic, script.Symbol, handler, c));
+
+    void IRelicHost.Before(Relic relic, EventRef evt, HookHandler handler) =>
+        evt.Before(c => Guarded(relic, evt.Symbol, handler, c));
 
     void IRelicHost.Log(string text) => Log.Info(text);
 
     // A relic's own hook, run so that a throw costs a log line, not the mod.
-    private void Guarded(Relic relic, ScriptRef script, HookHandler handler, HookCall c)
+    private void Guarded(Relic relic, string symbol, HookHandler handler, HookCall c)
     {
         try { handler(c); }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            Log.Warning($"{relic.Name} ({script.Symbol}): {ex.GetType().Name}: {ex.Message}");
+            Log.Warning($"{relic.Name} ({symbol}): {ex.GetType().Name}: {ex.Message}");
         }
     }
 
