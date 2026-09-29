@@ -30,6 +30,11 @@ tools/re/builtin_table.json
 managed/bin/
 managed/**/obj/
 .vs/
+# Per-developer: where games are installed, and the solution that includes
+# their generated interop (tools/setup-dev.ps1 writes both)
+managed/CoreLoader.user.props
+managed/CoreLoader.Dev.sln
+managed/CoreLoader.Dev.slnx
 
 # local code index
 .codegraph/

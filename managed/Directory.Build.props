@@ -15,4 +15,15 @@
     <ManagedOutRoot>$(MSBuildThisFileDirectory)bin\$(Configuration)\</ManagedOutRoot>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
+
+  <!-- Per-developer settings, not in git: where CoreLoader is installed on
+       this machine (CoreLoaderGameDirs), so projects that use a game's
+       generated interop find it - in Visual Studio as on the command line.
+       Written by tools\setup-dev.ps1; see CoreLoader.user.props.example. -->
+  <Import Project="$(MSBuildThisFileDirectory)CoreLoader.user.props"
+          Condition="Exists('$(MSBuildThisFileDirectory)CoreLoader.user.props')" />
+  <PropertyGroup>
+    <!-- Or from the environment, e.g. on a build machine. -->
+    <CoreLoaderGameDirs Condition="'$(CoreLoaderGameDirs)' == ''">$(CORELOADER_GAME_DIRS)</CoreLoaderGameDirs>
+  </PropertyGroup>
 </Project>

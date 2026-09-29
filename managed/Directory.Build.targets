@@ -1,0 +1,39 @@
+<Project>
+
+  <!--
+    Generated interop, found automatically.
+
+    A project that is written against a game's generated interop names the
+    game (its namespace, as CoreLoader generated it):
+
+      <InteropGame>Dwarf_Eats_Mountain</InteropGame>
+
+    and this looks for <game>\CoreLoader\Interop\<InteropGame>.Interop\ under
+    every folder in CoreLoaderGameDirs (from CoreLoader.user.props or the
+    CORELOADER_GAME_DIRS environment variable). Found: the project references
+    it and HasInterop is true. Not found: the project still loads and builds -
+    see InteropMissing. An explicit -p:InteropProject=... wins over the search.
+
+    The search is a file glob, so it only ever yields interop projects that
+    exist; Visual Studio re-evaluates it when the props file changes.
+  -->
+  <PropertyGroup Condition="'$(InteropGame)' != '' and '$(InteropProject)' == '' and '$(CoreLoaderGameDirs)' != ''">
+    <!-- Unescape: a property function's result comes back with ';' escaped,
+         which would make the whole list one path instead of one per game. -->
+    <_InteropGlobs>$([MSBuild]::Unescape($([System.String]::Copy('$(CoreLoaderGameDirs);').Replace(';', '\CoreLoader\Interop\$(InteropGame).Interop\$(InteropGame).Interop.cs*proj;'))))</_InteropGlobs>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(InteropGame)' != ''">
+    <_InteropFound Include="$(InteropProject)" Condition="'$(InteropProject)' != ''" />
+    <_InteropFound Include="$(_InteropGlobs)" Condition="'$(InteropProject)' == '' and '$(_InteropGlobs)' != ''" />
+    <ProjectReference Include="@(_InteropFound)" />
+    <!-- Without the interop the sources cannot compile; the project stays in
+         the solution (and the solution builds) with nothing to compile. -->
+    <Compile Remove="@(Compile)" Condition="'@(_InteropFound)' == ''" />
+  </ItemGroup>
+
+  <Target Name="InteropMissing" BeforeTargets="Build" Condition="'$(InteropGame)' != '' and '@(_InteropFound)' == ''">
+    <Warning Text="$(MSBuildProjectName) is written against the $(InteropGame) interop, which was not found. Run the game once with CoreLoader installed, then run tools\setup-dev.ps1 (or list the game folder in managed\CoreLoader.user.props). Nothing of this project was compiled." />
+  </Target>
+
+</Project>

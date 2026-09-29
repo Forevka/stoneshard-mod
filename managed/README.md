@@ -65,6 +65,30 @@ is set.
    mod is swapped in between frames. The old copy gets `OnShutdown`, and its hooks and config are
    released. The Loader tab also has Reload buttons.
 
+### Working in this repository with Visual Studio
+
+Projects here that use a game's interop, such as `Examples\InteropExample`, name the game with
+`<InteropGame>Dwarf_Eats_Mountain</InteropGame>`. The build finds that game's generated interop by
+itself. It just needs to know where your games are:
+
+```
+tools\setup-dev.ps1                                    # finds games with CoreLoader in your Steam libraries
+tools\setup-dev.ps1 -GameDir "D:\Games\Stoneshard"     # plus any other folder
+```
+
+This writes two files, both kept out of git:
+- `managed\CoreLoader.user.props`, which lists the game folders. Every build reads it, in Visual
+  Studio and with `dotnet build`. You can edit it by hand; `CoreLoader.user.props.example` shows
+  the format.
+- `managed\CoreLoader.Dev.sln`, which is `CoreLoader.sln` plus each game's generated `<Game>.Interop`
+  project. Open this one to build interop-based projects and to *Go To Definition* straight into the
+  generated source.
+
+Without either file the solution still loads and builds: an interop-based project compiles nothing
+and gives a warning saying what to run. The environment variable `CORELOADER_GAME_DIRS` works in
+place of the props file (on a build machine, say), and `-p:InteropProject=<path>` still overrides
+everything.
+
 ## A mod
 
 ```csharp
