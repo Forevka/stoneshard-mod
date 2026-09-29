@@ -26,6 +26,14 @@ bump may break the mod API or the native CoreApi table; each version says so und
     that sees no bottle within 2 s gives up, rather than rewriting the next bottle the game makes.
   - The item catalogue is read from the live object table and from the game exe's own CSV rows.
   - The save folder is backed up once per session, to `<game>\CoreLoader\save-backups`, before the first cheat.
+- **Mod analyzer (`CoreLoader.Analyzers`):** compile-time warnings for value-lifetime mistakes. CL0001 is
+  an `RValue` kept in a field or auto-property. CL0002 is an `Instance` or `HookCall` kept in one, or a
+  `HookCall` captured by a stored or queued lambda. CL0003 is `Values.Free` on a hook argument or result.
+  - Repo mods, tests and examples get it through their `Directory.Build.props`. `deploy-coreloader.ps1`
+    installs it to `<game>\CoreLoader\Analyzers\`, where template mods pick it up. The game never loads it.
+- `tools\game-saves.ps1`: backs up, restores and hash-verifies a game's save folder around a test run.
+- `tools\run-game.ps1`: restarts a test game (optionally deploying first) and waits for its mods to load
+  and for an optional log pattern.
 
 ### Changed
 - **Breaking:** CoreApi version 10 (UI round 3). The managed runtime requires this exact version.

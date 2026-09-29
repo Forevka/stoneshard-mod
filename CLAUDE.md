@@ -17,7 +17,8 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 | `managed/Mods/` | Shipped mods (Console + Inspector, ScriptSpy, GlobalsEditor, InstanceInspector, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost, StoneshardCheats) |
 | `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, CoexistProbe, FaultyGuiMod, ReflectionProbe, VarProbeMod, WidgetProbe (every UI widget, and scope unwind under faults) |
 | `managed/Examples/`, `managed/Templates/CoreLoaderMod/` | HelloMod, InteropExample; the `dotnet new coreloader-mod` template |
-| `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, RE scripts |
+| `managed/CoreLoader.Analyzers/` (+ `.Tests`) | Roslyn analyzer every mod compiles with: CL0001-CL0003 lifetime rules (see `managed/README.md#analyzers`) |
+| `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, `run-game.ps1`, `game-saves.ps1`, RE scripts |
 
 ## Build, deploy, run
 
@@ -50,7 +51,13 @@ Log: `<game>\CoreLoader\Logs\coreloader.log`; the previous run's is `coreloader.
 
 Testing notes:
 - **Stoneshard waits ~16 s** for its assets before mods start.
-- To load a save: first **back up `%LOCALAPPDATA%\StoneShard`**. Then at 1920x1080: title, space, Play (1660,552), Continue (1660,552), and wait ~30 s. **Kill the game without saving** afterwards.
+- `tools\run-game.ps1 -Game Stoneshard|Dwarf [-Deploy -Mods A,B -CleanMods] [-WaitFor <regex>] [-TimeoutSec N]`
+  kills the game, deploys, relaunches, and waits for this run's log to say `mod(s) loaded` (mods
+  start later: wait for `starting mods` or your own line). `-Stop` only kills it.
+- `$b = tools\game-saves.ps1 backup -Game Stoneshard` (prints the backup path); afterwards
+  `tools\game-saves.ps1 restore -From $b` and `verify -From $b` (exit 1 on any difference). Restore
+  deletes only `character_N` folders missing from the backup.
+- To load a save: first **back up `%LOCALAPPDATA%\StoneShard`** (`game-saves.ps1 backup`). Then at 1920x1080: title, space, Play (1660,552), Continue (1660,552), and wait ~30 s. **Kill the game without saving** afterwards.
 - UI automation is Python + pyautogui (`C:\Python314\python.exe`). ImGui needs a slow click: mouse down, ~150 ms, mouse up. Screenshot, read the image, act.
 - Regression mods to deploy after risky changes:
   - ValueProbe: private memory must stay flat.
