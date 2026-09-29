@@ -57,19 +57,52 @@ public static class Gml
 /// </summary>
 public readonly record struct GmlObject(int Index, string Name)
 {
-    /// <summary>Every object in the game. Walks asset indices until they stop existing.</summary>
-    public static IReadOnlyList<GmlObject> All()
+    /// <summary>
+    /// Every object in the game, in index order. Read once from the cached
+    /// <see cref="ObjectTable"/>; the first call finishes the table's name scan
+    /// on the spot if <see cref="ObjectTable.Start"/> has not already done it.
+    /// </summary>
+    public static IReadOnlyList<GmlObject> All() => ObjectTable.Objects();
+
+    /// <summary>The object at asset index <paramref name="index"/>, or null.</summary>
+    public static GmlObject? FromIndex(int index) => ObjectTable.At(index);
+
+    /// <summary>
+    /// The object this one inherits from, or null. From the table once it is
+    /// <see cref="ObjectTable.Ready"/>, otherwise asked of the runtime.
+    /// </summary>
+    public GmlObject? Parent => ObjectTable.At(ObjectTable.ParentIndex(Index));
+
+    /// <summary>Parent, grandparent and so on, nearest first.</summary>
+    public IEnumerable<GmlObject> Ancestors()
     {
-        var list = new List<GmlObject>();
-        int misses = 0;
-        for (int i = 0; misses < 64 && i < 100_000; i++)
+        // A cycle cannot be built in the IDE; the guard is for a table read wrong.
+        var cur = Parent;
+        for (int depth = 0; cur is { } p && depth < 64; depth++)
         {
-            if (!Game.CallBuiltin("object_exists", i).AsBool) { misses++; continue; }
-            misses = 0;
-            list.Add(new GmlObject(i, Game.CallBuiltin("object_get_name", i).ToString()));
+            yield return p;
+            cur = p.Parent;
         }
-        return list;
     }
+
+    /// <summary>
+    /// True when this object is <paramref name="name"/> or inherits from it -
+    /// C#'s <c>is</c>, not GML's object_is_ancestor, which excludes the object itself.
+    /// </summary>
+    public bool IsA(string name)
+    {
+        if (Name == name) return true;
+        foreach (var a in Ancestors())
+            if (a.Name == name) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// The objects that name this one as their parent (direct children only).
+    /// Needs every object's parent: if the table is not <see cref="ObjectTable.Ready"/>,
+    /// it is finished on the spot, which can take a noticeable frame.
+    /// </summary>
+    public IReadOnlyList<GmlObject> Children() => ObjectTable.ChildrenOf(Index);
 
     private static readonly Dictionary<string, GmlObject> Cache = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, long> Misses = new(StringComparer.Ordinal);
@@ -98,9 +131,7 @@ public readonly record struct GmlObject(int Index, string Name)
         // Older runtimes return the plain index; 2024+ runtimes a typed asset
         // reference whose low 32 bits are the index. Either way the candidate is
         // only trusted once object_get_name gives the same name back.
-        int candidate = idx.IsNumber ? (int)idx.AsReal
-                      : idx.Kind == RValueKind.Reference ? (int)(idx.Int64 & 0xFFFFFFFF)
-                      : -1;
+        int candidate = ObjectTable.AssetIndex(idx);
         if (candidate >= 0 && Game.CallBuiltin("object_exists", candidate).AsBool &&
             Game.CallBuiltin("object_get_name", candidate).ToString() == name)
             return new GmlObject(candidate, name);

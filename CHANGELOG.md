@@ -18,6 +18,16 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - Combos, disabled blocks, text colours and clippers are tracked scopes: a mod that throws inside
     one is unwound like any other scope.
 - `WidgetProbe` test mod.
+- **`DsMap` / `DsList`:** ds_map and ds_list access by id through the game's own builtins (`Exists`,
+  `Count`, `Get`/`Set`/`Has`/`Remove`, `Entries()`, `ToJson()`; `At`, `Add`, `Insert`, `RemoveAt`,
+  `Clear`, `Items()`).
+- **`Hooks.NextBefore` / `Hooks.NextAfter`:** run code once, inside the next call of a script or event
+  that a predicate accepts, with a timeout checked every frame and an optional timeout handler. The
+  request belongs to the calling mod; `Dispose()` cancels it.
+- **`ObjectTable`:** the object table (index, name, parent), built once over frames within a small
+  time budget (`Start`, `Ready`, `Progress`, `Status`, `Complete`). `GmlObject.All()` now uses it, so
+  only the first call walks the asset indices.
+  - `GmlObject.Parent`, `Ancestors()`, `IsA(name)`, `Children()` and `GmlObject.FromIndex(index)`.
 - **`StoneshardCheats` mod:** the native Stoneshard cheat tabs, ported to C#. Tabs: Stats, Items, Potions,
   Character, Body, Enemies and Saves.
   - Character scripts run as the player. The player instance comes from a hook on `o_player`'s Step event,
@@ -38,7 +48,8 @@ bump may break the mod API or the native CoreApi table; each version says so und
 ### Changed
 - **Breaking:** CoreApi version 10 (UI round 3). The managed runtime requires this exact version.
 - The overlay's top-level tabs are Mods, Symbols and Status. Symbols and Status used to sit under Debug.
-- Native GML calls with no explicit self use the current self only. The self captured by the remote
+- `StoneshardCheats` uses `DsMap`/`DsList`, `Hooks.NextAfter` and `ObjectTable` instead of its own copies.
+  The potion hook is only installed while a build is armed.- Native GML calls with no explicit self use the current self only. The self captured by the remote
   command file is gone.
 
 ### Removed

@@ -41,9 +41,9 @@ internal sealed record Condition(string Name, string Display, int Index, bool Po
 ///
 ///   1. The object table: the o_inv_* objects. Categories come from the
 ///      GameMaker parent hierarchy (o_inv_acorn's parent is o_inv_food_parent),
-///      which is the game's own grouping. Read live through object_exists,
-///      object_get_name and object_get_parent - thousands of builtin calls, so
-///      they are spread over frames within a small budget instead of stalling one.
+///      which is the game's own grouping. Read through CoreLoader's ObjectTable,
+///      which spreads its thousands of builtin calls over frames instead of
+///      stalling one.
 ///
 ///   2. The exe's .rdata: rows of the embedded weapons/armor CSVs. Gear is
 ///      data-driven, so there are no weapon or armor objects at all; the rows
@@ -60,27 +60,12 @@ internal sealed record Condition(string Name, string Display, int Index, bool Po
 /// </remarks>
 internal static class Catalogue
 {
-    // Per-frame share of the game thread for the object walk. A few ms keeps the
-    // frame rate intact while still finishing in a second or two.
-    private const double BudgetMs = 4;
-
-    // Mirrors GmlObject.All: asset indices are walked until this many in a row
-    // do not exist.
-    private const int MissLimit = 64;
-    private const int IndexLimit = 100_000;
-
-    private enum Phase { Idle, Scan, Parents, WaitDisk, Done }
+    private enum Phase { Idle, Objects, WaitDisk, Done }
 
     private static Phase _phase = Phase.Idle;
     private static Task<DiskData>? _disk;
     private static readonly Stopwatch Clock = new();
 
-    // Object walk state: names by asset index (null for gaps), then the o_inv_*
-    // indices whose parent is still to be asked for.
-    private static readonly List<string?> Names = new();
-    private static int _next, _misses;
-    private static readonly List<int> Inv = new();
-    private static int _cursor;
     private static readonly List<Item> ObjectItems = new();
 
     private static List<Item> _items = new();
@@ -97,10 +82,10 @@ internal static class Catalogue
 
     public static string Status { get; private set; } = "not loaded";
 
-    /// <summary>0..1 while the object parents are being read; the scan before it has no known total.</summary>
+    /// <summary>The object table's progress, then 1 while the exe is read.</summary>
     public static float Progress => _phase switch
     {
-        Phase.Parents => Inv.Count == 0 ? 0f : (float)_cursor / Inv.Count,
+        Phase.Objects => ObjectTable.Progress,
         Phase.WaitDisk or Phase.Done => 1f,
         _ => 0f,
     };
@@ -130,57 +115,34 @@ internal static class Catalogue
     /// <summary>Sorted by display name.</summary>
     public static IReadOnlyList<Condition> Conditions => _conditions;
 
-    /// <summary>An object item's asset index by object name, or -1.</summary>
-    public static int ObjectIndex(string objectName)
-    {
-        foreach (var it in _items)
-            if (it.Source == ItemSource.Object && it.Id == objectName) return it.Index;
-        return -1;
-    }
-
     /// <summary>Starts the build (game thread). Later calls do nothing.</summary>
     public static void Start()
     {
         if (_phase != Phase.Idle) return;
-        _phase = Phase.Scan;
-        Status = "reading the object table...";
+        _phase = Phase.Objects;
+        ObjectTable.Start();
+        Status = ObjectTable.Status;
         Clock.Restart();
         _disk = Task.Run(ReadDisk);
         Game.RunOnGameThread(Step);
     }
 
-    // One frame's share of the work; queues itself again until the build is done.
+    // Checked once a frame; queues itself again until the build is done. The
+    // object table does its own budgeted work in the loader's frame loop.
     private static void Step()
     {
         try
         {
-            var frame = Stopwatch.StartNew();
-            while (frame.Elapsed.TotalMilliseconds < BudgetMs)
+            if (_phase == Phase.Objects)
             {
-                if (_phase == Phase.Scan)
+                if (ObjectTable.Ready)
                 {
-                    if (_misses >= MissLimit || _next >= IndexLimit) { EndScan(); continue; }
-                    int i = _next++;
-                    Names.Add(null);
-                    if (!Game.CallBuiltin("object_exists", i).AsBool) { _misses++; continue; }
-                    _misses = 0;
-                    Names[i] = Game.CallBuiltin("object_get_name", i).ToString();
+                    ReadObjects();
+                    _phase = Phase.WaitDisk;
+                    Status = "reading the game exe...";
                 }
-                else if (_phase == Phase.Parents)
-                {
-                    if (_cursor >= Inv.Count) { _phase = Phase.WaitDisk; Status = "reading the game exe..."; break; }
-                    int i = Inv[_cursor++];
-                    string name = Names[i]!;
-                    int p = AssetIndex(Game.CallBuiltin("object_get_parent", i));
-                    string category = p >= 0 && p < Names.Count && !string.IsNullOrEmpty(Names[p])
-                        ? CategoryFromParent(Names[p]!) : "Misc";
-                    ObjectItems.Add(new Item(name, PrettyName(name), category, i, ItemSource.Object));
-                }
-                else break;
+                else Status = ObjectTable.Status;
             }
-
-            if (_phase == Phase.Scan) Status = $"reading the object table ({_next} scanned)...";
-            else if (_phase == Phase.Parents) Status = $"reading item categories ({_cursor} / {Inv.Count})...";
 
             if (_phase == Phase.WaitDisk && _disk!.IsCompleted)
             {
@@ -200,36 +162,33 @@ internal static class Catalogue
         Game.RunOnGameThread(Step);
     }
 
-    // Older runtimes answer with the plain index; newer ones a typed asset
-    // reference whose low 32 bits are the index. No parent is negative either way.
-    private static int AssetIndex(RValue v) =>
-        v.IsNumber ? (int)v.AsReal : v.Kind == RValueKind.Reference ? (int)(v.Int64 & 0xFFFFFFFF) : -1;
-
-    private static void EndScan()
+    // Everything here comes from the finished table: no builtin calls.
+    private static void ReadObjects()
     {
+        var all = GmlObject.All();
+
         // Statuses, from the same table. Kept separate from items: they are not
         // spawnable, they are applied by asset index.
         var conditions = new List<Condition>();
-        for (int i = 0; i < Names.Count; i++)
+        foreach (var o in all)
         {
-            string? n = Names[i];
-            if (n == null) continue;
+            string n = o.Name;
             bool debuff = n.StartsWith("o_db_", StringComparison.Ordinal);
             bool buff = n.StartsWith("o_b_", StringComparison.Ordinal);
             if (!debuff && !buff) continue;
             if (IsParent(n)) continue;
-            conditions.Add(new Condition(n, Capitalise(n[(debuff ? 5 : 4)..].Replace('_', ' ')), i, buff));
+            conditions.Add(new Condition(n, Capitalise(n[(debuff ? 5 : 4)..].Replace('_', ' ')), o.Index, buff));
         }
         conditions.Sort((a, b) => string.CompareOrdinal(a.Display, b.Display));
         _conditions = conditions;
 
-        for (int i = 0; i < Names.Count; i++)
+        foreach (var o in all)
         {
-            string? n = Names[i];
             // Parents themselves are abstract templates, not spawnable items.
-            if (n != null && n.StartsWith("o_inv_", StringComparison.Ordinal) && !IsParent(n)) Inv.Add(i);
+            if (!o.Name.StartsWith("o_inv_", StringComparison.Ordinal) || IsParent(o.Name)) continue;
+            string category = o.Parent is { } p ? CategoryFromParent(p.Name) : "Misc";
+            ObjectItems.Add(new Item(o.Name, PrettyName(o.Name), category, o.Index, ItemSource.Object));
         }
-        _phase = Phase.Parents;
     }
 
     private static bool IsParent(string name) => name.Length > 7 && name.EndsWith("_parent", StringComparison.Ordinal);

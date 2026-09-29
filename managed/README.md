@@ -154,9 +154,11 @@ on that member with a reason, e.g. in `GlobalSuppressions.cs`:
 | Area | What you get |
 |---|---|
 | `CoreMod` | `OnInitialize`, `OnUpdate` (every frame), `OnGUI` (the mod's own tab), `OnShutdown`, plus `Log`, `Config`, `Directory` |
-| `Hooks` | `Before`/`After` on any `gml_Script_*` or `gml_Object_*`, or the `[HookBefore]`/`[HookAfter]` attributes. The `HookCall` passed to a handler exposes `Self`, `Other`, `GetArg`/`SetArg`, `Result`, `SkipOriginal()` and `CallOriginal()` |
+| `Hooks` | `Before`/`After` on any `gml_Script_*` or `gml_Object_*`, or the `[HookBefore]`/`[HookAfter]` attributes. The `HookCall` passed to a handler exposes `Self`, `Other`, `GetArg`/`SetArg`, `Result`, `SkipOriginal()` and `CallOriginal()`. `NextBefore`/`NextAfter` run code once, inside the next matching call, with a timeout |
 | `Game` | `Name`, `Symbols`, `CallScript`, `CallEvent`, `CallBuiltin`, `BuiltinArity`, `CurrentSelf`, `RunOnGameThread` |
-| `Globals`, `GmlObject`, `InstanceRef` | Read and write global and instance variables by name, list objects and live instances |
+| `Globals`, `GmlObject`, `InstanceRef` | Read and write global and instance variables by name, list objects and live instances. `GmlObject.Parent`, `Ancestors()`, `IsA(name)`, `Children()` walk the object hierarchy |
+| `ObjectTable` | The object table (index, name, parent), read once over a few frames and cached: `Start()`, `Ready`, `Progress`, `Status`, `Complete()` |
+| `DsMap`, `DsList` | ds_map and ds_list by id: `Exists`, `Count`, `Get`/`Set`/`Has`/`Remove`, `Entries()`, `ToJson()`; `At`, `Add`, `Insert`, `RemoveAt`, `Clear`, `Items()` |
 | `Gml` | `TypeOf`, arrays and structs through the runtime's own builtins |
 | `UI` | ImGui widgets for your tab: text, buttons, inputs, sliders, combos, selectable rows, progress bars, disabled blocks, text colour, tooltips, scrolling regions, clipped long lists (`UI.Clipped`) and a history-aware input line. Scopes are tracked, so a mistake can't corrupt the overlay |
 | `RValue` | The runtime's 16-byte value, laid out identically. Converts implicitly from double, int, bool and string |
@@ -198,6 +200,67 @@ The rules the loader enforces:
 - GML is single-threaded. From another thread, the loader refuses every call that touches it
   (builtins, scripts, strings, value free/copy), including calls from native plugins, and logs the
   refusal.
+
+### ds_maps and ds_lists
+
+Many games keep their real state in ds_maps and ds_lists and hand out only the id. `DsMap` and
+`DsList` wrap that id and go through the game's own builtins. The struct is safe to keep across
+frames (a destroyed map just stops `Exists`ing), but strings read out of one are pooled like any
+other value.
+
+```csharp
+var data = new DsMap(item.Get("data"));
+if (data.Exists)
+{
+    foreach (var (key, value) in data.Entries()) Log.Info($"{key} = {value}");
+    data.Set("Durability", 100);                  // ds_map_replace: adds or replaces
+    var effects = new DsList(data.Get("effects"));  // nested: edit it in place,
+    effects.Add("good_pt_rage");                    // never write its id back with Set
+}
+```
+
+### Running code inside the game's own event
+
+Some scripts only work from inside the event they were written for, and throw when a mod calls
+them from its tab. Arm a one-shot request, make the game run the event, and do the work there:
+
+```csharp
+var request = Hooks.NextAfter("gml_Object_o_bottle_Alarm_0",
+    match: c => !c.OriginalSkipped,   // which call is yours; null accepts the first one
+    action: c => Game.CallScriptAs(c.Self, c.Self, "scr_bottle_refresh"),
+    timeout: TimeSpan.FromSeconds(2),
+    onTimeout: () => Log.Warning("the bottle never rolled"));
+Game.CallBuiltin("instance_create_depth", x, y, 0, bottleIndex);
+// request.IsPending, request.Dispose() to cancel
+```
+
+The action runs at most once; the request is disarmed before it runs. It belongs to your mod and
+goes when the mod unloads. The timeout is checked every frame, so `onTimeout` runs on time even if
+the event never fires. An exception from `match`, `action` or `onTimeout` faults the mod like any
+hook, so catch inside them to report a failure yourself.
+
+### The object table and hierarchy
+
+`GmlObject.All()` needs one builtin call per asset index, thousands in a big game. The first
+call does that walk and caches it for the session. `ObjectTable.Start()` builds the whole table
+(parents included) over a few frames instead, and `ObjectTable.Ready`/`Progress`/`Status` report
+how far it got, which suits a progress bar:
+
+```csharp
+public override void OnInitialize() => ObjectTable.Start();
+
+public override void OnGUI()
+{
+    if (!ObjectTable.Ready) { UI.ProgressBar(ObjectTable.Progress, 0f, ObjectTable.Status); return; }
+    var food = GmlObject.Find("o_inv_food_parent")!.Value;
+    foreach (var o in food.Children()) UI.Text(o.Name);
+    bool isFood = GmlObject.Find("o_inv_acorn")?.IsA("o_inv_food_parent") == true;
+}
+```
+
+`Parent` and `Ancestors()` work before the table is ready, by asking the runtime directly.
+`Children()` needs every object's parent, so before `Ready` it finishes the table on the spot, in
+one frame.
 
 ## Mods in this repository
 

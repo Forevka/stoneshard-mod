@@ -127,8 +127,8 @@ internal sealed class CharacterTab : Tab
     {
         UI.SeparatorText("Conditions");
 
-        // The statuses are filled in as soon as the catalogue's object scan
-        // ends, before it goes on to item categories and the exe.
+        // The statuses are filled in as soon as the object table is ready,
+        // before the catalogue goes on to read the exe.
         var conds = Catalogue.Conditions;
         if (conds.Count == 0)
         {
@@ -265,8 +265,8 @@ internal sealed class CharacterTab : Tab
         // is the registry, and whoever applies a status has to put it there.
         // Confirmed rather than assumed: drinking a potion took the player's list
         // from 0 to 3 entries, one instance reference per buff it created.
-        var list = player.Get("buffs");
-        if (!Ds.ListExists(list))
+        var list = new DsList(player.Get("buffs"));
+        if (!list.Exists)
             throw new InvalidOperationException("the player's buffs list is not readable");
 
         // A buff is an instance and has to be born somewhere; the player's own
@@ -287,7 +287,7 @@ internal sealed class CharacterTab : Tab
             buff.Set("duration", Math.Max(1, duration));
 
             // The reference itself goes in the list, not a decoded id.
-            Ds.Add(list, inst);
+            list.Add(inst);
         }
         catch
         {
@@ -310,7 +310,7 @@ internal sealed class CharacterTab : Tab
         }
 
         Actions.Log.Info($"character: applied {c.Name} (index {c.Index}) for {Math.Max(1, duration)} ticks " +
-                         $"(target={playerObject.Index}, buffs list {list.AsReal})");
+                         $"(target={playerObject.Index}, buffs list {list.Id.AsReal})");
     }
 
     // How many entries the player's `buffs` ds_list holds, or -1 if it cannot
@@ -321,8 +321,8 @@ internal sealed class CharacterTab : Tab
     {
         try
         {
-            var list = Player.Require().Get("buffs");
-            return Ds.ListExists(list) ? Ds.Count(list) : -1;
+            var list = new DsList(Player.Require().Get("buffs"));
+            return list.Exists ? list.Count : -1;
         }
         catch (Exception ex) when (ex is GmlException or InvalidOperationException)
         {
@@ -351,9 +351,9 @@ internal sealed class CharacterTab : Tab
 
         // The key list comes from the last read; the numbers are re-read every
         // frame, so a field nobody is editing always shows what the game holds.
-        RValue map;
-        try { map = _psy.Count > 0 ? PsyMap() : RValue.Undefined; }
-        catch (Exception ex) when (ex is GmlException or InvalidOperationException) { map = RValue.Undefined; }
+        DsMap? map;
+        try { map = _psy.Count > 0 ? PsyMap() : null; }
+        catch (Exception ex) when (ex is GmlException or InvalidOperationException) { map = null; }
 
         UI.BeginChild("##psy", 220f);
         for (int i = 0; i < _psy.Count; i++)
@@ -364,9 +364,9 @@ internal sealed class CharacterTab : Tab
                 UI.TextDisabled($"{f.Key} = {f.Text}");
                 continue;
             }
-            if (!map.IsUndefined)
+            if (map is { } m)
             {
-                var live = Ds.Get(map, f.Key);
+                var live = m.Get(f.Key);
                 if (live.IsNumber) f.Value = live.AsReal;
             }
             double value = _psyEdits.TryGetValue(f.Key, out var editing) ? editing : f.Value;
@@ -375,23 +375,23 @@ internal sealed class CharacterTab : Tab
             if (UI.ItemDeactivatedAfterEdit && _psyEdits.Remove(f.Key, out var v))
             {
                 string key = f.Key;
-                Actions.Run($"psyData.{key} = {v:0.##}", () => Ds.Set(PsyMap(), key, v));
+                Actions.Run($"psyData.{key} = {v:0.##}", () => PsyMap().Set(key, v));
             }
         }
         UI.EndChild();
     }
 
-    private static RValue PsyMap()
+    private static DsMap PsyMap()
     {
-        var map = Player.Require().Get("psyData");
-        if (!Ds.MapExists(map)) throw new InvalidOperationException("psyData is not readable");
+        var map = new DsMap(Player.Require().Get("psyData"));
+        if (!map.Exists) throw new InvalidOperationException("psyData is not readable");
         return map;
     }
 
     private void ReadPsyche()
     {
         _psy.Clear();
-        foreach (var (key, value) in Ds.Entries(PsyMap()))
+        foreach (var (key, value) in PsyMap().Entries())
         {
             // Converted here: strings from the game are pooled and gone next frame.
             if (value.IsNumber) _psy.Add(new PsyField { Key = key, Value = value.AsReal });
@@ -422,8 +422,8 @@ internal sealed class CharacterTab : Tab
     {
         try
         {
-            var list = Player.Require().Get(listName);
-            return Ds.ListExists(list) ? Ds.Count(list) : -1;
+            var list = new DsList(Player.Require().Get(listName));
+            return list.Exists ? list.Count : -1;
         }
         catch (Exception ex) when (ex is GmlException or InvalidOperationException)
         {

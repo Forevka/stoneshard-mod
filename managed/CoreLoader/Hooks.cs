@@ -125,6 +125,34 @@ public sealed class HookHandle : IDisposable
     public void Dispose() => Hooks.Remove(this);
 }
 
+/// <summary>
+/// A one-shot request from <see cref="Hooks.NextBefore"/> / <see cref="Hooks.NextAfter"/>.
+/// Dispose it to cancel; nothing is called after that.
+/// </summary>
+public sealed class NextCall : IDisposable
+{
+    internal NextCall(string symbol, long deadline, Action? onTimeout, LoadedMod? owner)
+    {
+        Symbol = symbol;
+        Deadline = deadline;
+        OnTimeout = onTimeout;
+        Owner = owner;
+    }
+
+    /// <summary>The hooked function, as it was asked for.</summary>
+    public string Symbol { get; }
+
+    /// <summary>True until a matching call is handled, the request times out, or it is cancelled.</summary>
+    public bool IsPending { get; internal set; } = true;
+
+    internal long Deadline { get; }
+    internal Action? OnTimeout { get; }
+    internal LoadedMod? Owner { get; }
+    internal HookHandle? Hook { get; set; }
+
+    public void Dispose() => Hooks.Cancel(this);
+}
+
 internal sealed class Subscription
 {
     public required HookHandler Handler { get; init; }
@@ -155,10 +183,119 @@ public static unsafe class Hooks
     /// <summary>Runs <paramref name="handler"/> after <paramref name="symbol"/>; it may read or replace the result.</summary>
     public static HookHandle After(string symbol, HookHandler handler) => Add(symbol, handler, after: true);
 
+    /// <summary>
+    /// Runs <paramref name="action"/> once, before the next call of
+    /// <paramref name="symbol"/> that <paramref name="match"/> accepts (null
+    /// accepts any), then unhooks. If none comes within <paramref name="timeout"/>,
+    /// the request is dropped and <paramref name="onTimeout"/> runs instead.
+    /// </summary>
+    /// <remarks>
+    /// For work that only succeeds inside the game's own event: some scripts
+    /// throw when called from outside the event frame they were written for, so
+    /// the mod arms a request, makes the game run that event (spawn the object,
+    /// set its alarm), and does the work from inside it.
+    ///
+    /// The request belongs to the calling mod and goes with it on unload, fault
+    /// or hot reload. <paramref name="match"/> and <paramref name="action"/> run
+    /// as hook handlers, so an exception from either faults the mod exactly as a
+    /// throwing hook does; catch inside them to report a failure yourself. The
+    /// request is disarmed before <paramref name="action"/> runs, so it fires at
+    /// most once even if the action throws or makes the game call the symbol
+    /// again. The timeout is checked every frame as well as on each call, so
+    /// <paramref name="onTimeout"/> runs on time even if the symbol is never
+    /// called; an exception from it faults the mod too.
+    /// </remarks>
+    public static NextCall NextBefore(string symbol, Func<HookCall, bool>? match, HookHandler action,
+                                      TimeSpan timeout, Action? onTimeout = null) =>
+        Next(symbol, match, action, timeout, onTimeout, after: false);
+
+    /// <summary>
+    /// Runs <paramref name="action"/> once, after the next call of
+    /// <paramref name="symbol"/> that <paramref name="match"/> accepts. See
+    /// <see cref="NextBefore"/> for the rules.
+    /// </summary>
+    public static NextCall NextAfter(string symbol, Func<HookCall, bool>? match, HookHandler action,
+                                     TimeSpan timeout, Action? onTimeout = null) =>
+        Next(symbol, match, action, timeout, onTimeout, after: true);
+
     /// <summary>Number of distinct functions the loader has detoured.</summary>
     public static int NativeHookCount => Loader.Api->HookCount();
 
-    private static HookHandle Add(string symbol, HookHandler handler, bool after)
+    // The armed one-shot requests, for the per-frame timeout check.
+    private static readonly List<NextCall> Requests = new();
+
+    private static NextCall Next(string symbol, Func<HookCall, bool>? match, HookHandler action,
+                                 TimeSpan timeout, Action? onTimeout, bool after)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        if (timeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(timeout), "the timeout must be positive");
+        Loader.EnsureGameThread();
+
+        // Owned by the mod whose code this is, not by CoreLoader, where the
+        // wrapper below is compiled.
+        var owner = ModManager.OwnerOf(action);
+        var req = new NextCall(symbol, Environment.TickCount64 + (long)timeout.TotalMilliseconds, onTimeout, owner);
+        req.Hook = Add(symbol, call =>
+        {
+            if (!req.IsPending) return;
+            if (Environment.TickCount64 > req.Deadline)
+            {
+                Expire(req);
+                return;
+            }
+            if (match != null && !match(call)) return;
+            Finish(req);
+            action(call);
+        }, after, owner);
+        Requests.Add(req);
+        return req;
+    }
+
+    private static void Finish(NextCall req)
+    {
+        req.IsPending = false;
+        Requests.Remove(req);
+        if (req.Hook != null) Remove(req.Hook);
+    }
+
+    private static void Expire(NextCall req)
+    {
+        Finish(req);
+        if (req.OnTimeout is not { } onTimeout) return;
+        if (req.Owner == null)
+        {
+            try { onTimeout(); }
+            catch (Exception ex) { Log.Error($"timeout handler for {req.Symbol} threw", ex); }
+            return;
+        }
+        if (req.Owner.State == ModState.Faulted || !ModManager.Mods.Contains(req.Owner)) return;
+        ModManager.Invoke(req.Owner, $"timeout handler for {req.Symbol}", _ => onTimeout());
+    }
+
+    internal static void Cancel(NextCall req)
+    {
+        // Same reason as Remove: the request list belongs to the game thread.
+        if (!Loader.OnGameThread)
+        {
+            Game.RunOnGameThread(() => Cancel(req));
+            return;
+        }
+        if (req.IsPending) Finish(req);
+    }
+
+    /// <summary>Called every frame on the game thread: drops the requests whose time is up.</summary>
+    internal static void TickRequests()
+    {
+        if (Requests.Count == 0) return;
+        long now = Environment.TickCount64;
+        foreach (var req in Requests.ToList())
+            if (req.IsPending && now > req.Deadline) Expire(req);
+    }
+
+    private static HookHandle Add(string symbol, HookHandler handler, bool after) =>
+        Add(symbol, handler, after, ModManager.OwnerOf(handler));
+
+    private static HookHandle Add(string symbol, HookHandler handler, bool after, LoadedMod? owner)
     {
         ArgumentNullException.ThrowIfNull(handler);
         Loader.EnsureGameThread();
@@ -167,7 +304,7 @@ public static unsafe class Hooks
         int id = Loader.Api->HookInstall(target, kind);
         if (id < 0) throw new GmlException($"could not hook {full} (see the loader log)");
 
-        var sub = new Subscription { Handler = handler, After = after, Owner = ModManager.OwnerOf(handler), Order = _order++ };
+        var sub = new Subscription { Handler = handler, After = after, Owner = owner, Order = _order++ };
         var list = ById.TryGetValue(id, out var existing) ? existing : Array.Empty<Subscription>();
         Names[id] = full;
         ById[id] = [.. list, sub];
@@ -202,6 +339,14 @@ public static unsafe class Hooks
     /// <summary>Drops every subscription a mod made (it faulted or is unloading).</summary>
     internal static void RemoveOwner(LoadedMod owner)
     {
+        // Its one-shot requests end silently: no timeout handler runs for a
+        // mod that is going away. Their subscriptions go with the rest below.
+        foreach (var req in Requests.Where(r => r.Owner == owner).ToList())
+        {
+            req.IsPending = false;
+            Requests.Remove(req);
+        }
+
         foreach (var (id, list) in ById.ToList())
         {
             var rest = Array.FindAll(list, s => s.Owner != owner);
