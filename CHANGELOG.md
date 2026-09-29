@@ -91,6 +91,9 @@ bump may break the mod API or the native CoreApi table; each version says so und
     game. It knows no names from any game and finds its objects, variables and events in the running one.
 - **Tested on four more YYC games:** Zero Stress King, The King is Watching, The Spike Cross and Slime
   Trader. The generic smoke test passes in all four.
+- **"Tested on" section in `README.md`.** It lists each game tested so far, with its store, build
+  type (YYC or VM), GML function count, and whether the loader and the Console mod work. It also says
+  how to test another game.
 
 ### Changed
 - **Breaking:** CoreApi version 10 (UI round 3, `last_gml_error`, `instance_from_id`). The managed
