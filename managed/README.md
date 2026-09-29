@@ -139,7 +139,7 @@ public override void OnInitialize()
 | `Game` | `Name`, `Symbols`, `CallScript`, `CallEvent`, `CallBuiltin`, `BuiltinArity`, `CurrentSelf`, `RunOnGameThread` |
 | `Globals`, `GmlObject`, `InstanceRef` | Read and write global and instance variables by name, list objects and live instances |
 | `Gml` | `TypeOf`, arrays and structs through the runtime's own builtins |
-| `UI` | ImGui widgets for your tab, including scrolling regions and a history-aware input line. Scopes are tracked, so a mistake can't corrupt the overlay |
+| `UI` | ImGui widgets for your tab: text, buttons, inputs, sliders, combos, selectable rows, progress bars, disabled blocks, text colour, tooltips, scrolling regions, clipped long lists (`UI.Clipped`) and a history-aware input line. Scopes are tracked, so a mistake can't corrupt the overlay |
 | `RValue` | The runtime's 16-byte value, laid out identically. Converts implicitly from double, int, bool and string |
 | `Values` | Lifetime of strings, arrays and structs: `Keep`, `Free`, `Copy` |
 | `Content` | New sprites from PNG (`AddSprite`), reskins of the game's own sprites (`ReplaceSprite`) and sounds from OGG (`AddSound`), loaded at runtime. `Sprite.Draw`, `Sound.Play`/`Stop` |

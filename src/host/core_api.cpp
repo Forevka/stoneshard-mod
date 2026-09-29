@@ -10,7 +10,9 @@
 #include <windows.h>
 #include <algorithm>
 #include <atomic>
+#include <cfloat>
 #include <cstddef>
+#include <memory>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -382,6 +384,68 @@ std::int32_t UiInputHistory(const char* label, char* buf, std::int32_t cap,
     return enter ? 1 : 0;
 }
 
+// ------------------------------------------------------------- UI round 3
+
+std::int32_t UiBeginCombo(const char* label, const char* preview) {
+    return ImGui::BeginCombo(label ? label : "", preview ? preview : "") ? 1 : 0;
+}
+void UiEndCombo() { ImGui::EndCombo(); }
+std::int32_t UiSelectable(const char* label, std::int32_t selected, std::int32_t flags) {
+    return ImGui::Selectable(label ? label : "", selected != 0, flags) ? 1 : 0;
+}
+void UiSeparatorText(const char* t) { ImGui::SeparatorText(t ? t : ""); }
+std::int32_t UiInputDouble(const char* label, double* v, double step, double stepFast, const char* fmt) {
+    return v && ImGui::InputDouble(label ? label : "", v, step, stepFast, fmt ? fmt : "%.3f") ? 1 : 0;
+}
+std::int32_t UiSliderInt(const char* label, std::int32_t* v, std::int32_t lo, std::int32_t hi, const char* fmt) {
+    return v && ImGui::SliderInt(label ? label : "", v, lo, hi, fmt ? fmt : "%d") ? 1 : 0;
+}
+void UiSetNextItemWidth(float w)   { ImGui::SetNextItemWidth(w); }
+void UiBeginDisabled(std::int32_t d) { ImGui::BeginDisabled(d != 0); }
+void UiEndDisabled()                 { ImGui::EndDisabled(); }
+std::int32_t UiInputTextHint(const char* label, const char* hint, char* buf, std::int32_t cap) {
+    if (!buf || cap <= 0) return 0;
+    return ImGui::InputTextWithHint(label ? label : "", hint ? hint : "", buf,
+                                    static_cast<std::size_t>(cap)) ? 1 : 0;
+}
+void UiSameLineEx(float offsetX, float spacing) { ImGui::SameLine(offsetX, spacing); }
+void UiTextWrapped(const char* t) { ImGui::TextWrapped("%s", t ? t : ""); }
+void UiSpacing()                  { ImGui::Spacing(); }
+std::int32_t UiButtonEx(const char* label, float w, float h) {
+    return ImGui::Button(label ? label : "", ImVec2(w, h)) ? 1 : 0;
+}
+std::int32_t UiSmallButton(const char* label) { return ImGui::SmallButton(label ? label : "") ? 1 : 0; }
+void UiProgressBar(float fraction, float width, const char* overlay) {
+    ImGui::ProgressBar(fraction, ImVec2(width > 0.0f ? width : -FLT_MIN, 0.0f), overlay);
+}
+void UiPushTextColor(float r, float g, float b, float a) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(r, g, b, a));
+}
+void UiPopTextColor()                { ImGui::PopStyleColor(); }
+void UiSetItemTooltip(const char* t) { ImGui::SetItemTooltip("%s", t ? t : ""); }
+
+// Clippers nest (a clipped list inside a clipped row is legal), so they live on
+// a stack; the managed side tracks each as a scope and always ends it.
+std::vector<std::unique_ptr<ImGuiListClipper>> g_clippers;
+
+void UiClipperBegin(std::int32_t count, float itemHeight) {
+    auto& c = g_clippers.emplace_back(std::make_unique<ImGuiListClipper>());
+    c->Begin(count < 0 ? 0 : count, itemHeight > 0.0f ? itemHeight : -1.0f);
+}
+std::int32_t UiClipperStep(std::int32_t* start, std::int32_t* end) {
+    if (g_clippers.empty() || !start || !end) return 0;
+    auto& c = *g_clippers.back();
+    if (!c.Step()) return 0;
+    *start = c.DisplayStart;
+    *end   = c.DisplayEnd;
+    return 1;
+}
+void UiClipperEnd() {
+    if (g_clippers.empty()) return;
+    g_clippers.back()->End();
+    g_clippers.pop_back();
+}
+
 CoreApi Build() {
     CoreApi a{};
     a.size    = sizeof(CoreApi);
@@ -454,6 +518,29 @@ CoreApi Build() {
     a.ui_set_clipboard           = &UiSetClipboard;
     a.builtin_address            = &ApiBuiltinAddress;
     a.builtin_name_at            = &ApiBuiltinNameAt;
+
+    a.ui_begin_combo         = &UiBeginCombo;
+    a.ui_end_combo           = &UiEndCombo;
+    a.ui_selectable          = &UiSelectable;
+    a.ui_separator_text      = &UiSeparatorText;
+    a.ui_input_double        = &UiInputDouble;
+    a.ui_slider_int          = &UiSliderInt;
+    a.ui_set_next_item_width = &UiSetNextItemWidth;
+    a.ui_begin_disabled      = &UiBeginDisabled;
+    a.ui_end_disabled        = &UiEndDisabled;
+    a.ui_input_text_hint     = &UiInputTextHint;
+    a.ui_same_line_ex        = &UiSameLineEx;
+    a.ui_text_wrapped        = &UiTextWrapped;
+    a.ui_spacing             = &UiSpacing;
+    a.ui_button_ex           = &UiButtonEx;
+    a.ui_small_button        = &UiSmallButton;
+    a.ui_progress_bar        = &UiProgressBar;
+    a.ui_push_text_color     = &UiPushTextColor;
+    a.ui_pop_text_color      = &UiPopTextColor;
+    a.ui_set_item_tooltip    = &UiSetItemTooltip;
+    a.ui_clipper_begin       = &UiClipperBegin;
+    a.ui_clipper_step        = &UiClipperStep;
+    a.ui_clipper_end         = &UiClipperEnd;
     return a;
 }
 

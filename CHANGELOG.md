@@ -7,6 +7,19 @@ bump may break the mod API or the native CoreApi table; each version says so und
 
 ## [Unreleased]
 
+### Added
+- **UI round 3:** `UI.BeginCombo`/`EndCombo`, `UI.Combo`, `UI.Selectable` (optionally overlap-friendly),
+  `UI.SeparatorText`, `UI.InputDouble`/`InputFloat`, `UI.SliderInt`, `UI.SetNextItemWidth`,
+  `UI.BeginDisabled`/`EndDisabled`, `UI.InputTextWithHint`, `UI.SameLine(offsetX, spacing)`,
+  `UI.TextWrapped`, `UI.Spacing`, sized `UI.Button`, `UI.SmallButton`, `UI.ProgressBar`,
+  `UI.PushTextColor`/`PopTextColor`, `UI.Tooltip`, and `UI.Clipped` for long lists.
+  - Combos, disabled blocks, text colours and clippers are tracked scopes: a mod that throws inside
+    one is unwound like any other scope.
+- `WidgetProbe` test mod.
+
+### Changed
+- **Breaking:** CoreApi version 10 (UI round 3). The managed runtime requires this exact version.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

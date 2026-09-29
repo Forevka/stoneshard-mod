@@ -15,7 +15,7 @@ namespace CoreLoader;
 /// </remarks>
 public static unsafe class UI
 {
-    private enum Scope { Id, TabBar, TabItem, Child, Tree }
+    private enum Scope { Id, TabBar, TabItem, Child, Tree, Combo, Disabled, TextColor, Clipper }
 
     private static readonly List<Scope> Open = new();
     private static int _floor;
@@ -56,6 +56,10 @@ public static unsafe class UI
             case Scope.TabItem: Loader.Api->UiEndTabItem(); break;
             case Scope.Child: Loader.Api->UiEndChild(); break;
             case Scope.Tree: Loader.Api->UiTreePop(); break;
+            case Scope.Combo: Loader.Api->UiEndCombo(); break;
+            case Scope.Disabled: Loader.Api->UiEndDisabled(); break;
+            case Scope.TextColor: Loader.Api->UiPopTextColor(); break;
+            case Scope.Clipper: Loader.Api->UiClipperEnd(); break;
         }
     }
 
@@ -290,6 +294,212 @@ public static unsafe class UI
     }
 
     public static void TreePop() => Close(Scope.Tree, nameof(TreePop));
+
+    // ------------------------------------------------------------ round 3
+
+    /// <summary>Text that wraps at the edge of the window.</summary>
+    public static void TextWrapped(string text)
+    {
+        Guard();
+        fixed (byte* t = Utf8.Encode(text ?? "")) Loader.Api->UiTextWrapped(t);
+    }
+
+    /// <summary>A separator with a caption.</summary>
+    public static void SeparatorText(string text)
+    {
+        Guard();
+        fixed (byte* t = Utf8.Get(text ?? "")) Loader.Api->UiSeparatorText(t);
+    }
+
+    /// <summary>A little vertical space.</summary>
+    public static void Spacing()
+    {
+        Guard();
+        Loader.Api->UiSpacing();
+    }
+
+    /// <summary>
+    /// Continues on the same line. <paramref name="offsetX"/>: position from the
+    /// window's left edge (0 = right after the last item); <paramref name="spacing"/>:
+    /// gap from the last item (-1 = the style's).
+    /// </summary>
+    public static void SameLine(float offsetX, float spacing = -1f)
+    {
+        Guard();
+        Loader.Api->UiSameLineEx(offsetX, spacing);
+    }
+
+    /// <summary>Width of the next widget: pixels, or negative to leave that much room on the right.</summary>
+    public static void SetNextItemWidth(float width)
+    {
+        Guard();
+        Loader.Api->UiSetNextItemWidth(width);
+    }
+
+    /// <summary>A button of a given size (0 for automatic in either direction).</summary>
+    public static bool Button(string label, float width, float height = 0f)
+    {
+        Guard();
+        fixed (byte* l = Utf8.Get(label)) return Loader.Api->UiButtonEx(l, width, height) != 0;
+    }
+
+    public static bool SmallButton(string label)
+    {
+        Guard();
+        fixed (byte* l = Utf8.Get(label)) return Loader.Api->UiSmallButton(l) != 0;
+    }
+
+    /// <summary>
+    /// A clickable row. <paramref name="allowOverlap"/> lets a widget placed on
+    /// the same row (a button, say) receive clicks too.
+    /// </summary>
+    public static bool Selectable(string label, bool selected, bool allowOverlap = false)
+    {
+        Guard();
+        const int AllowOverlap = 1 << 4;
+        // Not cached: list rows are many and often carry live values.
+        fixed (byte* l = Utf8.Encode(label ?? "")) return Loader.Api->UiSelectable(l, selected ? 1 : 0, allowOverlap ? AllowOverlap : 0) != 0;
+    }
+
+    /// <summary>A drop-down. Call <see cref="EndCombo"/> only when this returned true.</summary>
+    public static bool BeginCombo(string label, string preview)
+    {
+        Guard();
+        bool open;
+        fixed (byte* l = Utf8.Get(label))
+        fixed (byte* p = Utf8.Encode(preview ?? ""))
+            open = Loader.Api->UiBeginCombo(l, p) != 0;
+        if (open) Open.Add(Scope.Combo);
+        return open;
+    }
+
+    public static void EndCombo() => Close(Scope.Combo, nameof(EndCombo));
+
+    /// <summary>
+    /// A drop-down over <paramref name="items"/>; returns true on the frame the
+    /// choice changed. The whole Begin/Selectable/End dance in one call.
+    /// </summary>
+    public static bool Combo(string label, ref int index, IReadOnlyList<string> items)
+    {
+        string preview = index >= 0 && index < items.Count ? items[index] : "";
+        if (!BeginCombo(label, preview)) return false;
+        bool changed = false;
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (Selectable($"{items[i]}##{i}", i == index) && i != index)
+            {
+                index = i;
+                changed = true;
+            }
+        }
+        EndCombo();
+        return changed;
+    }
+
+    public static bool InputDouble(string label, ref double value, double step = 0, double stepFast = 0, string? format = null)
+    {
+        Guard();
+        double v = value;
+        bool changed;
+        fixed (byte* l = Utf8.Get(label))
+        fixed (byte* f = format == null ? null : Utf8.Get(format))
+            changed = Loader.Api->UiInputDouble(l, &v, step, stepFast, f) != 0;
+        value = v;
+        return changed;
+    }
+
+    public static bool InputFloat(string label, ref float value, float step = 0, float stepFast = 0, string? format = null)
+    {
+        double v = value;
+        bool changed = InputDouble(label, ref v, step, stepFast, format);
+        value = (float)v;
+        return changed;
+    }
+
+    public static bool SliderInt(string label, ref int value, int min, int max, string? format = null)
+    {
+        Guard();
+        int v = value;
+        bool changed;
+        fixed (byte* l = Utf8.Get(label))
+        fixed (byte* f = format == null ? null : Utf8.Get(format))
+            changed = Loader.Api->UiSliderInt(l, &v, min, max, f) != 0;
+        value = v;
+        return changed;
+    }
+
+    /// <summary>Like <see cref="InputText"/>, showing <paramref name="hint"/> while empty.</summary>
+    public static bool InputTextWithHint(string label, string hint, ref string value, int maxBytes = 256)
+    {
+        Guard();
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 2);
+        value ??= "";
+        var buf = TextBuffer(value, maxBytes);
+
+        bool changed;
+        fixed (byte* l = Utf8.Get(label))
+        fixed (byte* h = Utf8.Get(hint ?? ""))
+        fixed (byte* b = buf)
+            changed = Loader.Api->UiInputTextHint(l, h, b, maxBytes) != 0;
+        if (changed)
+        {
+            int end = Array.IndexOf(buf, (byte)0);
+            value = Encoding.UTF8.GetString(buf, 0, end < 0 ? buf.Length : end);
+        }
+        return changed;
+    }
+
+    /// <summary>A bar filled to <paramref name="fraction"/> (0..1). Width 0 fills the row.</summary>
+    public static void ProgressBar(float fraction, float width = 0f, string? overlay = null)
+    {
+        Guard();
+        fixed (byte* o = overlay == null ? null : Utf8.Encode(overlay))
+            Loader.Api->UiProgressBar(fraction, width, o);
+    }
+
+    /// <summary>Greys out and disables the widgets up to <see cref="EndDisabled"/>. Always pair.</summary>
+    public static void BeginDisabled(bool disabled = true)
+    {
+        Guard();
+        Loader.Api->UiBeginDisabled(disabled ? 1 : 0);
+        Open.Add(Scope.Disabled);
+    }
+
+    public static void EndDisabled() => Close(Scope.Disabled, nameof(EndDisabled));
+
+    /// <summary>Colours the text of the widgets up to <see cref="PopTextColor"/>. Always pair.</summary>
+    public static void PushTextColor(float r, float g, float b, float a = 1f)
+    {
+        Guard();
+        Loader.Api->UiPushTextColor(r, g, b, a);
+        Open.Add(Scope.TextColor);
+    }
+
+    public static void PopTextColor() => Close(Scope.TextColor, nameof(PopTextColor));
+
+    /// <summary>A tooltip for the previous widget, shown while it is hovered.</summary>
+    public static void Tooltip(string text)
+    {
+        Guard();
+        fixed (byte* t = Utf8.Encode(text ?? "")) Loader.Api->UiSetItemTooltip(t);
+    }
+
+    /// <summary>
+    /// Draws only the rows of a long list that are on screen: <paramref name="row"/>
+    /// is called for each visible index. Rows should all be one line tall
+    /// (<paramref name="itemHeight"/> 0 measures the first).
+    /// </summary>
+    public static void Clipped(int count, Action<int> row, float itemHeight = 0f)
+    {
+        Guard();
+        ArgumentNullException.ThrowIfNull(row);
+        Loader.Api->UiClipperBegin(count, itemHeight);
+        Open.Add(Scope.Clipper);
+        int start, end;
+        while (Loader.Api->UiClipperStep(&start, &end) != 0)
+            for (int i = start; i < end; i++) row(i);
+        Close(Scope.Clipper, nameof(Clipped));
+    }
 
     /// <summary>Puts text on the system clipboard.</summary>
     public static void SetClipboard(string text)

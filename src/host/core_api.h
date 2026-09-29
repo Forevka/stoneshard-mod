@@ -40,7 +40,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 9;   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
+constexpr std::int32_t kCoreApiVersion = 10;  // 10: ui round 3 (combo, selectable, disabled, clipper, ...)   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -174,6 +174,40 @@ struct CoreApi {
     // The builtin at a runner-registry index (what compiled code passes to
     // its builtin-call helper), or null. Lives for the process.
     const char*  (*builtin_name_at)(std::int32_t registryIndex);
+
+    // UI, round 3 (version 10): what tool panels need. Scopes: end_combo only
+    // when begin_combo returned 1; begin/end_disabled, push/pop_text_color and
+    // clipper_begin/end always pair.
+    std::int32_t (*ui_begin_combo)(const char* label, const char* preview);
+    void         (*ui_end_combo)();
+    // flags: ImGuiSelectableFlags (AllowOverlap = 16).
+    std::int32_t (*ui_selectable)(const char* label, std::int32_t selected, std::int32_t flags);
+    void         (*ui_separator_text)(const char* text);
+    // format may be null for "%.3f".
+    std::int32_t (*ui_input_double)(const char* label, double* value, double step, double stepFast,
+                                    const char* format);
+    std::int32_t (*ui_slider_int)(const char* label, std::int32_t* value, std::int32_t min,
+                                  std::int32_t max, const char* format);
+    void         (*ui_set_next_item_width)(float width);
+    void         (*ui_begin_disabled)(std::int32_t disabled);
+    void         (*ui_end_disabled)();
+    std::int32_t (*ui_input_text_hint)(const char* label, const char* hint, char* buffer,
+                                       std::int32_t capacity);
+    void         (*ui_same_line_ex)(float offsetX, float spacing);
+    void         (*ui_text_wrapped)(const char* text);
+    void         (*ui_spacing)();
+    std::int32_t (*ui_button_ex)(const char* label, float width, float height);
+    std::int32_t (*ui_small_button)(const char* label);
+    // fraction 0..1; width <= 0 fills; overlay may be null.
+    void         (*ui_progress_bar)(float fraction, float width, const char* overlay);
+    void         (*ui_push_text_color)(float r, float g, float b, float a);
+    void         (*ui_pop_text_color)();
+    void         (*ui_set_item_tooltip)(const char* text);
+    // A list clipper: begin, then step until it returns 0, drawing rows
+    // [*start, *end) each time; end always. itemHeight <= 0 measures the first row.
+    void         (*ui_clipper_begin)(std::int32_t count, float itemHeight);
+    std::int32_t (*ui_clipper_step)(std::int32_t* start, std::int32_t* end);
+    void         (*ui_clipper_end)();
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

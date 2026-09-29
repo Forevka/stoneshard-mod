@@ -7,7 +7,7 @@ namespace CoreLoader.Native;
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct CoreApi
 {
-    public const int ExpectedVersion = 9;
+    public const int ExpectedVersion = 10;
 
     public int Size;
     public int Version;
@@ -86,6 +86,30 @@ internal unsafe struct CoreApi
     public delegate* unmanaged<byte*, void> UiSetClipboard;
     public delegate* unmanaged<byte*, nint> BuiltinAddress;
     public delegate* unmanaged<int, byte*> BuiltinNameAt;
+
+    // UI round 3
+    public delegate* unmanaged<byte*, byte*, int> UiBeginCombo;
+    public delegate* unmanaged<void> UiEndCombo;
+    public delegate* unmanaged<byte*, int, int, int> UiSelectable;
+    public delegate* unmanaged<byte*, void> UiSeparatorText;
+    public delegate* unmanaged<byte*, double*, double, double, byte*, int> UiInputDouble;
+    public delegate* unmanaged<byte*, int*, int, int, byte*, int> UiSliderInt;
+    public delegate* unmanaged<float, void> UiSetNextItemWidth;
+    public delegate* unmanaged<int, void> UiBeginDisabled;
+    public delegate* unmanaged<void> UiEndDisabled;
+    public delegate* unmanaged<byte*, byte*, byte*, int, int> UiInputTextHint;
+    public delegate* unmanaged<float, float, void> UiSameLineEx;
+    public delegate* unmanaged<byte*, void> UiTextWrapped;
+    public delegate* unmanaged<void> UiSpacing;
+    public delegate* unmanaged<byte*, float, float, int> UiButtonEx;
+    public delegate* unmanaged<byte*, int> UiSmallButton;
+    public delegate* unmanaged<float, float, byte*, void> UiProgressBar;
+    public delegate* unmanaged<float, float, float, float, void> UiPushTextColor;
+    public delegate* unmanaged<void> UiPopTextColor;
+    public delegate* unmanaged<byte*, void> UiSetItemTooltip;
+    public delegate* unmanaged<int, float, void> UiClipperBegin;
+    public delegate* unmanaged<int*, int*, int> UiClipperStep;
+    public delegate* unmanaged<void> UiClipperEnd;
 }
 
 // Mirror of `struct ManagedExports`.
