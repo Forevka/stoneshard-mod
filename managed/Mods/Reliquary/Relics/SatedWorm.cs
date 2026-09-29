@@ -37,6 +37,7 @@ internal sealed class SatedWorm : Relic
     public override string Id => "sated_worm";
     public override string Name => "The Sated Worm";
     public override string Family => "Vessels";
+    public override int DamageOrder => Negates;
     public override string Flavor => "It eats first.";
     public override string Boon =>
         "Eat with it in your bag and it takes the meal as a charge. A full worm is worth ~lg~a third of your Health bar~/~ " +

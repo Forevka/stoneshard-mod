@@ -20,6 +20,7 @@ internal sealed class FacelessMirror : Relic
     public override string Id => "faceless_mirror";
     public override string Name => "Faceless Mirror";
     public override string Family => "Riders";
+    public override int DamageOrder => Observes;
     public override string Flavor => "It does not distinguish between the blow and the one who struck it.";
     public override string Boon =>
         $"~lg~{Reflected * 100:0}%~/~ of all damage you take is reflected to whoever dealt it.";

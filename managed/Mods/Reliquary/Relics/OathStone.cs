@@ -45,7 +45,12 @@ internal sealed class OathStone : Relic
         if (!item.Carried) return;
 
         double withdrawal = item.Get("withdrawal");
-        if (withdrawal > 0) item.Set("withdrawal", withdrawal - 1);
+        if (withdrawal > 0)
+        {
+            item.Set("withdrawal", withdrawal - 1);
+            // The penalty ends with the countdown, not at the game's next recalculation.
+            if (withdrawal - 1 <= 0) World.Recalculate(player);
+        }
 
         bool asleep;
         try { asleep = World.HasStatus(player, Sleep); }
@@ -65,6 +70,9 @@ internal sealed class OathStone : Relic
 
         double unslept = Math.Min(FullAt, item.Get("unslept") + 1);
         item.Set("unslept", unslept);
+        // The bonus ramps with the count; keep the character sheet in step every
+        // 25 turns rather than whenever the game happens to recalculate.
+        if (unslept % 25 == 0) World.Recalculate(player);
         if (unslept == FullAt && item.Get("announced") <= 0)
         {
             item.Set("announced", 1);

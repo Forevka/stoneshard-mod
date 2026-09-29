@@ -26,6 +26,7 @@ internal sealed class VesselOfBorrowedYears : Relic
     public override string Id => "vessel_of_borrowed_years";
     public override string Name => "Vessel of Borrowed Years";
     public override string Family => "Scaling passives";
+    public override int DamageOrder => SavesLife;
     public override string Flavor => "The Ethnarch's mask, without the mercy of a daily limit.";
     public override string Boon =>
         $"Negates lethal damage ~lg~every time~/~ it would kill you, restoring ~lg~{Restore * 100:0}%~/~ Max Health. " +
@@ -39,6 +40,9 @@ internal sealed class VesselOfBorrowedYears : Relic
     public override void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker)
     {
         if (!item.Carried || World.Num(player, Objects.o_player.Vars.HP) > 0) return;
+        // A player already at 0 at the end of the last frame is already dying: saving
+        // them now would pull them back out of the game's death, not avoid it.
+        if (ReliquaryMod.LastHp <= 0) return;
 
         // The debt is booked before the healing, so a save can never be free.
         double saves = Saves(player) + 1;

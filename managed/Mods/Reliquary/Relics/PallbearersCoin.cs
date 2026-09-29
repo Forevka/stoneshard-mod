@@ -35,6 +35,7 @@ internal sealed class PallbearersCoin : Relic
     public override string Id => "pallbearers_coin";
     public override string Name => "Pallbearer's Coin";
     public override string Family => "Panic buttons";
+    public override int DamageOrder => SavesLife + 1;
     public override string Flavor => "Paid on arrival. Refused on the way back.";
     public override string Boon =>
         $"The blow that would kill you doesn't: you are left at ~lg~1~/~ Health, and for ~y~{HiddenTurns}~/~ turns nothing can " +
@@ -56,6 +57,9 @@ internal sealed class PallbearersCoin : Relic
     public override void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker)
     {
         if (!item.Carried || World.Num(player, Objects.o_player.Vars.HP) > 0) return;
+        // A player already at 0 at the end of the last frame is already dying: saving
+        // them now would pull them back out of the game's death, not avoid it.
+        if (ReliquaryMod.LastHp <= 0) return;
 
         // Life first, before anything below can fail.
         player.Set(Objects.o_player.Vars.HP, 1);
@@ -65,7 +69,7 @@ internal sealed class PallbearersCoin : Relic
             if (World.BreakGear(gear)) broken++;
 
         bool fled = Experimental && TryFlee(player);
-        try { World.ApplyStatus(player, Untargetable, HiddenTurns); }
+        try { World.RefreshStatus(player, Untargetable, HiddenTurns); }
         catch (Exception ex) when (ex is GmlException or InvalidOperationException) { /* alive is what matters */ }
 
         item.Set("saves", item.Get("saves") + 1);

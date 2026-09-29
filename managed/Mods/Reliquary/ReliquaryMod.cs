@@ -9,8 +9,8 @@ using StoneShard;
 namespace Reliquary;
 
 /// <summary>
-/// Stoneshard Reliquary: artifacts that ask for something back. Six relics,
-/// one from each family of the design, built only from the generated interop
+/// Stoneshard Reliquary: artifacts that ask for something back. Twenty-three relics from the design,
+/// all six families of it, built only from the generated interop
 /// and what the running game showed through the test host.
 /// </summary>
 /// <remarks>
@@ -29,6 +29,12 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
     private const int ScanEveryFrames = 120;
 
     internal static string ActivateKeyName { get; private set; } = "U";
+
+    /// <summary>The wielded weapon's type ("bow", "2hStaff"...), "" for none, from the last scan.</summary>
+    internal static string WeaponType { get; private set; } = "";
+
+    /// <summary>Player turns seen since the mod started: a clock that multi-turn rests advance properly.</summary>
+    internal static long Turns { get; private set; }
 
     /// <summary>Whether the wielded weapon is a staff, from the last scan.</summary>
     internal static bool WieldingStaff { get; private set; }
@@ -135,7 +141,10 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
             Log.Warning($"scan failed, keeping the last one: {ex.GetType().Name}: {ex.Message}");
             return;
         }
-        WieldingStaff = _carriers.WeaponType.Contains("staff", StringComparison.OrdinalIgnoreCase);
+        WeaponType = _carriers.WeaponType;
+        WieldingStaff = WeaponType.Contains("staff", StringComparison.OrdinalIgnoreCase);
+        var counted = new HashSet<RelicItem>(Active(), ReferenceEqualityComparer.Instance);
+        foreach (var item in _carriers.Items) item.IsActive = counted.Contains(item);
         WeaponHands = _carriers.WeaponHands;
         // Tooltips last, once the wielded weapon is known: several status lines depend on it.
         foreach (var item in _carriers.Items)
@@ -153,7 +162,9 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
     /// Millstone in the bag is ballast, not another +20%.
     /// </summary>
     private IEnumerable<RelicItem> Active() =>
-        _carriers.Items.Where(i => i.Carried).GroupBy(i => i.Relic).Select(g => g.OrderByDescending(i => i.Equipped).First());
+        _carriers.Items.Where(i => i.Carried).GroupBy(i => i.Relic).Select(g => g.OrderByDescending(i => i.Equipped).First())
+            // In damage order, so a hit is first handed back, then saved from, then observed.
+            .OrderBy(i => i.Relic.DamageOrder);
 
     // ------------------------------------------------------------ hooks
 
@@ -185,6 +196,7 @@ public sealed class ReliquaryMod : CoreMod, IRelicHost
     {
         if (c.Self.IsNull || !World.IsPlayer(c.Self.Get("id")) || World.Player is not { } player) return;
         _turns++;
+        Turns = _turns;
         foreach (var relic in _relics)
             Guard(relic, "turn", () => relic.OnPlayerTurn(player));
         // Every item ticks (a recharge runs down in a chest too); the relics

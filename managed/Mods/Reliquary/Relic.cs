@@ -30,6 +30,15 @@ internal abstract class Relic
 
     public virtual CarrierKind Carrier => CarrierKind.Tall;
 
+    /// <summary>
+    /// Where this relic stands when several react to the same hit: negators
+    /// first (they hand the damage back), then lethal savers (only if the hit
+    /// still kills), then observers (they see what really landed).
+    /// </summary>
+    public virtual int DamageOrder => 50;
+
+    public const int Negates = 10, SavesLife = 20, Observes = 30;
+
     /// <summary>Whether hovering it and pressing the activate key does something.</summary>
     public virtual bool Activatable => false;
 
@@ -108,6 +117,12 @@ internal sealed record RelicItem(Relic Relic, InstanceRef Ref)
 
     /// <summary>Worn in an equipment slot (rings only).</summary>
     public bool Equipped { get; set; }
+
+    /// <summary>
+    /// The copy of its relic that counts (see ReliquaryMod.Active), set on
+    /// every scan. Per-turn effects check it so a duplicate cannot apply twice.
+    /// </summary>
+    public bool IsActive { get; set; }
 
     // Loading a save destroys every item, and the stats of the new player are
     // calculated before the next scan: an item gone that way reads as fresh

@@ -36,7 +36,7 @@ internal sealed class IronLung : Relic
     public override string Family => "Grafts";
     public override string Flavor => "It breathes for you, on its own schedule.";
     public override string Boon =>
-        "~lg~Immune to Fatigue~/~, and to cough, miasma and suffocating clouds. Plague villages, spore caves and long marches " +
+        "~lg~Immune to Fatigue~/~. Cough, miasma and suffocating clouds are ~lg~breathed out~/~ at the end of every turn. Plague villages, spore caves and long marches " +
         "stop being a resource problem.";
     public override string Toll =>
         "Your torso takes ~r~double~/~ condition damage, and the lung is ~r~loud~/~: every hostile within " +
@@ -50,7 +50,9 @@ internal sealed class IronLung : Relic
 
     public override void OnTurn(RelicItem item, InstanceRef player)
     {
-        if (!item.Carried)
+        // Only the copy that counts: a second lung comparing the torso against
+        // its own baseline would double the loss the first one already doubled.
+        if (!item.Carried || !item.IsActive)
         {
             // Put down, the lung forgets the torso: picking it up again starts a
             // fresh comparison instead of charging for damage taken meanwhile.

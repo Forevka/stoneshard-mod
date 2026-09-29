@@ -21,15 +21,28 @@ internal sealed class DebtorsKnot : Relic
     public override string Id => "debtors_knot";
     public override string Name => "The Debtor's Knot";
     public override string Family => "Panic buttons";
+    public override int DamageOrder => Negates;
     public override string Flavor => "Nothing is forgiven. It is only postponed.";
     public override string Boon =>
         $"Activate: for ~y~{Term}~/~ turns you take no damage whatsoever. Every point that would have landed is banked instead.";
     public override string Toll =>
         $"When the term ends the whole debt lands at once - at ~y~half~/~ if every enemy that hit you is dead by then. " +
-        "It is a bet that you can clear the room in time. The Knot itself leaves you one breath; what comes next may not.";
+        "It is a bet that you can clear the room in time. Selling or stashing it does not cancel the debt. " +
+        "The Knot itself leaves you one breath; what comes next may not.";
     public override bool Activatable => true;
 
     private readonly Dictionary<long, InstanceRef> _creditors = new();
+    // Which player the creditors were remembered for: after a load their
+    // instances are gone, and stale ones would read as dead and halve the debt.
+    private long _creditorsFor = -1;
+
+    private void ForgetOnNewPlayer(InstanceRef player)
+    {
+        long key = World.IdKey(player.Id);
+        if (key == _creditorsFor) return;
+        _creditorsFor = key;
+        _creditors.Clear();
+    }
 
     public override string Activate(RelicItem item, InstanceRef player)
     {
@@ -38,12 +51,14 @@ internal sealed class DebtorsKnot : Relic
         item.Set("debt", 0);
         item.Set("creditors", 0);
         _creditors.Clear();
+        _creditorsFor = World.IdKey(player.Id);
         return $"~y~The Debtor's Knot~/~ tightens. For {Term} turns, nothing lands.";
     }
 
     public override void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker)
     {
         if (!item.Carried || item.Get("term") <= 0) return;
+        ForgetOnNewPlayer(player);
         double now = World.Num(player, Objects.o_player.Vars.HP);
         double restored = Math.Min(now + amount, Math.Max(now, ReliquaryMod.LastHp)) - now;
         if (restored <= 0) return;
@@ -57,8 +72,11 @@ internal sealed class DebtorsKnot : Relic
 
     public override void OnTurn(RelicItem item, InstanceRef player)
     {
+        // Deliberately not gated on Carried: nothing is forgiven, and a debt
+        // does not go away because the Knot was sold (the Toll says so).
         double term = item.Get("term");
         if (term <= 0) return;
+        ForgetOnNewPlayer(player);
         item.Set("term", term - 1);
         if (term - 1 > 0) return;
 

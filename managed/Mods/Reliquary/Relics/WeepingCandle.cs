@@ -19,6 +19,7 @@ internal sealed class WeepingCandle : Relic
     public override string Id => "weeping_candle";
     public override string Name => "The Weeping Candle";
     public override string Family => "Vessels";
+    public override int DamageOrder => Observes;
     public override string Flavor => "It gives back what it was given, and gets shorter doing it.";
     public override string Boon =>
         $"It fills with every point of damage you take. Burn it to turn ~lg~{Returned * 100:0}%~/~ of what it holds into " +
@@ -38,8 +39,13 @@ internal sealed class WeepingCandle : Relic
     public override void OnPlayerDamaged(RelicItem item, InstanceRef player, double amount, RValue attacker)
     {
         if (!item.Carried) return;
+        // What really landed: it runs after the negators (Gorgoneion, the Knot,
+        // the Worm) have handed their share back, and overkill beyond the HP
+        // the player had is not damage taken.
+        double landed = Math.Max(0, ReliquaryMod.LastHp - World.Num(player, Objects.o_player.Vars.HP));
+        if (landed <= 0) return;
         double cap = Capacity(item);
-        item.Set("wax", Math.Min(cap, item.Get("wax") + amount));
+        item.Set("wax", Math.Min(cap, item.Get("wax") + Math.Min(landed, amount)));
     }
 
     public override string Activate(RelicItem item, InstanceRef player)

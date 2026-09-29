@@ -35,6 +35,7 @@ internal sealed class UsurersScale : Relic
     // OnFrame runs only while the scale is carried; a gap in the sampling means
     // it was put down, and what changed meanwhile is not its business.
     private long _lastSampleMs;
+    private double? _candidate;
     private const long PutDownAfterMs = 3000;
 
     public override string Id => "usurers_scale";
@@ -53,18 +54,22 @@ internal sealed class UsurersScale : Relic
         if (++_sinceSample < SampleEveryFrames) return;
         _sinceSample = 0;
         long nowMs = Environment.TickCount64;
-        if (nowMs - _lastSampleMs > PutDownAfterMs) _lastGold = null;
+        if (nowMs - _lastSampleMs > PutDownAfterMs) _lastGold = _candidate = null;
         _lastSampleMs = nowMs;
         long key = World.IdKey(player.Id);
         if (key != _playerKey)
         {
             _playerKey = key;
-            _lastGold = null;
+            _lastGold = _candidate = null;
         }
         if (World.Gold(player) is not { } gold) return;
+        // A baseline only from two equal samples in a row: right after a load
+        // the purse can read 0 before its stacks are rebuilt, and a baseline
+        // taken then would charge the whole purse as a gain.
         if (_lastGold is not { } before)
         {
-            _lastGold = gold;
+            if (_candidate is { } c && c == gold) _lastGold = gold;
+            _candidate = gold;
             return;
         }
         _lastGold = gold;
@@ -80,10 +85,11 @@ internal sealed class UsurersScale : Relic
         World.Say($"~y~The Usurer's Scale~/~ weighs {crowns:0} crowns spent: ~lg~+{crowns * XpPerCrown:0} XP~/~.");
     }
 
-    // As the design says, this can kill: HP taken to zero is the game's own death.
+    // The design lets this kill. Until writing the player's HP to zero is shown
+    // to run the game's own death, it stops at 1 HP like every self-harm path.
     private static void Gained(RelicItem item, InstanceRef player, double crowns)
     {
-        double lost = World.Hurt(player, crowns * HpPerCrown);
+        double lost = World.HurtPlayer(player, crowns * HpPerCrown);
         item.Set("gained", item.Get("gained") + crowns);
         World.Say($"~y~The Usurer's Scale~/~ weighs {crowns:0} crowns gained: ~r~-{lost:0} Health~/~.");
     }

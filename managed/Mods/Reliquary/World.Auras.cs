@@ -68,7 +68,10 @@ internal static partial class World
             var s = new InstanceRef(buffs.At(i));
             if (!s.Exists || Builtins.object_get_name(s.Get(Objects.o_player.Vars.object_index)).ToString() != statusObject) continue;
             Destroy(s.Id);
-            if (i < buffs.Count) buffs.RemoveAt(i);
+            // The status's Destroy event may already have taken its own entry
+            // out; only remove index i if it still holds this status, never a
+            // neighbour that slid into its place.
+            if (i < buffs.Count && IdKey(buffs.At(i)) == IdKey(s.Id)) buffs.RemoveAt(i);
             removed++;
         }
         if (removed > 0) Recalculate(unit);

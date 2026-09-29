@@ -28,16 +28,16 @@ internal sealed class SplitQuiver : Relic
         "Duels and boss fights punish you for carrying it.";
 
     // The wielded weapon walks every gear item to find, so it is read once per turn.
-    private string _weapon = "";
+    // The mod's own scan already knows the wielded weapon; walking every gear
+    // item again here would double that cost each turn.
+    private static string Weapon => ReliquaryMod.WeaponType;
 
-    public override void OnPlayerTurn(InstanceRef player) => _weapon = World.WieldedWeaponType();
 
-    private bool Shooting => Launchers.Any(l => _weapon.Contains(l, StringComparison.OrdinalIgnoreCase));
+    private bool Shooting => Launchers.Any(l => Weapon.Contains(l, StringComparison.OrdinalIgnoreCase));
 
     public override void OnEnemyDamaged(RelicItem item, InstanceRef player, InstanceRef victim, double amount)
     {
         if (!item.Carried || amount <= 0) return;
-        if (_weapon.Length == 0) _weapon = World.WieldedWeaponType();
         if (!Shooting || World.Tiles(player, victim) <= 1) return;
 
         double share = amount * Share;
@@ -56,5 +56,5 @@ internal sealed class SplitQuiver : Relic
     }
 
     public override string Status(RelicItem item) =>
-        _weapon.Length == 0 ? "" : Shooting ? $"Nocked: {_weapon}" : "No bow, crossbow or sling in hand: dormant";
+        Weapon.Length == 0 ? "" : Shooting ? $"Nocked: {Weapon}" : "No bow, crossbow or sling in hand: dormant";
 }

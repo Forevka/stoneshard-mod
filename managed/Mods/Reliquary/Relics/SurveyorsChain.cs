@@ -9,8 +9,8 @@ namespace Reliquary.Relics;
 /// <remarks>
 /// The chain remembers where the player stood: the tile from five turns ago
 /// becomes a mark, and marks last a while. The mod keeps them itself (tile
-/// coordinates in memory), so they reset when the game is loaded - a mark is
-/// a short-lived thing anyway.
+/// coordinates in memory), so they reset when the game is loaded or a new
+/// character appears - a mark is a short-lived thing anyway.
 ///
 /// Two parts of the design are out of reach and are dropped: the mod cannot
 /// steer enemy pathfinding ("the AI paths around them"), and the marks are not
@@ -21,7 +21,9 @@ namespace Reliquary.Relics;
 internal sealed class SurveyorsChain : Relic
 {
     private const int Lag = 5, MarkTurns = 30, MaxMarks = 12;
-    private const int Slow = 1, Bleed = 3;
+    // Held for 2: a 1-turn status applied at the end of a turn can expire in
+    // that same turn-end pass before it ever holds anyone.
+    private const int Slow = 2, Bleed = 3;
     private const double Heal = 0.02;
 
     private static readonly string Immob = Objects.o_db_immob.Name;
@@ -44,32 +46,43 @@ internal sealed class SurveyorsChain : Relic
         "It defends the ground you have already left, never the ground you are standing on, and ranged enemies simply never " +
         "cross it. It rewards patience and ~r~punishes chasing~/~.";
 
-    // The turn hook calls every chain item the scan found; the trail belongs to
-    // the character, so it advances once per turn however many are carried.
-    private long _lastTick = -1000;
+    // The trail belongs to the character: it advances once per game turn (the
+    // mod's own turn clock, which multi-turn rests advance properly) and only
+    // for the copy that counts. A load or new character starts it afresh.
+    private long _lastTurn = -1, _playerKey = -1;
 
     public override void OnTurn(RelicItem item, InstanceRef player)
     {
-        if (!item.Carried) return;
-        long now = Environment.TickCount64;
-        if (now - _lastTick < 50) return;
-        _lastTick = now;
+        if (!item.Carried || !item.IsActive || ReliquaryMod.Turns == _lastTurn) return;
+        _lastTurn = ReliquaryMod.Turns;
+        long playerKey = World.IdKey(player.Id);
+        if (playerKey != _playerKey)
+        {
+            _playerKey = playerKey;
+            _trail.Clear();
+            _marks.Clear();
+        }
 
         // Age the marks, then lay the one from Lag turns ago.
         foreach (var key in _marks.Keys.ToList())
             if (--_marks[key] <= 0) _marks.Remove(key);
         var here = World.TileOf(player);
+        bool arrived = _trail.Count == 0 || _trail.Last() != here;
         _trail.Enqueue(here);
         if (_trail.Count > Lag)
         {
             var old = _trail.Dequeue();
-            _marks[old] = MarkTurns;
+            // Never the ground you are standing on: waiting in place for five
+            // turns must not mark your own tile.
+            if (old != here) _marks[old] = MarkTurns;
             while (_marks.Count > MaxMarks) _marks.Remove(_marks.MinBy(m => m.Value).Key);
         }
         item.Set("marks", _marks.Count);
         if (_marks.Count == 0) return;
 
-        if (_marks.ContainsKey(here)) World.Heal(player, World.MaxHp(player) * Heal);
+        // Only on stepping onto a mark, not for standing on one: otherwise
+        // resting on old ground would be a free regeneration engine.
+        if (arrived && _marks.ContainsKey(here)) World.Heal(player, World.MaxHp(player) * Heal);
 
         int caught = 0;
         foreach (var e in World.Hostiles(player))

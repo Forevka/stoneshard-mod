@@ -74,8 +74,10 @@ internal sealed class SunderedGate : Relic
         }
 
         // Vanishing is what makes it an escape either way.
-        World.ApplyStatus(player, Untargetable, HiddenTurns);
+        // The recharge is spent first: if the status is refused, the healed
+        // floor is not free to heal again on the next press.
         item.Set("recharge", Recharge);
+        World.ApplyStatus(player, Untargetable, HiddenTurns);
         return home
             ? $"~y~The Sundered Gate~/~ opens onto the floor's entrance. {foes.Count} foe(s) are whole again ({moved} sent home)."
             : $"~y~The Sundered Gate~/~ swallows you. {foes.Count} foe(s) are whole again, and none of them can find you.";

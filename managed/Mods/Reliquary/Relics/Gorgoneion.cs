@@ -20,6 +20,7 @@ internal sealed class Gorgoneion : Relic
     public override string Id => "gorgoneion";
     public override string Name => "Gorgoneion";
     public override string Family => "Panic buttons";
+    public override int DamageOrder => Negates;
     public override string Flavor => "The face on it is still surprised.";
     public override string Boon =>
         $"Activate: every hostile in sight turns to stone for ~y~{StoneTurns}~/~ turns - you included. While petrified you take " +
