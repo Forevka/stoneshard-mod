@@ -50,10 +50,13 @@ bump may break the mod API or the native CoreApi table; each version says so und
   board, buttons, colour text and sounds (a play key, `playKey`, can be set as well; off by default).
   Pick **Poker Dice** (five dice, a round of betting, one reroll) or **Twenty-One** (the NPC deals from
   a deck on the table - cards slide out and turn over - and draws to a total set by its temperament)
-  and a stake. Opponents are cautious, steady or reckless by trade, and their
+  or **Thimblerig** (find the ball under the shuffled cups: a five-level ladder, each won level offering
+  the next with more cups - three up to six - more and faster swaps, two pairs at once near the top,
+  and a stake of x1, x2, x3, x5 then x8) and a stake. Opponents are cautious, steady or reckless by trade, and their
   purses run dry and refill over turns. The stake is held by the table from the moment it is committed,
   so walking away folds and a loss is never dodged; a round dropped by a room change or hot reload
-  hands it back. Games plug into a small framework (`Table`, `MiniGame`, `Session`). Test-host commands
+  hands it back. Games plug into a small framework (`Table`, `MiniGame`, `Session`); a game can offer ways to carry on
+  after a round at a stake of its own (`MiniGame.Continuations`). Test-host commands
   `tg.*`.
 - **Interop:** an `InstanceVars` class with GameMaker's built-in instance variables (`x`, `y`, `id`,
   `object_index`, `sprite_index`, ...), which the variable harvest never sees; every object's `Vars`

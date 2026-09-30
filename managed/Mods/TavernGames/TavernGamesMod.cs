@@ -10,7 +10,7 @@ namespace TavernGames;
 /// <summary>
 /// Gambling with the locals: talk to someone in a tavern (or a drunk, a
 /// sellsword, an innkeeper anywhere) and ask for a game - a line of our own in
-/// the game's conversation - to sit down to Poker Dice or Twenty-One for
+/// the game's conversation - to sit down to Poker Dice, Twenty-One or Thimblerig for
 /// crowns. A play key can be set as well (playKey, off by default).
 /// The table is a small framework - <see cref="Table"/> runs the stake, the
 /// purses, the window and input; each game is a <see cref="MiniGame"/> - so a
@@ -44,7 +44,9 @@ public sealed class TavernGamesMod : CoreMod
 
         var dice = Content.AddSprite("assets/dice.png", frames: 6);
         var cards = Content.AddSprite("assets/cards.png", frames: 53);
-        _games = [new DicePoker(dice), new TwentyOne(cards)];
+        var cup = Content.AddSprite("assets/cup.png", frames: 2);
+        var ball = Content.AddSprite("assets/ball.png");
+        _games = [new DicePoker(dice), new TwentyOne(cards), new Thimblerig(cup, ball)];
         _table = new Table(_games, _ledger, Log);
         _table.CaptureKeys();
         _dialogue = new DialogueOption(WillPlay, Log);
@@ -258,7 +260,7 @@ public sealed class TavernGamesMod : CoreMod
         {
             string id = args.Count > 0 ? args[0].GetString() ?? "" : throw new ArgumentException("which button?");
             return new { pressed = _table.Press(id), state = Snapshot() };
-        }, "tg.press <id>: presses a table button (play, again, leave, stake+, stake-, game:<id>, or the game's: raise, check, call, fold, reroll, hit, stand, double)");
+        }, "tg.press <id>: presses a table button (play, again, leave, stake+, stake-, game:<id>, or a game's: raise, check, call, fold, reroll, hit, stand, double; continue after a won thimblerig level)");
         TestHost.Register("tg.toggle", args =>
             {
                 if (args.Count == 0) throw new ArgumentException("which die (0-4)?");
@@ -266,6 +268,13 @@ public sealed class TavernGamesMod : CoreMod
                 return dice.Toggle(args[0].GetInt32());
             },
             "tg.toggle <0-4>: poker dice - marks or unmarks one of your dice to throw again");
+        TestHost.Register("tg.cup", args =>
+            {
+                if (args.Count == 0) throw new ArgumentException("which slot (0 = leftmost)?");
+                if (!_table.IsOpen || _table.CurrentGame is not Thimblerig rig) throw new InvalidOperationException("no thimblerig on the table");
+                return rig.Pick(args[0].GetInt32());
+            },
+            "tg.cup <slot>: thimblerig - picks the cup standing on that slot (0 = leftmost), as a click would");
         TestHost.Register("tg.seed", args =>
         {
             _table.Seed(args[0].GetInt32());
@@ -286,6 +295,7 @@ public sealed class TavernGamesMod : CoreMod
             {
                 DicePoker d => d.State(),
                 TwentyOne t => t.State(),
+                Thimblerig rig => rig.State(),
                 _ => null,
             }
             : null;

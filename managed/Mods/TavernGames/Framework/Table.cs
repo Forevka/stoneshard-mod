@@ -286,6 +286,16 @@ internal sealed class Table
                         _round = null;
                         return true;
                 }
+                // One of the game's own ways to carry on, at the stake it names.
+                if (_round is { } done)
+                {
+                    foreach (var (button, stake) in CurrentGame.Continuations(done))
+                    {
+                        if (button.Id != id || !button.Enabled) continue;
+                        StartRound(stake, continues: true);
+                        return true;
+                    }
+                }
                 return false;
             default:
                 if (_round is not { Finished: false } r) return false;
@@ -296,11 +306,12 @@ internal sealed class Table
         }
     }
 
-    private void StartRound()
+    /// <summary>A round at the chosen stake, or at a continuation's stake (see MiniGame.Continuations).</summary>
+    private void StartRound(int? stakeOverride = null, bool continues = false)
     {
         if (_opponent is not { } opp || World.Player is not { } player) return;
         if (_owed > 0) throw new InvalidOperationException($"the table still owes you {_owed} crowns");
-        int stake = Stake;
+        int stake = stakeOverride ?? Stake;
         if (opp.Bankroll < stake)
         {
             Chat(Line(Mood.Broke));
@@ -309,7 +320,10 @@ internal sealed class Table
         Take(player, stake);
         _round = new Session(opp, stake, _rng,
             playerCanCover: more => (Purse.Count(player) ?? 0) >= more,
-            takeFromPlayer: more => Take(player, more));
+            takeFromPlayer: more => Take(player, more))
+        {
+            Continues = continues,
+        };
         _phase = Phase.Playing;
         _chatter.Clear();
         CurrentGame.Begin(_round);
@@ -462,7 +476,8 @@ internal sealed class Table
         if (_error.Length > 0) c.Text($"~r~{_error}~/~", Panel.CenterX, 412, align: 0);
     }
 
-    private bool CanStart(Opponent opp) => _owed == 0 && opp.Bankroll >= Stake && (_gold ?? 0) >= Stake;
+    private bool CanStart(Opponent opp, int? stake = null) =>
+        _owed == 0 && opp.Bankroll >= (stake ?? Stake) && (_gold ?? 0) >= (stake ?? Stake);
 
     private void DrawChooser(Canvas c, Opponent opp)
     {
@@ -501,8 +516,15 @@ internal sealed class Table
         {
             string colour = r.Result == Outcome.Win ? "~lg~" : r.Result == Outcome.Loss ? "~r~" : "~y~";
             c.Text($"{colour}{r.Verdict}~/~", Panel.CenterX, PlayArea.Y + PlayArea.H - 18, align: 0);
-            c.Button("again", "~lg~Again~/~", new Area(PlayArea.X, y, 110, 26), CanStart(opp));
-            c.Button("choose", "Change game", new Area(PlayArea.X + 120, y, 130, 26));
+            double bx = PlayArea.X;
+            foreach (var (button, stake) in CurrentGame.Continuations(r))
+            {
+                c.Button(button.Id, button.Label, new Area(bx, y, 170, 26), button.Enabled && CanStart(opp, stake));
+                bx += 178;
+            }
+            c.Button("again", CurrentGame.AgainLabel(r), new Area(bx, y, 120, 26), CanStart(opp));
+            bx += 128;
+            c.Button("choose", "Change game", new Area(bx, y, 130, 26));
             c.Button("leave", "Leave", new Area(PlayArea.X + PlayArea.W - 110, y, 110, 26));
             return;
         }

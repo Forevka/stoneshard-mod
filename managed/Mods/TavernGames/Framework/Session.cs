@@ -38,6 +38,13 @@ internal sealed class Session
 
     public Opponent Opponent { get; }
 
+    /// <summary>
+    /// Started from one of the game's continuations rather than afresh (see
+    /// MiniGame.Continuations). It does not say which: a game offering more
+    /// than one keeps track of what it offered itself.
+    /// </summary>
+    public bool Continues { get; init; }
+
     /// <summary>The agreed ante; raises are counted in multiples of it.</summary>
     public int Stake { get; }
 

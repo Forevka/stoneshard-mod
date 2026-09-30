@@ -66,6 +66,17 @@ internal abstract class MiniGame
     public virtual void OnClick(double x, double y) { }
 
     /// <summary>
+    /// Ways to carry on from a finished round besides starting afresh, each
+    /// with the stake the next round would be played for - a ladder's
+    /// "Continue to level 3". Pressing one starts a round with
+    /// <see cref="Session.Continues"/> set. Empty by default.
+    /// </summary>
+    public virtual IEnumerable<(ButtonSpec Button, int Stake)> Continuations(Session finished) => [];
+
+    /// <summary>The label of the button that starts a fresh round after one ends.</summary>
+    public virtual string AgainLabel(Session finished) => "~lg~Again~/~";
+
+    /// <summary>
     /// The player is leaving the table mid-round. A round whose outcome no
     /// longer depends on the player - the dice already in the air, a hand
     /// already won, a dealer left to draw - ends here as it would have; one

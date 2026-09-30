@@ -4,8 +4,9 @@ sampling, so they sit next to Stoneshard's own sprites.
 
     C:\\Python314\\python.exe managed\\Mods\\TavernGames\\assets-src\\make_assets.py
 
-writes managed\\Mods\\TavernGames\\assets\\dice.png (6 frames) and cards.png
-(53 frames: 13 ranks x 4 suits in suit-major order, then the back).
+writes managed\\Mods\\TavernGames\\assets\\dice.png (6 frames), cards.png
+(53 frames: 13 ranks x 4 suits in suit-major order, then the back), cup.png
+(2 frames: the thimblerig cup, then its shadow) and ball.png.
 """
 
 from pathlib import Path
@@ -155,6 +156,66 @@ def card_back() -> Image.Image:
     return im
 
 
+# ------------------------------------------------------------------ thimblerig
+
+CUP_W, CUP_H = 22, 24
+WOOD = (122, 78, 44, 255)
+WOOD_DARK = (84, 50, 28, 255)
+WOOD_LIGHT = (164, 112, 64, 255)
+BRASS = (196, 156, 72, 255)
+SHADOW = (0, 0, 0, 110)
+BALL_RED = (168, 40, 32, 255)
+BALL_LIGHT = (232, 120, 96, 255)
+BALL_DARK = (96, 20, 18, 255)
+
+
+def cup() -> Image.Image:
+    """An upturned wooden cup with a brass band, widest at its rim (the bottom)."""
+    im = Image.new("RGBA", (CUP_W, CUP_H), (0, 0, 0, 0))
+    for y in range(CUP_H):
+        # Narrow at the top, flaring towards the rim; the top two rows are rounded.
+        half = 6 + (y * 5) // CUP_H
+        if y == 0:
+            half = 4
+        elif y == 1:
+            half = 5
+        x0, x1 = CUP_W // 2 - half, CUP_W // 2 + half - 1
+        for x in range(x0, x1 + 1):
+            if x in (x0, x1) or y == 0:
+                c = OUTLINE
+            elif x <= x0 + 2:
+                c = WOOD_LIGHT
+            elif x >= x1 - 2:
+                c = WOOD_DARK
+            else:
+                c = WOOD
+            im.putpixel((x, y), c)
+    d = ImageDraw.Draw(im)
+    # A brass band two thirds down, and the rim.
+    for y in (15, 16):
+        half = 6 + (y * 5) // CUP_H
+        d.line([CUP_W // 2 - half + 1, y, CUP_W // 2 + half - 2, y], fill=BRASS)
+    half = 6 + ((CUP_H - 1) * 5) // CUP_H
+    d.line([CUP_W // 2 - half, CUP_H - 1, CUP_W // 2 + half - 1, CUP_H - 1], fill=OUTLINE)
+    d.line([CUP_W // 2 - half + 1, CUP_H - 2, CUP_W // 2 + half - 2, CUP_H - 2], fill=WOOD_DARK)
+    return im
+
+
+def cup_shadow() -> Image.Image:
+    im = Image.new("RGBA", (CUP_W, CUP_H), (0, 0, 0, 0))
+    ImageDraw.Draw(im).ellipse([1, CUP_H - 6, CUP_W - 2, CUP_H - 1], fill=SHADOW)
+    return im
+
+
+def ball() -> Image.Image:
+    im = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.ellipse([0, 0, 7, 7], fill=BALL_DARK)
+    d.ellipse([0, 0, 6, 6], fill=BALL_RED)
+    d.rectangle([2, 1, 3, 2], fill=BALL_LIGHT)
+    return im
+
+
 def strip(frames: list[Image.Image]) -> Image.Image:
     w, h = frames[0].size
     out = Image.new("RGBA", (w * len(frames), h), (0, 0, 0, 0))
@@ -168,7 +229,9 @@ def main() -> None:
     strip([die_face(n) for n in range(1, 7)]).save(OUT / "dice.png")
     cards = [card_face(r, s) for s in SUIT_ORDER for r in RANKS] + [card_back()]
     strip(cards).save(OUT / "cards.png")
-    print(f"wrote {OUT / 'dice.png'} and {OUT / 'cards.png'}")
+    strip([cup(), cup_shadow()]).save(OUT / "cup.png")
+    ball().save(OUT / "ball.png")
+    print(f"wrote dice.png, cards.png, cup.png and ball.png in {OUT}")
 
 
 if __name__ == "__main__":
