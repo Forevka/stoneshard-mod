@@ -1,6 +1,6 @@
 using CoreLoader;
 
-[assembly: CoreModInfo(typeof(StructProbe.Probe), "Struct probe", "1.0.0", "CoreLoader tests")]
+[assembly: CoreModInfo(typeof(StructProbe.Probe), "Struct probe", "1.0.0", "Lodestone tests")]
 
 namespace StructProbe;
 

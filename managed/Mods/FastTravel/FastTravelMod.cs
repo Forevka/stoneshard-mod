@@ -1,7 +1,7 @@
 using CoreLoader;
 using StoneShard;
 
-[assembly: CoreModInfo(typeof(FastTravel.FastTravelMod), "Fast Travel", "1.0.0", "CoreLoader")]
+[assembly: CoreModInfo(typeof(FastTravel.FastTravelMod), "Fast Travel", "1.0.0", "Lodestone")]
 [assembly: CoreModGame("StoneShard")]
 
 namespace FastTravel;

@@ -1,6 +1,6 @@
 using CoreLoader;
 
-[assembly: CoreModInfo(typeof(CoreConsole.ConsoleMod), "Console", "1.0.0", "CoreLoader")]
+[assembly: CoreModInfo(typeof(CoreConsole.ConsoleMod), "Console", "1.0.0", "Lodestone")]
 
 namespace CoreConsole;
 
@@ -31,7 +31,7 @@ public sealed class ConsoleMod : CoreMod
     public override void OnInitialize()
     {
         _history.AddRange(Config.Get("history", "").Split('\n', StringSplitOptions.RemoveEmptyEntries));
-        Print($"CoreLoader console - {Game.Name}. Type 'help'.", 0.6f, 0.8f, 1f);
+        Print($"Lodestone console - {Game.Name}. Type 'help'.", 0.6f, 0.8f, 1f);
         // The Objects tab needs the object table: built a slice per frame from
         // now, it is ready long before anyone opens the tab.
         ObjectTable.Start();

@@ -19,7 +19,7 @@ namespace CoreLoader;
 /// </remarks>
 public static class Content
 {
-    private static readonly Logger Log = new("CoreLoader");
+    private static readonly Logger Log = new("Lodestone");
     private static readonly List<IOwnedAsset> Owned = new();
 
     // Replacements of one game sprite, oldest first; see Sprite.Release.
@@ -308,7 +308,7 @@ public static class Content
         }
     }
 
-    private static string OwnerName(LoadedMod? m) => m?.Instance.Info.Name ?? "CoreLoader";
+    private static string OwnerName(LoadedMod? m) => m?.Instance.Info.Name ?? "Lodestone";
 }
 
 internal interface IOwnedAsset : IDisposable

@@ -10,7 +10,7 @@ namespace CoreLoader.Runtime;
 /// </summary>
 internal static unsafe class Entry
 {
-    private static readonly Logger Log = new("CoreLoader");
+    private static readonly Logger Log = new("Lodestone");
     private static bool _initialisedMods, _announcedWait, _probed;
 
     // Re-entry: a GML call made during a frame can present again from inside
@@ -35,7 +35,7 @@ internal static unsafe class Entry
             // Init runs on the host's start-up thread, not the game's: nothing
             // here may touch GML (the value helpers are probed on the game
             // thread, just before mods start).
-            Log.Info($"CoreLoader {typeof(Entry).Assembly.GetName().Version} on .NET {Environment.Version}, " +
+            Log.Info($"Lodestone {typeof(Entry).Assembly.GetName().Version} on .NET {Environment.Version}, " +
                      $"game '{Game.Name}', {api->SymbolCount()} GML functions");
 
             ModManager.DiscoverAndLoad();

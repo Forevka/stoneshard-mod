@@ -6,7 +6,7 @@ namespace CoreLoader.Runtime;
 
 /// <summary>
 /// Writes the running game's code map as a C# project mods can compile against:
-/// CoreLoader/Interop/&lt;Game&gt;.Interop/ with typed refs for every script, every
+/// Lodestone/Interop/&lt;Game&gt;.Interop/ with typed refs for every script, every
 /// object and its events, every builtin (with this runtime's real arity) and
 /// every asset name, plus codemap.json with the same data for tools.
 ///
@@ -16,7 +16,7 @@ namespace CoreLoader.Runtime;
 /// </summary>
 internal static unsafe class InteropGenerator
 {
-    private static readonly Logger Log = new("CoreLoader");
+    private static readonly Logger Log = new("Lodestone");
     private static bool _done;
     private static bool _degraded;
     private static int _waitFrames;

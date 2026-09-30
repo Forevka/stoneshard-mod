@@ -83,7 +83,7 @@ internal sealed class ModLoadContext : AssemblyLoadContext
 
 internal static class ModManager
 {
-    private static readonly Logger Log = new("CoreLoader");
+    private static readonly Logger Log = new("Lodestone");
     private static readonly List<LoadedMod> ModList = new();
     private static FileSystemWatcher? _watcher;
     private static readonly ConcurrentDictionary<string, long> Changed = new(StringComparer.OrdinalIgnoreCase);

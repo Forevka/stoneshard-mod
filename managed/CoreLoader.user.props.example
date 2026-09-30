@@ -2,7 +2,7 @@
   <!--
     Copy to CoreLoader.user.props (ignored by git), or let tools\setup-dev.ps1
     write it. List the folders of games with CoreLoader installed and run at
-    least once - that run is what generates CoreLoader\Interop\ there.
+    least once - that run is what generates Lodestone\Interop\ there.
     Separate several with ';'.
   -->
   <PropertyGroup>

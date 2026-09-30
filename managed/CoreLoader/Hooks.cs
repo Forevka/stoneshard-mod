@@ -168,7 +168,7 @@ internal sealed class Subscription
 /// </summary>
 public static unsafe class Hooks
 {
-    private static readonly Logger Log = new("CoreLoader");
+    private static readonly Logger Log = new("Lodestone");
     // Copy-on-write: a hooked Step event can dispatch thousands of times a
     // frame, so dispatch reads the array as it is - no snapshot allocated per
     // call - and add/remove replace it (a handler adding or removing hooks

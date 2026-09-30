@@ -5,7 +5,7 @@
 .DESCRIPTION
   The game must have been started with CORELOADER_TEST=1 (tools\run-game.ps1
   -TestHost does that). The loader then serves a named pipe, current user
-  only, and writes its name to <game>\CoreLoader\Logs\testhost.pipe.
+  only, and writes its name to <game>\Lodestone\Logs\testhost.pipe.
 
   As a command:   tools\coreloader.ps1 [-Game Stoneshard|Dwarf] <cmd> [args...]
   prints the result as JSON and exits 0, or prints the error and exits 1
@@ -51,7 +51,7 @@ function Find-CoreLoaderPipe {
     $dirs = if ($GameDir) { @($GameDir) } else { @($Known.Values) }
     # The newest name file wins when no game was named; a stale one (the game
     # crashed) simply fails to connect.
-    $file = $dirs | ForEach-Object { Join-Path $_ "CoreLoader\Logs\testhost.pipe" } |
+    $file = $dirs | ForEach-Object { Join-Path $_ "Lodestone\Logs\testhost.pipe" } |
         Where-Object { Test-Path -LiteralPath $_ } |
         Sort-Object { (Get-Item -LiteralPath $_).LastWriteTime } -Descending |
         Select-Object -First 1

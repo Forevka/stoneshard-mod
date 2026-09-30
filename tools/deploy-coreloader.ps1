@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Installs CoreLoader (and optionally mods) into a YYC GameMaker game folder.
+  Installs Lodestone (and optionally mods) into a YYC GameMaker game folder.
 
 .DESCRIPTION
   Copies build\version.dll next to the game exe, the managed runtime into
-  <game>\CoreLoader\, and the named mods from managed\bin\<Config>\Mods (or
+  <game>\Lodestone\, and the named mods from managed\bin\<Config>\Mods (or
   TestMods) into <game>\Mods\. An existing version.dll that is not ours is
   kept as version.dll.bak the first time. Works while the game is closed; a
   running game locks version.dll and the runtime (use -Live then).
@@ -21,6 +21,9 @@
 
   The runtime is installed before version.dll, so a failure part-way never
   leaves a new version.dll beside the old CoreLoader.dll.
+
+  An install from before the rename (a CoreLoader\ folder) is moved to
+  Lodestone\ first, so its generated interop, logs and save backups carry over.
 
 .EXAMPLE
   tools\deploy-coreloader.ps1 -GameDir "D:\Games\Stoneshard" -Mods Console,ScriptSpy
@@ -78,8 +81,27 @@ function Install-File([string] $Source, [string] $Destination) {
 
 $target    = Join-Path $GameDir "version.dll"
 $backup    = Join-Path $GameDir "version.dll.bak"
-$loaderDir = Join-Path $GameDir "CoreLoader"
+$loaderDir = Join-Path $GameDir "Lodestone"
 $runtime   = @(Get-ChildItem -LiteralPath (Join-Path $managed "CoreLoader") -File)
+
+# The install folder used to be CoreLoader\. Moving it keeps what the loader
+# wrote there; leaving it would strand that data beside a fresh, empty install.
+$legacyDir = Join-Path $GameDir "CoreLoader"
+if (Test-Path -LiteralPath (Join-Path $legacyDir "CoreLoader.dll")) {
+    if (-not (Test-Path -LiteralPath $loaderDir)) {
+        try { Move-Item -LiteralPath $legacyDir -Destination $loaderDir }
+        catch { throw "could not move $legacyDir to $loaderDir (close the game once, then deploy again): $_" }
+    } else {
+        # Both exist (run-game.ps1 -TestHost writes its marker into Lodestone\
+        # before any deploy): merge, keeping whatever Lodestone\ already has.
+        & robocopy $legacyDir $loaderDir /E /MOVE /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "could not merge $legacyDir into $loaderDir (close the game once, then deploy again)" }
+        $global:LASTEXITCODE = 0   # 1-7 are robocopy's successes; callers read non-zero as failure
+        Remove-Item -LiteralPath $legacyDir -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $legacyDir) { throw "could not remove $legacyDir (close the game once, then deploy again)" }
+    }
+    Write-Host "moved the old CoreLoader folder to Lodestone"
+}
 
 # Without -Live, fail before copying anything if the game holds the loader
 # open, rather than half-way through with a mix of old and new files.
@@ -91,7 +113,7 @@ if (-not $Live) {
     }
 }
 
-# A CoreLoader folder means the version.dll there is already ours; only a
+# A Lodestone folder means the version.dll there is already ours; only a
 # foreign one (another mod loader, an older build of this mod) is worth keeping.
 $ours = Test-Path -LiteralPath (Join-Path $loaderDir "CoreLoader.dll")
 if ((Test-Path -LiteralPath $target) -and -not $ours -and -not (Test-Path -LiteralPath $backup)) {
@@ -162,8 +184,8 @@ foreach ($m in $Mods) {
 
 # A test-host marker left by run-game.ps1 -TestHost must not outlive a fresh
 # install into normal play; run-game writes it again after deploying.
-$marker = Join-Path $GameDir "CoreLoader\testhost.enable"
+$marker = Join-Path $loaderDir "testhost.enable"
 if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker }
 
-Write-Host "CoreLoader installed in $GameDir ($($Mods.Count) mod(s))"
+Write-Host "Lodestone installed in $GameDir ($($Mods.Count) mod(s))"
 if ($Live) { Write-Host "restart the game to run the new loader" }

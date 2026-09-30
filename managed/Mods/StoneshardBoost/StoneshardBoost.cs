@@ -1,6 +1,6 @@
 using CoreLoader;
 
-[assembly: CoreModInfo(typeof(StoneshardBoost.StoneshardBoostMod), "Stoneshard Boost", "1.0.0", "CoreLoader")]
+[assembly: CoreModInfo(typeof(StoneshardBoost.StoneshardBoostMod), "Stoneshard Boost", "1.0.0", "Lodestone")]
 [assembly: CoreModGame("StoneShard")]
 
 namespace StoneshardBoost;

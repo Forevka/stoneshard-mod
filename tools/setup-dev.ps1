@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-  Points the managed solution at the games CoreLoader is installed in, so
+  Points the managed solution at the games Lodestone is installed in, so
   projects written against a game's generated interop build - and navigate -
   in Visual Studio.
 
 .DESCRIPTION
-  Finds game folders with CoreLoader installed (given with -GameDir, found in
+  Finds game folders with Lodestone installed (given with -GameDir, found in
   your Steam libraries, and any already listed before), then writes:
 
     managed\CoreLoader.user.props   CoreLoaderGameDirs for every build (VS and dotnet)
@@ -15,8 +15,8 @@
 
   Both are per-machine and ignored by git. Open CoreLoader.Dev.sln to work on
   interop-based mods; CoreLoader.sln keeps working without any of this.
-  A game's interop exists once the game has been run with CoreLoader installed.
-  Re-run after installing CoreLoader into another game.
+  A game's interop exists once the game has been run with Lodestone installed.
+  Re-run after installing Lodestone into another game.
 
 .EXAMPLE
   tools\setup-dev.ps1
@@ -37,8 +37,8 @@ $slnOut   = Join-Path $managed "CoreLoader.Dev.sln"
 $dirs = [System.Collections.Generic.List[string]]::new()
 function Add-GameDir([string] $d, [bool] $explicit) {
     if (-not $d) { return }
-    if (-not (Test-Path -LiteralPath (Join-Path $d "CoreLoader"))) {
-        if ($explicit) { Write-Warning "no CoreLoader installed in $d (tools\deploy-coreloader.ps1 -GameDir ...)" }
+    if (-not (Test-Path -LiteralPath (Join-Path $d "Lodestone"))) {
+        if ($explicit) { Write-Warning "no Lodestone installed in $d (tools\deploy-coreloader.ps1 -GameDir ...)" }
         return
     }
     $full = (Resolve-Path -LiteralPath $d).Path.TrimEnd('\')
@@ -54,7 +54,7 @@ if (Test-Path -LiteralPath $propsOut) {
     if ($m.Success) { foreach ($d in $m.Groups[1].Value -split ';') { Add-GameDir $d.Trim() $false } }
 }
 
-# 3. Every Steam library: games with a CoreLoader folder.
+# 3. Every Steam library: games with a Lodestone folder.
 $steam = (Get-ItemProperty -Path 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath
 if ($steam) {
     $vdf = Join-Path $steam "steamapps\libraryfolders.vdf"
@@ -67,13 +67,13 @@ if ($steam) {
         $common = Join-Path $lib "steamapps\common"
         if (-not (Test-Path -LiteralPath $common)) { continue }
         Get-ChildItem -LiteralPath $common -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "CoreLoader") } |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "Lodestone") } |
             ForEach-Object { Add-GameDir $_.FullName $false }
     }
 }
 
 if ($dirs.Count -eq 0) {
-    Write-Warning "no game with CoreLoader installed was found; pass -GameDir <game folder>"
+    Write-Warning "no game with Lodestone installed was found; pass -GameDir <game folder>"
     return
 }
 
@@ -82,7 +82,7 @@ $escaped = ($dirs | ForEach-Object { [System.Security.SecurityElement]::Escape($
 @"
 <Project>
   <!-- Written by tools\setup-dev.ps1 - per machine, not in git. Games with
-       CoreLoader installed; their generated interop is found under each. -->
+       Lodestone installed; their generated interop is found under each. -->
   <PropertyGroup>
     <CoreLoaderGameDirs>$escaped</CoreLoaderGameDirs>
   </PropertyGroup>
@@ -92,7 +92,7 @@ Write-Host "wrote $propsOut"
 
 # The generated interop projects that exist right now.
 $interop = foreach ($d in $dirs) {
-    $base = Join-Path $d "CoreLoader\Interop"
+    $base = Join-Path $d "Lodestone\Interop"
     if (Test-Path -LiteralPath $base) {
         Get-ChildItem -LiteralPath $base -Directory |
             ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter "*.Interop.csproj" -File }

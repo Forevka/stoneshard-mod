@@ -34,8 +34,8 @@ void LogInit() {
     if (g_file) return;
     // The previous session's log survives one launch: after a crash, the next
     // start must not wipe the only trail of what happened.
-    const std::string path = paths::File("coreloader.log");
-    const std::string prev = paths::File("coreloader.prev.log");
+    const std::string path = paths::File("lodestone.log");
+    const std::string prev = paths::File("lodestone.prev.log");
     MoveFileExA(path.c_str(), prev.c_str(), MOVEFILE_REPLACE_EXISTING);
     g_file = std::fopen(path.c_str(), "w");
 }

@@ -5,7 +5,7 @@
 
 namespace mod {
 
-// Writes coreloader.log into paths::DataDir(): <game>\CoreLoader\Logs when
+// Writes lodestone.log into paths::DataDir(): <game>\Lodestone\Logs when
 // installed, the build workspace in development, or CORELOADER_DATA_DIR.
 void LogInit();
 void LogShutdown();

@@ -1,6 +1,6 @@
 using CoreLoader;
 
-[assembly: CoreModInfo(typeof(XpProbe.Probe), "XP probe", "1.0.0", "CoreLoader tests")]
+[assembly: CoreModInfo(typeof(XpProbe.Probe), "XP probe", "1.0.0", "Lodestone tests")]
 [assembly: CoreModGame("StoneShard")]
 
 namespace XpProbe;

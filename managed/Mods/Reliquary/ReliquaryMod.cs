@@ -3,7 +3,7 @@ using CoreLoader;
 using Reliquary.Relics;
 using StoneShard;
 
-[assembly: CoreModInfo(typeof(Reliquary.ReliquaryMod), "Reliquary", "0.1.0", "CoreLoader")]
+[assembly: CoreModInfo(typeof(Reliquary.ReliquaryMod), "Reliquary", "0.1.0", "Lodestone")]
 [assembly: CoreModGame("StoneShard")]
 
 namespace Reliquary;

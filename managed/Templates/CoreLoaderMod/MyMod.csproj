@@ -8,10 +8,10 @@
     <RootNamespace>MyMod</RootNamespace>
 
     <!-- The game this mod is developed against. CoreLoader.dll is referenced
-         from its CoreLoader folder, and every build is copied into its Mods
+         from its Lodestone folder, and every build is copied into its Mods
          folder (turn off with -p:DeployOnBuild=false). -->
     <GameDir>GAME_DIR_PLACEHOLDER</GameDir>
-    <CoreLoaderDir>$(GameDir)\CoreLoader</CoreLoaderDir>
+    <CoreLoaderDir>$(GameDir)\Lodestone</CoreLoaderDir>
     <DeployOnBuild Condition="'$(DeployOnBuild)' == ''">true</DeployOnBuild>
 
     <!-- A mod is a plugin: NuGet dependencies are copied next to it so they
@@ -25,13 +25,13 @@
       <HintPath>$(CoreLoaderDir)\CoreLoader.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <!-- Compile-time lifetime checks (CL0001-CL0003), installed with CoreLoader.
+    <!-- Compile-time lifetime checks (CL0001-CL0003), installed with Lodestone.
          The compiler loads it; it is never deployed or loaded by the game. -->
     <Analyzer Include="$(CoreLoaderDir)\Analyzers\CoreLoader.Analyzers.dll" Condition="Exists('$(CoreLoaderDir)\Analyzers\CoreLoader.Analyzers.dll')" />
   </ItemGroup>
 
 <!--#if (hasInterop) -->
-  <!-- The typed code map CoreLoader generated for this game on its first run. -->
+  <!-- The typed code map Lodestone generated for this game on its first run. -->
   <ItemGroup>
     <ProjectReference Include="$(CoreLoaderDir)\Interop\INTEROP_PLACEHOLDER.Interop\INTEROP_PLACEHOLDER.Interop.csproj" />
   </ItemGroup>

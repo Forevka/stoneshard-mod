@@ -1,6 +1,6 @@
 using CoreLoader;
 
-[assembly: CoreModInfo(typeof(WidgetProbe.Main), "Widget probe", "1.0.0", "CoreLoader tests")]
+[assembly: CoreModInfo(typeof(WidgetProbe.Main), "Widget probe", "1.0.0", "Lodestone tests")]
 
 namespace WidgetProbe;
 

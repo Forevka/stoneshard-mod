@@ -26,8 +26,8 @@ void Resolve() {
             while (!g_dir.empty() && (g_dir.back() == '\\' || g_dir.back() == '/'))
                 g_dir.pop_back();
         }
-        // An installed CoreLoader (a CoreLoader\ folder next to this dll) keeps
-        // everything it writes under CoreLoader\Logs - contained, and on the
+        // An installed loader (a Lodestone\ folder next to this dll) keeps
+        // everything it writes under Lodestone\Logs - contained, and on the
         // player's own machine rather than at a path compiled in on ours.
         if (g_dir.empty()) {
             HMODULE self = nullptr;
@@ -39,7 +39,7 @@ void Resolve() {
             wchar_t path[MAX_PATH * 4];
             const DWORD len = GetModuleFileNameW(self, path, static_cast<DWORD>(std::size(path)));
             if (len > 0 && len < std::size(path)) {
-                const auto loader = std::filesystem::path(path).parent_path() / L"CoreLoader";
+                const auto loader = std::filesystem::path(path).parent_path() / kInstallFolder;
                 std::error_code ec;
                 if (std::filesystem::is_directory(loader, ec)) {
                     // The rest of the mod opens files through narrow paths
@@ -71,7 +71,7 @@ void Resolve() {
             char exe[MAX_PATH * 2];
             const DWORD n = GetModuleFileNameA(nullptr, exe, sizeof(exe));
             g_dir = (n > 0 && n < sizeof(exe))
-                ? (std::filesystem::path(exe).parent_path() / "CoreLoaderLogs").string()
+                ? (std::filesystem::path(exe).parent_path() / "LodestoneLogs").string()
                 : std::string(".");
         }
 

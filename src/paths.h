@@ -4,6 +4,10 @@
 
 namespace mod::paths {
 
+// The install folder next to version.dll, named after the player-facing brand.
+// The code, the managed assembly and the API keep the CoreLoader name.
+inline constexpr wchar_t kInstallFolder[] = L"Lodestone";
+
 // Root for every file the loader writes: the log and imgui.ini.
 //
 // Defaults to the compile-time MOD_DATA_DIR, overridden per process by the

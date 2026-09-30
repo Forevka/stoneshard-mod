@@ -1,6 +1,6 @@
 using CoreLoader;
 
-[assembly: CoreModInfo(typeof(StoneshardCheats.CheatsMod), "Stoneshard Cheats", "1.0.0", "CoreLoader")]
+[assembly: CoreModInfo(typeof(StoneshardCheats.CheatsMod), "Stoneshard Cheats", "1.0.0", "Lodestone")]
 [assembly: CoreModGame("StoneShard")]
 
 namespace StoneshardCheats;

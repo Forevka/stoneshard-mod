@@ -307,7 +307,7 @@ void DrawUI() {
     ImGui::SetNextWindowSize(ImVec2(660.0f, 480.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(40.0f, 40.0f), ImGuiCond_FirstUseEver);
 
-    ImGui::Begin("CoreLoader");
+    ImGui::Begin("Lodestone");
 
     // Ordered by who wants them: mods first, the tooling that dissects the
     // game and the loader's own health last.

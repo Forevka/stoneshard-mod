@@ -99,7 +99,7 @@ public static unsafe class Values
         }
         catch (GmlException ex)
         {
-            Loader.Log(LogLevel.Warning, "CoreLoader", $"could not root a kept struct: {ex.Message}");
+            Loader.Log(LogLevel.Warning, "Lodestone", $"could not root a kept struct: {ex.Message}");
         }
     }
 
@@ -129,7 +129,7 @@ public static unsafe class Values
         foreach (var (value, _) in Rooted.Where(r => r.Owner == owner).ToList())
         {
             try { Unroot(value); }
-            catch (Exception ex) { Loader.Log(LogLevel.Warning, "CoreLoader", $"releasing a kept struct: {ex.Message}"); }
+            catch (Exception ex) { Loader.Log(LogLevel.Warning, "Lodestone", $"releasing a kept struct: {ex.Message}"); }
         }
     }
 

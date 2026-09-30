@@ -96,7 +96,7 @@ public struct RValue
                     if (Game.BuiltinCount > 0)
                     {
                         if (_canCopyStrings == null)
-                            Loader.Log(LogLevel.Warning, "CoreLoader", "string_copy unusable; strings from mods are interned instead");
+                            Loader.Log(LogLevel.Warning, "Lodestone", "string_copy unusable; strings from mods are interned instead");
                         _canCopyStrings = false;
                     }
                 }

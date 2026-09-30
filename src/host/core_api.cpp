@@ -5,6 +5,7 @@
 #include "hookengine.h"
 #include "log.h"
 #include "overlay.h"
+#include "paths.h"
 #include "symbols.h"
 
 #include <windows.h>
@@ -61,7 +62,7 @@ struct Paths {
         const auto exe = ModulePath(nullptr);
         gameName  = Utf8(exe.stem().wstring());
         gameDir   = Utf8(exe.parent_path().wstring());
-        loaderDir = Utf8((ModulePath(ThisModule()).parent_path() / L"CoreLoader").wstring());
+        loaderDir = Utf8((ModulePath(ThisModule()).parent_path() / paths::kInstallFolder).wstring());
     }
 };
 const Paths& P() { static Paths p; return p; }

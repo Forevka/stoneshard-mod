@@ -13,7 +13,7 @@
     "gameDir": {
       "type": "parameter",
       "datatype": "text",
-      "description": "The game's folder (the one holding the exe, version.dll and CoreLoader\\).",
+      "description": "The game's folder (the one holding the exe, version.dll and Lodestone\\).",
       "replaces": "GAME_DIR_PLACEHOLDER",
       "defaultValue": "C:\\Path\\To\\Game"
     },
@@ -27,7 +27,7 @@
     "interop": {
       "type": "parameter",
       "datatype": "text",
-      "description": "The generated interop's namespace (CoreLoader\\Interop\\<interop>.Interop), e.g. StoneShard or Dwarf_Eats_Mountain. Leave empty to write the mod without it.",
+      "description": "The generated interop's namespace (Lodestone\\Interop\\<interop>.Interop), e.g. StoneShard or Dwarf_Eats_Mountain. Leave empty to write the mod without it.",
       "replaces": "INTEROP_PLACEHOLDER",
       "defaultValue": ""
     },

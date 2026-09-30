@@ -1,18 +1,18 @@
 <#
 .SYNOPSIS
-  Restarts a test game with CoreLoader and waits until its mods are loaded.
+  Restarts a test game with Lodestone and waits until its mods are loaded.
 
 .DESCRIPTION
-  Stops a running instance of the game, optionally deploys CoreLoader and mods
+  Stops a running instance of the game, optionally deploys Lodestone and mods
   (tools\deploy-coreloader.ps1), launches the game, and waits for this run's
-  loader log (<game>\CoreLoader\Logs\coreloader.log) to report "mod(s)
+  loader log (<game>\Lodestone\Logs\lodestone.log) to report "mod(s)
   loaded" - and, with -WaitFor, a line matching that regex too. Then prints
   the log lines that matter: loaded mods, faults, errors and -WaitFor matches.
   Exit code 1 on timeout. -Stop only stops the game.
 
   -TestHost launches the game with CORELOADER_TEST=1, which turns on the
   loader's test host (the pipe tools\coreloader.ps1 talks to), and waits for
-  its "test host ON" line as well. It also writes CoreLoader\testhost.enable,
+  its "test host ON" line as well. It also writes Lodestone\testhost.enable,
   which does the same for games Steam relaunches (losing the variable); a
   launch without -TestHost, or -Stop, removes that file.
 
@@ -61,7 +61,7 @@ if (-not $Exe) {
 }
 $exePath  = Join-Path $GameDir $Exe
 $procName = [IO.Path]::GetFileNameWithoutExtension($Exe)
-$log      = Join-Path $GameDir "CoreLoader\Logs\coreloader.log"
+$log      = Join-Path $GameDir "Lodestone\Logs\lodestone.log"
 
 function Stop-Game {
     $running = @(Get-Process -Name $procName -ErrorAction SilentlyContinue)
@@ -73,7 +73,7 @@ function Stop-Game {
 }
 
 Stop-Game
-$marker = Join-Path $GameDir "CoreLoader\testhost.enable"
+$marker = Join-Path $GameDir "Lodestone\testhost.enable"
 if ($Stop) {
     # A game started later from Steam must not come up with the test host on.
     if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker }

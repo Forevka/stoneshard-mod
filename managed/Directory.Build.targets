@@ -8,7 +8,7 @@
 
       <InteropGame>Dwarf_Eats_Mountain</InteropGame>
 
-    and this looks for <game>\CoreLoader\Interop\<InteropGame>.Interop\ under
+    and this looks for <game>\Lodestone\Interop\<InteropGame>.Interop\ under
     every folder in CoreLoaderGameDirs (from CoreLoader.user.props or the
     CORELOADER_GAME_DIRS environment variable). Found: the project references
     it and HasInterop is true. Not found: the project still loads and builds -
@@ -20,7 +20,7 @@
   <PropertyGroup Condition="'$(InteropGame)' != '' and '$(InteropProject)' == '' and '$(CoreLoaderGameDirs)' != ''">
     <!-- Unescape: a property function's result comes back with ';' escaped,
          which would make the whole list one path instead of one per game. -->
-    <_InteropGlobs>$([MSBuild]::Unescape($([System.String]::Copy('$(CoreLoaderGameDirs);').Replace(';', '\CoreLoader\Interop\$(InteropGame).Interop\$(InteropGame).Interop.cs*proj;'))))</_InteropGlobs>
+    <_InteropGlobs>$([MSBuild]::Unescape($([System.String]::Copy('$(CoreLoaderGameDirs);').Replace(';', '\Lodestone\Interop\$(InteropGame).Interop\$(InteropGame).Interop.cs*proj;'))))</_InteropGlobs>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(InteropGame)' != ''">
@@ -33,7 +33,7 @@
   </ItemGroup>
 
   <Target Name="InteropMissing" BeforeTargets="Build" Condition="'$(InteropGame)' != '' and '@(_InteropFound)' == ''">
-    <Warning Text="$(MSBuildProjectName) is written against the $(InteropGame) interop, which was not found. Run the game once with CoreLoader installed, then run tools\setup-dev.ps1 (or list the game folder in managed\CoreLoader.user.props). Nothing of this project was compiled." />
+    <Warning Text="$(MSBuildProjectName) is written against the $(InteropGame) interop, which was not found. Run the game once with Lodestone installed, then run tools\setup-dev.ps1 (or list the game folder in managed\CoreLoader.user.props). Nothing of this project was compiled." />
   </Target>
 
 </Project>

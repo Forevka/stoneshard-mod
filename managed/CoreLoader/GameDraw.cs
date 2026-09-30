@@ -16,7 +16,7 @@ namespace CoreLoader;
 /// </remarks>
 public static class GameDraw
 {
-    private static readonly Logger Log = new("CoreLoader");
+    private static readonly Logger Log = new("Lodestone");
     private static readonly List<(Action Draw, LoadedMod? Owner)> Handlers = new();
     private static List<string>? _events;
     private static HookHandle? _carrier;

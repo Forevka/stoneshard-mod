@@ -15,7 +15,7 @@ namespace CoreLoader.Runtime;
 /// </summary>
 internal static class VarHarvest
 {
-    private static readonly Logger Log = new("CoreLoader");
+    private static readonly Logger Log = new("Lodestone");
     // Budgeted by time, not by objects: one object with hundreds of variables
     // costs as much as a hundred with a few.
     private const double BudgetMs = 1.5;

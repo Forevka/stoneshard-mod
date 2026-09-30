@@ -3,7 +3,7 @@
 // hostfxr is located by hand rather than through nethost.lib: nethost is one
 // more static library to match against our static CRT, and the lookup it does
 // is three well-documented steps (DOTNET_ROOT, the registry, Program Files).
-// An app-local runtime under CoreLoader\dotnet wins over all of them, so a
+// An app-local runtime under Lodestone\dotnet wins over all of them, so a
 // release can ship a private runtime and never depend on what the player has.
 
 #include "host/dotnet_host.h"

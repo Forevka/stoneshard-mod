@@ -11,7 +11,7 @@ namespace {
 
 DWORD WINAPI InitThread(LPVOID) {
     mod::LogInit();
-    mod::Logf("=== CoreLoader ===");
+    mod::Logf("=== Lodestone ===");
     mod::Logf("loaded into pid %lu", GetCurrentProcessId());
 
     // The exe's .data relocations are applied before imports are resolved, so

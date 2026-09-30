@@ -180,7 +180,7 @@ bool Scan() {
         char buf[200];
         if (DataWinHasBytecode())
             std::snprintf(buf, sizeof(buf),
-                          "not a YYC game: data.win holds VM bytecode, and CoreLoader needs "
+                          "not a YYC game: data.win holds VM bytecode, and Lodestone needs "
                           "YYC-compiled code (GML features are off)");
         else
             std::snprintf(buf, sizeof(buf),

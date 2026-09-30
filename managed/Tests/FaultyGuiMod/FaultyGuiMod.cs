@@ -1,6 +1,6 @@
 using CoreLoader;
 
-[assembly: CoreModInfo(typeof(FaultyGuiMod.ThrowsInsideTabBar), "Faulty: throws in tab bar", "1.0.0", "CoreLoader tests")]
+[assembly: CoreModInfo(typeof(FaultyGuiMod.ThrowsInsideTabBar), "Faulty: throws in tab bar", "1.0.0", "Lodestone tests")]
 
 namespace FaultyGuiMod;
 

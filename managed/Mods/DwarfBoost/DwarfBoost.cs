@@ -1,6 +1,6 @@
 using CoreLoader;
 
-[assembly: CoreModInfo(typeof(DwarfBoost.DwarfBoostMod), "Dwarf Boost", "1.0.0", "CoreLoader")]
+[assembly: CoreModInfo(typeof(DwarfBoost.DwarfBoostMod), "Dwarf Boost", "1.0.0", "Lodestone")]
 [assembly: CoreModGame("Dwarf Eats Mountain")]
 
 namespace DwarfBoost;

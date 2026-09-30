@@ -1,7 +1,7 @@
 using CoreLoader;
 using Dwarf_Eats_Mountain;   // the generated interop for Dwarf Eats Mountain
 
-[assembly: CoreModInfo(typeof(InteropExample.InteropExampleMod), "Interop Example", "1.0.0", "CoreLoader")]
+[assembly: CoreModInfo(typeof(InteropExample.InteropExampleMod), "Interop Example", "1.0.0", "Lodestone")]
 [assembly: CoreModGame("Dwarf Eats Mountain")]
 
 namespace InteropExample;

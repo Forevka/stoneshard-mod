@@ -2,7 +2,7 @@
 
   <!--
     The workflow CoreLoader is built for: run the game once with CoreLoader
-    installed, and it writes CoreLoader\Interop\<Game>.Interop\ - a project with
+    installed, and it writes Lodestone\Interop\<Game>.Interop\ - a project with
     typed refs to the game's scripts, objects, builtins and assets.
 
     This mod is written against Dwarf Eats Mountain's. It is found through
