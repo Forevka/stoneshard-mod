@@ -128,7 +128,11 @@ internal sealed class Table
         if (!IsOpen) return;
         if (_round is { Finished: false } r)
         {
-            r.Forfeit("You walk away from the table.");
+            // A round the player can no longer change is played out; only one
+            // still waiting on them is folded.
+            try { CurrentGame.Conclude(); }
+            catch (Exception ex) when (ex is GmlException or InvalidOperationException) { _log.Warning($"concluding the round: {ex.Message}"); }
+            if (!r.Finished) r.Forfeit("You walk away from the table.");
             Settle();
         }
         if (_owed > 0) PayOwed();

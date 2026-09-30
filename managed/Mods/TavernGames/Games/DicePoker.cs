@@ -170,6 +170,14 @@ internal sealed class DicePoker : MiniGame
         Wait(Step.Rerolling, mine + theirs > 0 ? RollFrames : 1, Showdown);
     }
 
+    // The second throw is already rolled (the dice only tumble on screen): leaving now still shows down.
+    public override void Conclude()
+    {
+        if (_step != Step.Rerolling) return;
+        _then = null;
+        Showdown();
+    }
+
     private void Showdown()
     {
         _step = Step.Done;

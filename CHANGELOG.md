@@ -44,11 +44,13 @@ bump may break the mod API or the native CoreApi table; each version says so und
   game's style says what a click on the hovered cell would do, and clicking land you have visited, or
   a cell next to one, travels there the way a border crossing does. A blocked arrival is moved to the
   nearest free cell joined to the room's edges; travel starts only from the open world (not inside a building or dungeon) and is refused with enemies nearby. Test-host commands `ft.*`.
-- **TavernGames** (Stoneshard): dice and card games against tavern NPCs, for crowns. Next to an
-  innkeeper, a drunk, a sellsword or anyone friendly inside a tavern, press `playKey` (default G) to
-  open a table drawn with the game's own board, buttons, colour text and sounds; pick **Poker Dice**
-  (five dice, a round of betting, one reroll) or **Twenty-One** (the NPC deals and draws to a total set
-  by its temperament) and a stake. Opponents are cautious, steady or reckless by trade, and their
+- **TavernGames** (Stoneshard): dice and card games against tavern NPCs, for crowns. Talk to an
+  innkeeper, a drunk, a sellsword or anyone friendly inside a tavern and their conversation offers a
+  line asking for a game ("Fancy a game? Dice, or cards?") just above the goodbye; it opens a table drawn with the game's own
+  board, buttons, colour text and sounds (a play key, `playKey`, can be set as well; off by default).
+  Pick **Poker Dice** (five dice, a round of betting, one reroll) or **Twenty-One** (the NPC deals from
+  a deck on the table - cards slide out and turn over - and draws to a total set by its temperament)
+  and a stake. Opponents are cautious, steady or reckless by trade, and their
   purses run dry and refill over turns. The stake is held by the table from the moment it is committed,
   so walking away folds and a loss is never dodged; a round dropped by a room change or hot reload
   hands it back. Games plug into a small framework (`Table`, `MiniGame`, `Session`). Test-host commands

@@ -64,4 +64,12 @@ internal abstract class MiniGame
 
     /// <summary>A click in the play area that was not on a button, in design units.</summary>
     public virtual void OnClick(double x, double y) { }
+
+    /// <summary>
+    /// The player is leaving the table mid-round. A round whose outcome no
+    /// longer depends on the player - the dice already in the air, a hand
+    /// already won, a dealer left to draw - ends here as it would have; one
+    /// still waiting on the player is left alone, and the table folds it.
+    /// </summary>
+    public virtual void Conclude() { }
 }

@@ -97,6 +97,14 @@ internal sealed class Canvas
         s.Draw(Gx(x), Gy(y), frame, K * scale, K * scale, 0, colour, alpha);
 
     /// <summary>
+    /// A mod sprite squeezed horizontally about its own centre: <paramref name="xScale"/>
+    /// from 1 down to 0 and back is a card turning over. The unsqueezed frame's
+    /// top-left sits at (x, y); <paramref name="width"/> is the frame's width in pixels.
+    /// </summary>
+    public void SpriteTurned(Sprite s, int frame, double x, double y, double width, double xScale, double scale = 1) =>
+        s.Draw(Gx(x + width * scale * (1 - xScale) / 2), Gy(y), frame, K * scale * xScale, K * scale);
+
+    /// <summary>
     /// One of the game's sprites by name, its top-left corner at (x, y) whatever
     /// its origin (s_menu_button's is its centre), or nothing if this build lacks it.
     /// </summary>

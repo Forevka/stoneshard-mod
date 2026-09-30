@@ -8,8 +8,10 @@ using StoneShard;
 namespace TavernGames;
 
 /// <summary>
-/// Gambling with the locals: stand next to someone in a tavern and press the
-/// play key (G by default) to sit down to Poker Dice or Twenty-One for crowns.
+/// Gambling with the locals: talk to someone in a tavern (or a drunk, a
+/// sellsword, an innkeeper anywhere) and ask for a game - a line of our own in
+/// the game's conversation - to sit down to Poker Dice or Twenty-One for
+/// crowns. A play key can be set as well (playKey, off by default).
 /// The table is a small framework - <see cref="Table"/> runs the stake, the
 /// purses, the window and input; each game is a <see cref="MiniGame"/> - so a
 /// new game is one class added to the list below.
@@ -23,7 +25,8 @@ public sealed class TavernGamesMod : CoreMod
     private readonly Canvas _promptCanvas = new();
     private Table _table = null!;
     private List<MiniGame> _games = null!;
-    private string _key = "G";
+    private string _key = "";
+    private DialogueOption _dialogue = null!;
     private double _reach = 1.5;
     private int _sincePrompt = PromptEveryFrames;
     private InstanceRef? _candidate;
@@ -33,8 +36,9 @@ public sealed class TavernGamesMod : CoreMod
 
     public override void OnInitialize()
     {
-        _key = Config.Get("playKey", "G").Trim().ToUpperInvariant();
-        if (_key.Length != 1) _key = "G";
+        // The conversation is the way in; a key is an extra for those who want one.
+        _key = Config.Get("playKey", "").Trim().ToUpperInvariant();
+        if (_key.Length != 1) _key = "";
         _reach = Math.Clamp(Config.Get("reachTiles", 1.5), 1, 4);
         Tavern.Anywhere = Config.Get("anywhere", false);
 
@@ -43,6 +47,8 @@ public sealed class TavernGamesMod : CoreMod
         _games = [new DicePoker(dice), new TwentyOne(cards)];
         _table = new Table(_games, _ledger, Log);
         _table.CaptureKeys();
+        _dialogue = new DialogueOption(WillPlay, Log);
+        _dialogue.Install();
 
         GameDraw.OnGui(DrawGui);
         // Purses refill as turns pass; the tick runs as whoever ends a turn, the player's is ours.
@@ -55,7 +61,17 @@ public sealed class TavernGamesMod : CoreMod
             catch (GmlException) { }
         });
         if (TestHost.Enabled) RegisterCommands();
-        Log.Info($"ready: stand by someone in a tavern and press [{_key}] to play ({string.Join(", ", _games.Select(g => g.Title))})");
+        Log.Info($"ready: ask someone in a tavern for a game{(_key.Length > 0 ? $", or press [{_key}] next to them" : "")} ({string.Join(", ", _games.Select(g => g.Title))})");
+    }
+
+    // Whether this NPC would sit down to play, where the player stands now.
+    private static bool WillPlay(InstanceRef npc)
+    {
+        try
+        {
+            return World.Player is { } p && Tavern.Refusal(npc, Tavern.Anywhere || Tavern.InTavern(p)).Length == 0;
+        }
+        catch (GmlException) { return false; }
     }
 
     public override void OnShutdown()
@@ -114,6 +130,7 @@ public sealed class TavernGamesMod : CoreMod
         if (key != _playerKey)
         {
             if (_table.IsOpen) _table.Drop();
+            _dialogue.Forget();
             _playerKey = key;
         }
 
@@ -127,6 +144,14 @@ public sealed class TavernGamesMod : CoreMod
             _candidate = null;
             return;
         }
+        // Asked in conversation: the table opens once the dialogue window has closed.
+        if (_dialogue.Pending != null && !Tavern.GameBusy())
+        {
+            // Asked a moment ago, still there, still willing (they may have walked off since).
+            if (_dialogue.TakePending() is { Exists: true } asked && WillPlay(asked)) _table.Open(asked);
+            return;
+        }
+        if (_key.Length == 0) return;
         if (++_sincePrompt >= PromptEveryFrames)
         {
             _sincePrompt = 0;
@@ -173,8 +198,9 @@ public sealed class TavernGamesMod : CoreMod
 
     public override void OnGUI()
     {
-        UI.TextWrapped($"Stand next to someone in a tavern (innkeepers, drunks, sellswords and the like) and press [{_key}] " +
-                       "to play. Esc or Leave stands up; leaving mid-round folds it. playKey, reachTiles and anywhere are in TavernGames.json.");
+        UI.TextWrapped("Talk to someone in a tavern (innkeepers, drunks, sellswords and the like) and ask for a game: the option sits " +
+                       "just above the goodbye. Esc or Leave stands up; leaving mid-round folds it. In TavernGames.json, playKey adds a key " +
+                       "to play with whoever stands next to you (off by default), with reachTiles and anywhere.");
         bool anywhere = Tavern.Anywhere;
         if (UI.Checkbox("Play with anyone friendly, anywhere (not only in taverns)", ref anywhere))
         {
