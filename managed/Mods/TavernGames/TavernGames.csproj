@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Written against Stoneshard's generated interop (Scripts, Objects, Builtins),
+    found through managed\CoreLoader.user.props - see managed\Directory.Build.targets.
+    deploy-coreloader.ps1 ships StoneShard.Interop.dll next to it.
+  -->
+  <PropertyGroup>
+    <AssemblyName>TavernGames</AssemblyName>
+    <InteropGame>StoneShard</InteropGame>
+  </PropertyGroup>
+
+  <!-- Dice and card strips (made by assets-src\make_assets.py) ship in Mods/TavernGames/assets. -->
+  <ItemGroup>
+    <None Include="assets\**\*.png" Link="TavernGames\assets\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
