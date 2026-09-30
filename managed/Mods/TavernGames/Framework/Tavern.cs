@@ -153,9 +153,10 @@ internal static class Tavern
         string raw = ObjectName(npc), obj = raw.ToLowerInvariant();
         if (obj.Contains("drunk")) return (Temperament.Reckless, 120);
         if (HasWord(raw, "merc") || HasWord(raw, "leif") || HasWord(raw, "darrel")) return (Temperament.Reckless, 400);
-        if (obj.Contains("innkeeper") || obj.Contains("hostess")) return (Temperament.Cautious, 600);
+        // The innkeeper's wife and daughter first: their names hold "innkeeper" too.
         if (obj.Contains("worker") || obj.Contains("servant") || obj.Contains("wife") || obj.Contains("daughter"))
             return (Temperament.Cautious, 150);
+        if (obj.Contains("innkeeper") || obj.Contains("hostess")) return (Temperament.Cautious, 600);
         return (Temperament.Steady, 200);
     }
 

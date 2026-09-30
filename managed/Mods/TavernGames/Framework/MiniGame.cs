@@ -66,6 +66,12 @@ internal abstract class MiniGame
     public virtual void OnClick(double x, double y) { }
 
     /// <summary>
+    /// Space was pressed while the round runs (the table keeps every key from
+    /// the game and hands this one on): the action key of the physical games.
+    /// </summary>
+    public virtual void OnAction() { }
+
+    /// <summary>
     /// Ways to carry on from a finished round besides starting afresh, each
     /// with the stake the next round would be played for - a ladder's
     /// "Continue to level 3". Pressing one starts a round with

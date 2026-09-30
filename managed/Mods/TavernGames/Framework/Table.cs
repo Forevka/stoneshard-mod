@@ -50,8 +50,8 @@ internal sealed class Table
     // The purse as the Draw pass read it, once per frame.
     private int? _gold;
 
-    // Esc, as seen before the game cleared it (see CaptureKeys).
-    private bool _escPressed;
+    // Esc and Space, as seen before the game cleared them (see CaptureKeys).
+    private bool _escPressed, _actionPressed;
 
     public Table(IReadOnlyList<MiniGame> games, Ledger ledger, Logger log)
     {
@@ -91,6 +91,7 @@ internal sealed class Table
             try
             {
                 if (Builtins.keyboard_check_pressed(27).AsBool) _escPressed = true;
+                if (Builtins.keyboard_check_pressed(32).AsBool) _actionPressed = true;
                 Builtins.io_clear();
             }
             catch (GmlException) { }
@@ -112,7 +113,7 @@ internal sealed class Table
         _chatter.Clear();
         _round = null;
         _error = "";
-        _escPressed = false;
+        _escPressed = _actionPressed = false;
         _phase = Phase.Choosing;
         if (gameId != null) SelectGame(gameId);
         ClampStake();
@@ -126,12 +127,16 @@ internal sealed class Table
     public void Close()
     {
         if (!IsOpen) return;
-        if (_round is { Finished: false } r)
+        if (_phase == Phase.Playing && _round is { } r)
         {
             // A round the player can no longer change is played out; only one
-            // still waiting on them is folded.
-            try { CurrentGame.Conclude(); }
-            catch (Exception ex) when (ex is GmlException or InvalidOperationException) { _log.Warning($"concluding the round: {ex.Message}"); }
+            // still waiting on them is folded. One that ended this very frame
+            // (and is not yet paid) is simply settled.
+            if (!r.Finished)
+            {
+                try { CurrentGame.Conclude(); }
+                catch (Exception ex) when (ex is GmlException or InvalidOperationException) { _log.Warning($"concluding the round: {ex.Message}"); }
+            }
             if (!r.Finished) r.Forfeit("You walk away from the table.");
             Settle();
         }
@@ -206,9 +211,11 @@ internal sealed class Table
 
         if (_phase == Phase.Playing && _round is { } r)
         {
+            if (_actionPressed && !r.Finished) CurrentGame.OnAction();
             CurrentGame.Tick();
             if (r.Finished) Settle();
         }
+        _actionPressed = false;
         if (_owed > 0 && ++_sinceRetry >= RetryEveryFrames) PayOwed();
 
         // Keep every click for ourselves while the table is up.
@@ -222,7 +229,12 @@ internal sealed class Table
         string? id = _canvas.ButtonAt(x, y);
         if (id == null)
         {
-            if (_phase == Phase.Playing && PlayArea.Contains(x, y)) CurrentGame.OnClick(x, y);
+            if (_phase == Phase.Playing && PlayArea.Contains(x, y) && _round is { Finished: false } playing)
+            {
+                CurrentGame.OnClick(x, y);
+                // A click can end the round (a push, a gulp, a cup): pay out now, not next frame.
+                if (playing.Finished) Settle();
+            }
             return;
         }
         if (id.Length > 0) Press(id);
@@ -481,13 +493,13 @@ internal sealed class Table
 
     private void DrawChooser(Canvas c, Opponent opp)
     {
-        // One tab per game.
-        double tx = PlayArea.X;
+        // One tab per game, sharing the width.
+        double gap = 8, tw = Math.Min(130, (PlayArea.W - gap * (_games.Count - 1)) / _games.Count), tx = PlayArea.X;
         for (int i = 0; i < _games.Count; i++)
         {
             string label = i == _gameIndex ? $"~y~{_games[i].Title}~/~" : _games[i].Title;
-            c.Button("game:" + _games[i].Id, label, new Area(tx, PlayArea.Y, 130, 26));
-            tx += 140;
+            c.Button("game:" + _games[i].Id, label, new Area(tx, PlayArea.Y, tw, 26));
+            tx += tw + gap;
         }
         c.Text(CurrentGame.Rules, PlayArea.X, PlayArea.Y + 44, wrap: PlayArea.W * c.K);
         c.Text($"Stake: ~y~{Stake}~/~ crowns a side", PlayArea.CenterX, PlayArea.Y + 170, align: 0);

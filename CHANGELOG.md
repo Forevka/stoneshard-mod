@@ -52,7 +52,11 @@ bump may break the mod API or the native CoreApi table; each version says so und
   a deck on the table - cards slide out and turn over - and draws to a total set by its temperament)
   or **Thimblerig** (find the ball under the shuffled cups: a five-level ladder, each won level offering
   the next with more cups - three up to six - more and faster swaps, two pairs at once near the top,
-  and a stake of x1, x2, x3, x5 then x8) and a stake. Opponents are cautious, steady or reckless by trade, and their
+  and a stake of x1, x2, x3, x5 then x8), **Arm Wrestling** (a tug-of-war won with a timing check: press
+  Space while the cursor is in a zone as wide as your STR against theirs; it costs real Fatigue) or a
+  **Drinking Contest** (mug for mug until someone falls: you down each by stopping a marker that sways
+  more the drunker your character really is; every mug is the game's own Drunkenness, with its
+  confusion, vomiting and sleep, and deep in it you may pass out on the spot) and a stake. Opponents are cautious, steady or reckless by trade, and their
   purses run dry and refill over turns. The stake is held by the table from the moment it is committed,
   so walking away folds and a loss is never dodged; a round dropped by a room change or hot reload
   hands it back. Games plug into a small framework (`Table`, `MiniGame`, `Session`); a game can offer ways to carry on

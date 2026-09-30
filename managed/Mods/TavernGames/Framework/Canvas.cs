@@ -97,6 +97,14 @@ internal sealed class Canvas
         s.Draw(Gx(x), Gy(y), frame, K * scale, K * scale, 0, colour, alpha);
 
     /// <summary>
+    /// A mod sprite turned about its origin (set when it was added: an arm's
+    /// elbow, say) placed at (x, y); <paramref name="degrees"/> anticlockwise,
+    /// and <paramref name="stretch"/> lengthens it along its own height.
+    /// </summary>
+    public void SpriteRotated(Sprite s, int frame, double x, double y, double degrees, double scale = 1, double stretch = 1) =>
+        s.Draw(Gx(x), Gy(y), frame, K * scale, K * scale * stretch, degrees);
+
+    /// <summary>
     /// A mod sprite squeezed horizontally about its own centre: <paramref name="xScale"/>
     /// from 1 down to 0 and back is a card turning over. The unsqueezed frame's
     /// top-left sits at (x, y); <paramref name="width"/> is the frame's width in pixels.

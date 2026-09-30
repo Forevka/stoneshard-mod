@@ -10,7 +10,7 @@ namespace TavernGames;
 /// <summary>
 /// Gambling with the locals: talk to someone in a tavern (or a drunk, a
 /// sellsword, an innkeeper anywhere) and ask for a game - a line of our own in
-/// the game's conversation - to sit down to Poker Dice, Twenty-One or Thimblerig for
+/// the game's conversation - to sit down to Poker Dice, Twenty-One, Thimblerig, Arm Wrestling or a Drinking Contest for
 /// crowns. A play key can be set as well (playKey, off by default).
 /// The table is a small framework - <see cref="Table"/> runs the stake, the
 /// purses, the window and input; each game is a <see cref="MiniGame"/> - so a
@@ -46,7 +46,11 @@ public sealed class TavernGamesMod : CoreMod
         var cards = Content.AddSprite("assets/cards.png", frames: 53);
         var cup = Content.AddSprite("assets/cup.png", frames: 2);
         var ball = Content.AddSprite("assets/ball.png");
-        _games = [new DicePoker(dice), new TwentyOne(cards), new Thimblerig(cup, ball)];
+        // The forearm turns about its elbow, at the bottom of the frame; the fists about their middle.
+        var arm = Content.AddSprite("assets/arm.png", frames: 2, xOrigin: 6, yOrigin: 43);
+        var fists = Content.AddSprite("assets/fists.png", xOrigin: 9, yOrigin: 7);
+        var mug = Content.AddSprite("assets/mug.png", frames: 2);
+        _games = [new DicePoker(dice), new TwentyOne(cards), new Thimblerig(cup, ball), new ArmWrestling(arm, fists), new DrinkingContest(mug)];
         _table = new Table(_games, _ledger, Log);
         _table.CaptureKeys();
         _dialogue = new DialogueOption(WillPlay, Log);
@@ -275,6 +279,19 @@ public sealed class TavernGamesMod : CoreMod
                 return rig.Pick(args[0].GetInt32());
             },
             "tg.cup <slot>: thimblerig - picks the cup standing on that slot (0 = leftmost), as a click would");
+        TestHost.Register("tg.act", args =>
+            {
+                if (!_table.IsOpen || _table.PhaseName != "Playing") throw new InvalidOperationException("no round in play");
+                string how = args.Count > 0 ? args[0].GetString() ?? "" : "";
+                int aim = how == "aim" ? 1 : how == "miss" ? -1 : 0;
+                return _table.CurrentGame switch
+                {
+                    ArmWrestling arm => arm.Push(aim),
+                    DrinkingContest drink => drink.Gulp(aim),
+                    _ => throw new InvalidOperationException("this game has no action key"),
+                };
+            },
+            "tg.act [aim|miss]: the action key (Space) - arm wrestling: push; drinking contest: gulp. aim/miss place the cursor first (testing)");
         TestHost.Register("tg.seed", args =>
         {
             _table.Seed(args[0].GetInt32());
@@ -296,6 +313,8 @@ public sealed class TavernGamesMod : CoreMod
                 DicePoker d => d.State(),
                 TwentyOne t => t.State(),
                 Thimblerig rig => rig.State(),
+                ArmWrestling arm => arm.State(),
+                DrinkingContest drink => drink.State(),
                 _ => null,
             }
             : null;
