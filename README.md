@@ -4,6 +4,8 @@
 (`<game>\Lodestone\`), the log and the overlay carry it. The code, the `CoreLoader.dll` assembly and
 the mod API keep the CoreLoader name.
 
+**Playing?** [INSTALL.md](INSTALL.md) walks through installing Lodestone and mods from a release.
+
 A mod loader for **any YYC-compiled GameMaker game**. A `version.dll` proxy finds the game's
 compiled GML and the runtime's helpers by pattern, hosts .NET and loads C# mods, with a Dear ImGui
 overlay (**INSERT** toggles it). Nothing is hardcoded: every function, object and asset is resolved

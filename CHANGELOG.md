@@ -21,6 +21,8 @@ bump may break the mod API or the native CoreApi table; each version says so und
   runtime) and one zip per mod, each extracting straight into a game folder, and can upload them to a
   GitHub release. `.github/workflows/release.yml` builds and tests everything on a `v*` tag and
   creates a draft release; interop-based mods are added from a machine with the game.
+- `INSTALL.md`: a player's guide to installing Lodestone and mods from a release, updating,
+  uninstalling and troubleshooting.
 - **Reliquary** (Stoneshard): six artifacts that ask for something back, one per family of the
   Stoneshard Reliquary design - Stavebound Ember, Gorgoneion, Wolf's Heart, Copper Ring of Faith,
   Grafted Hand of the Hanged Man, Pilgrim's Millstone. Written only against the generated interop.
