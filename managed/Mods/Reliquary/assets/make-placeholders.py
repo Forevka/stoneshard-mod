@@ -1,10 +1,18 @@
 # Draws the placeholder inventory sprites: "<name> image will be here" on a
 # framed tile, sized to the carrier's footprint (27 px per inventory cell).
 # Run with any Python that has Pillow:  python make-placeholders.py
+#
+# Most relics now have real artwork, cut from the delivered renders by
+# process-sprites.py. So this only fills the gaps: a relic is redrawn when it has
+# no sprite at all, or when the sprite it has is one of these placeholders. Real
+# art is never overwritten.
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 CELL = 27
+FRAME = (212, 151, 63, 255)
+FILL = (40, 30, 22, 235)
+TEXT = (236, 222, 190, 255)
 # id, name, cells wide, cells high - must match Relic.Carrier in the mod.
 RELICS = [
     ("pilgrims_millstone", "Pilgrim's Millstone", 1, 2),
@@ -32,13 +40,35 @@ RELICS = [
     ("sated_worm", "The Sated Worm", 1, 2),
 ]
 
+
+def is_placeholder(path):
+    """True if this file is one of ours rather than artwork.
+
+    The frame is the tell: its top-left corner and the fill just inside it are two
+    exact colours no keyed-out render produces (both corners of real sprites come
+    out fully transparent). Cheaper and more honest than a hash, which would go
+    stale the moment the placeholder's wording changed.
+    """
+    try:
+        with Image.open(path) as img:
+            img = img.convert("RGBA")
+            return img.getpixel((1, 1)) == FRAME and img.getpixel((2, 2)) == FILL
+    except (OSError, IndexError):
+        return False
+
+
 here = Path(__file__).parent
 font = ImageFont.load_default(size=5)
 
 for rid, name, w, h in RELICS:
+    target = here / f"{rid}.png"
+    if target.exists() and not is_placeholder(target):
+        print("kept", rid, "(real art)")
+        continue
+
     img = Image.new("RGBA", (w * CELL, h * CELL), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rectangle([1, 1, w * CELL - 2, h * CELL - 2], fill=(40, 30, 22, 235), outline=(212, 151, 63, 255))
+    d.rectangle([1, 1, w * CELL - 2, h * CELL - 2], fill=FILL, outline=FRAME)
     words = f"{name} image will be here".split()
     lines, cur = [], ""
     for word in words:
@@ -52,7 +82,7 @@ for rid, name, w, h in RELICS:
     lines.append(cur)
     y = 3
     for line in lines:
-        d.text((3, y), line, font=font, fill=(236, 222, 190, 255))
+        d.text((3, y), line, font=font, fill=TEXT)
         y += 6
-    img.save(here / f"{rid}.png")
+    img.save(target)
     print("wrote", rid)
