@@ -7,7 +7,20 @@ bump may break the mod API or the native CoreApi table; each version says so und
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** **the loader is now called Lodestone for players.** It installs to `<game>\Lodestone\` (was
+  `CoreLoader\`), logs to `Lodestone\Logs\lodestone.log`, and its overlay window, log lines and the
+  shipped mods' author read "Lodestone". The assembly, namespace, API, template and `CORELOADER_*`
+  variables keep the CoreLoader name. `tools\deploy-coreloader.ps1` moves an existing `CoreLoader\`
+  folder to `Lodestone\`, and interop-based projects now look for `<game>\Lodestone\Interop\`.
+  A mod made from the template before this has `<CoreLoaderDir>$(GameDir)\CoreLoader</CoreLoaderDir>`
+  in its csproj: change it to `$(GameDir)\Lodestone`, or it no longer finds CoreLoader.dll.
+
 ### Added
+- Release packaging: `tools\package-release.ps1` packs the loader (optionally with a private .NET
+  runtime) and one zip per mod, each extracting straight into a game folder, and can upload them to a
+  GitHub release. `.github/workflows/release.yml` builds and tests everything on a `v*` tag and
+  creates a draft release; interop-based mods are added from a machine with the game.
 - **Reliquary** (Stoneshard): six artifacts that ask for something back, one per family of the
   Stoneshard Reliquary design - Stavebound Ember, Gorgoneion, Wolf's Heart, Copper Ring of Faith,
   Grafted Hand of the Hanged Man, Pilgrim's Millstone. Written only against the generated interop.
@@ -80,7 +93,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - Potions are rewritten inside `o_inv_bottle`'s Alarm 0, the only place the potion scripts work. A build
     that sees no bottle within 2 s gives up, rather than rewriting the next bottle the game makes.
   - The item catalogue is read from the live object table and from the game exe's own CSV rows.
-  - The save folder is backed up once per session, to `<game>\CoreLoader\save-backups`, before the first cheat.
+  - The save folder is backed up once per session, to `<game>\Lodestone\save-backups`, before the first cheat.
 - **Mod analyzer (`CoreLoader.Analyzers`):** compile-time warnings for value-lifetime mistakes. CL0001 is
   an `RValue` kept in a field or auto-property. CL0002 is an `Instance` or `HookCall` kept in one.
   A lambda that is stored, queued or registered as a callback (`Hooks.Before`/`After`/`NextBefore`/
@@ -88,7 +101,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
   (CL0001) or an `Instance` or `HookCall` (CL0002) is reported the same way. CL0003 is `Values.Free` on
   a hook argument or result.
   - Repo mods, tests and examples get it through their `Directory.Build.props`. `deploy-coreloader.ps1`
-    installs it to `<game>\CoreLoader\Analyzers\`, where template mods pick it up. The game never loads it.
+    installs it to `<game>\Lodestone\Analyzers\`, where template mods pick it up. The game never loads it.
 - `tools\game-saves.ps1`: backs up, restores and hash-verifies a game's save folder around a test run.
   Backups go to `.omc\save-backups` in the repo (or `CORELOADER_BACKUP_ROOT`). Restore puts each
   backed-up character folder back exactly, and refuses (unless `-Force`) a folder without the backup
@@ -96,7 +109,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - `tools\run-game.ps1`: restarts a test game (optionally deploying first) and waits for its mods to load
   and for an optional log pattern.
 - **Test host (development only):** with `CORELOADER_TEST=1`, the loader serves a named pipe
-  (`coreloader-<pid>`, current user only; the name is written to `CoreLoader\Logs\testhost.pipe`) that
+  (`coreloader-<pid>`, current user only; the name is written to `Lodestone\Logs\testhost.pipe`) that
   takes line-delimited JSON commands and runs them on the game thread. It replaces the removed remote
   command file.
   - Clients connecting over the network are refused (.NET does not create the pipe with
@@ -116,7 +129,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - `tools\coreloader.ps1` is the client (CLI, or dot-sourced for `Invoke-CoreLoader` / `Wait-CoreLoader`).
     `tools\smoke-stoneshard.ps1` and `tools\smoke-dwarf.ps1` check the commands against a running game.
     `tools\run-game.ps1 -TestHost` starts the game with the host on.
-  - A `CoreLoader\testhost.enable` file also turns the host on, for games Steam relaunches through
+  - A `Lodestone\testhost.enable` file also turns the host on, for games Steam relaunches through
     `steam.exe` (the variable does not survive that). `run-game.ps1 -TestHost` writes it; a launch without
     `-TestHost`, or `-Stop`, removes it.
   - `tools\smoke-generic.ps1 -GameDir <game>` checks the core commands and the Console mod against any YYC

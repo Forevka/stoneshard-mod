@@ -1,4 +1,8 @@
-# CoreLoader
+# Lodestone (CoreLoader)
+
+**Lodestone** is the player-facing name of CoreLoader: releases, the install folder
+(`<game>\Lodestone\`), the log and the overlay carry it. The code, the `CoreLoader.dll` assembly and
+the mod API keep the CoreLoader name.
 
 A mod loader for **any YYC-compiled GameMaker game**. A `version.dll` proxy finds the game's
 compiled GML and the runtime's helpers by pattern, hosts .NET and loads C# mods, with a Dear ImGui
@@ -40,7 +44,7 @@ tools\smoke-generic.ps1 -GameDir "<game folder>"
 ```
 
 Steam relaunches some games through `steam.exe`, which drops the `CORELOADER_TEST` variable.
-`-TestHost` also writes a `CoreLoader\testhost.enable` marker, which covers those games.
+`-TestHost` also writes a `Lodestone\testhost.enable` marker, which covers those games.
 
 CoreLoader began as a native cheat mod for Stoneshard. Those tools are now C# mods
 (`StoneshardCheats`, `StoneshardBoost`, `SpeedControl`), and `version.dll` holds no game-specific code.
@@ -112,7 +116,27 @@ next deploy that can. The runtime is copied before `version.dll`, so a failed de
 new `version.dll` with an old runtime; without `-Live`, a running game stops the deploy before it
 copies anything. `-Live` only defers the native and runtime files: mods copied into `Mods\` are
 hot-reloaded at once by the runtime already running, whatever its version.
-The loader writes its log to `<game>\CoreLoader\Logs`; set `CORELOADER_DATA_DIR` to move it.
+The loader writes its log to `<game>\Lodestone\Logs`; set `CORELOADER_DATA_DIR` to move it.
+An install from before the rename (a `CoreLoader\` folder) is moved to `Lodestone\` by the next
+deploy, generated interop and logs included.
+
+### Releases
+
+`.github/workflows/release.yml` builds everything on a pushed tag `v<Version>` (it must match
+`<Version>` in `managed/CoreLoader/CoreLoader.csproj`) and creates a **draft** GitHub release with
+`tools\package-release.ps1 -BundleRuntime`:
+
+- `Lodestone-<version>-win64.zip`: `version.dll`, `Lodestone\` with a private .NET runtime, and a
+  README.txt for players. It extracts straight into the game folder.
+- `<Mod>-<version>.zip` for each mod: `Mods\<Mod>.dll`, its dependencies and its content.
+
+CI has no game, so mods written against a generated interop (FastTravel, Reliquary) are skipped
+there. Add them from a machine with the game, then publish the draft:
+
+```powershell
+dotnet build managed\CoreLoader.sln -c Release
+tools\package-release.ps1 -Mods FastTravel,Reliquary -NoLoader -Upload v<version>
+```
 
 `tools\re\` holds the static reverse-engineering scripts used to study a game's exe offline
 (xref indexes, callers and callees, `data.win` assets, the builtin table, a Ghidra export). Point
@@ -120,7 +144,7 @@ them at a game with `--exe "<game>\Game.exe"` or the `RE_GAME_EXE` variable; the
 `numpy` and `capstone`. Their derived caches (xref indexes, the script, object and builtin tables) go
 to `tools\re\cache\<exe name>\`, one folder per game, or to `RELIB_CACHE` if it is set.
 
-To uninstall, delete `version.dll` and the `CoreLoader` folder from the game directory. The cheat
+To uninstall, delete `version.dll` and the `Lodestone` folder from the game directory. The cheat
 mods modify live game state: keep your own backups of characters you care about.
 
 ## Credits

@@ -5,6 +5,10 @@ C++, `src/`) finds the game's compiled GML and runtime helpers by pattern, hosts
 loads C# mods (`managed/`). It began as a Stoneshard-only native cheat mod; those tools are now
 the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 
+- Player-facing brand: **Lodestone** (install folder `<game>\Lodestone\`, `lodestone.log`, overlay title,
+  release zips). The code, assembly and API stay CoreLoader. Native: `paths::kInstallFolder`.
+- Releases: `tools\package-release.ps1` + `.github/workflows/release.yml` (draft release on a `v*` tag;
+  interop mods uploaded locally with `-Mods FastTravel,Reliquary -NoLoader -Upload v<ver>`).
 - User-facing guide: `managed/README.md` (mod authoring and API). `README.md` is the project overview.
 - History: `CHANGELOG.md`. **Update it with every user-visible change** (see Versioning).
 
@@ -45,10 +49,10 @@ Test games:
   `tools\smoke-generic.ps1 -GameDir <dir>`): `D:\torrent\Zero Stress King`,
   `D:\torrent\The.King.is.Watching.v1.3.6` (`-Exe 'The King is Watching.exe'`; it rebuilds its swap
   chain at startup), and Steam's `TheSpikeCross` and `Slime Trader` (Steam relaunches them, so the
-  test host comes on through `CoreLoader\testhost.enable`). `D:\torrent\Void.War.Build.25426981\...` is
+  test host comes on through `Lodestone\testhost.enable`). `D:\torrent\Void.War.Build.25426981\...` is
   VM-compiled: the loader must stand down cleanly there ("not a YYC game").
 
-Log: `<game>\CoreLoader\Logs\coreloader.log`; the previous run's is `coreloader.prev.log`.
+Log: `<game>\Lodestone\Logs\lodestone.log`; the previous run's is `lodestone.prev.log`.
 `CORELOADER_DATA_DIR` moves the log (and imgui.ini) per process; `SSMOD_DATA_DIR` is its old name,
 still read as a fallback for one release.
 
@@ -124,7 +128,7 @@ Rules the runtime enforces, and that mods must respect:
   `GameDraw.OnGui` draws into the game's GUI layer.
 - **Interop:** a mod written against a game's generated interop sets `<InteropGame>Game_Name</InteropGame>`
   (repo projects), or references the interop csproj (template). Generated at
-  `<game>\CoreLoader\Interop\<Game>.Interop\`.
+  `<game>\Lodestone\Interop\<Game>.Interop\`.
 
 Deploy a repo mod with `tools\deploy-coreloader.ps1 -Mods <Name>`, or copy the dll into a running
 game's `Mods\` for **hot reload**. Add it to `managed/CoreLoader.sln` (`dotnet sln add`) and to

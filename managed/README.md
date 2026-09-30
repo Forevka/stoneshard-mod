@@ -1,6 +1,8 @@
 # CoreLoader: C# mods for any YYC GameMaker game
 
-CoreLoader lets you mod GameMaker games compiled with YYC using C#, in the style of MelonLoader. It is a
+CoreLoader lets you mod GameMaker games compiled with YYC using C#, in the style of MelonLoader.
+Players know it as **Lodestone**: that is the name on releases, the install folder and the overlay,
+while the assembly, namespace and API keep the CoreLoader name. It is a
 `version.dll` placed next to the game exe, and it needs no per-game setup. On first launch it finds
 the game's scripts, object events and builtins, then starts .NET inside the game and loads C# mods
 from `Mods\`.
@@ -22,22 +24,23 @@ The game folder ends up with:
 
 ```
 <game>\version.dll                 the loader (a proxy for the system version.dll)
-<game>\CoreLoader\CoreLoader.dll   the .NET runtime side, plus its runtimeconfig
-<game>\CoreLoader\Interop\         generated per game (see below)
+<game>\Lodestone\CoreLoader.dll    the .NET runtime side, plus its runtimeconfig
+<game>\Lodestone\Interop\          generated per game (see below)
 <game>\Mods\*.dll                  your mods; Mods\<Name>.json holds their settings
 ```
 
-Players need the .NET 10 runtime. It can also be shipped privately in `CoreLoader\dotnet\`. The
+Players need the .NET 10 runtime, unless it ships privately in `Lodestone\dotnet\`, as the release
+zips do (`tools\package-release.ps1 -BundleRuntime`). The
 overlay (**INSERT**) has a *Mods* tab that shows the loader's status and one tab per mod.
 
-The log is `CoreLoader\Logs\coreloader.log`. The previous session's log is kept as
-`coreloader.prev.log`, so a crash's trail survives the next launch. An identical line repeated many
+The log is `Lodestone\Logs\lodestone.log`. The previous session's log is kept as
+`lodestone.prev.log`, so a crash's trail survives the next launch. An identical line repeated many
 times a second is written a few times, then summarised.
 
 ## The mod-author workflow
 
-1. Install CoreLoader and start the game once.
-2. CoreLoader writes `CoreLoader\Interop\<Game>.Interop\`, a buildable project that contains:
+1. Install Lodestone and start the game once.
+2. CoreLoader writes `Lodestone\Interop\<Game>.Interop\`, a buildable project that contains:
    - `Scripts.*`: a ref for every script, to call or hook. Where the argument count can be read from
      the compiled code (366 of 486 scripts in Dwarf Eats Mountain), the ref has a typed `Invoke`, e.g.
      `Scripts.dealDamage` is a `ScriptRef6`. The rest keep `Call(params)`;
@@ -75,7 +78,7 @@ Projects here that use a game's interop, such as `Examples\InteropExample`, name
 itself. It just needs to know where your games are:
 
 ```
-tools\setup-dev.ps1                                    # finds games with CoreLoader in your Steam libraries
+tools\setup-dev.ps1                                    # finds games with Lodestone installed in your Steam libraries
 tools\setup-dev.ps1 -GameDir "D:\Games\Stoneshard"     # plus any other folder
 ```
 
@@ -137,7 +140,7 @@ public override void OnInitialize()
 
 Mods are compiled with `CoreLoader.Analyzers`, which reports the lifetime mistakes the runtime can
 only catch as a crash. The `Mods/`, `Tests/` and `Examples/` projects here get it from their
-`Directory.Build.props`. Template mods get it from `<game>\CoreLoader\Analyzers\`, where
+`Directory.Build.props`. Template mods get it from `<game>\Lodestone\Analyzers\`, where
 `tools\deploy-coreloader.ps1` installs it. It runs in the compiler only; the game never loads it.
 
 | Rule | Reports | Why |
@@ -280,7 +283,7 @@ the game and reads its state back without clicking through the overlay.
 can then call any script and write any variable. Never set the variable for normal play.
 
 Steam relaunches some games through `steam.exe`, and the variable does not survive that. For those,
-a file `CoreLoader\testhost.enable` in the game folder turns the host on too. `run-game.ps1 -TestHost`
+a file `Lodestone\testhost.enable` in the game folder turns the host on too. `run-game.ps1 -TestHost`
 writes it, and a launch without `-TestHost`, or `-Stop`, removes it.
 
 ```powershell
@@ -297,7 +300,7 @@ Wait-CoreLoader { (Invoke-CoreLoader object-count o_enemy) -gt 0 } -TimeoutSec 3
 The protocol is one JSON object per line each way:
 `{"id":1,"cmd":"call","args":["scr_foo",1,"a"]}` is answered with `{"id":1,"ok":true,"result":...}`
 or `{"id":1,"ok":false,"error":"..."}`. The pipe's name is also written to
-`CoreLoader\Logs\testhost.pipe`. Arguments are numbers, strings, booleans or null. Results are
+`Lodestone\Logs\testhost.pipe`. Arguments are numbers, strings, booleans or null. Results are
 numbers, strings, booleans, null (undefined) and arrays. An instance or asset reference becomes its id
 as a number, which can be passed back. Any other value becomes its GML string.
 

@@ -1,6 +1,8 @@
 # Build output and fetched third-party sources (ImGui, MinHook)
 build/
 _deps/
+# Release zips from tools/package-release.ps1
+dist/
 
 # Runtime artifacts the mod writes into its own workspace
 *.log
