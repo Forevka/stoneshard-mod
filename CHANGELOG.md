@@ -26,6 +26,14 @@ bump may break the mod API or the native CoreApi table; each version says so und
   `CoreModGame` needs the attribute added and a rebuild.
 
 ### Added
+- **StoneshardHarness**, a development mod that lets a script or an agent play Stoneshard over the
+  test host without screenshots. `hx.state`, `hx.player`, `hx.enemies`, `hx.npcs`, `hx.objects`,
+  `hx.inventory`, `hx.log`, `hx.dialogue` and `hx.buttons` describe what the player sees, with
+  desktop-pixel positions; `hx.move`, `hx.goto`, `hx.attack`, `hx.interact`, `hx.use`, `hx.wait`,
+  `hx.say`, `hx.press` and `hx.key` act through the game's own scripts and events, and `hx.result`
+  reports what each did (turns, HP before and after, the target's fate, new log lines). `hx.click` is
+  the mouse fallback, refused unless the game is in the foreground. Clients: `tools\stoneshard.ps1`
+  (compact tables) and `tools\stoneshard_harness.py`. See `managed/Mods/StoneshardHarness/README.md`.
 - `[assembly: CoreModAnyGame]`, the explicit declaration for a mod that works in any game.
 - `CoreModGame` also accepts the game's interop namespace (`Dwarf_Eats_Mountain`) as its name.
 - Analyzer rules **CL0004** (error: a mod with `[CoreModInfo]` but no game declaration) and

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Written against Stoneshard's generated interop, like StoneshardTrials. -->
+  <PropertyGroup>
+    <AssemblyName>StoneshardHarness</AssemblyName>
+    <InteropGame>StoneShard</InteropGame>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>
