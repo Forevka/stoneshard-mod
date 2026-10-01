@@ -29,7 +29,7 @@ internal static class Progression
     }
 
     /// <summary>The tier the trial numbered <paramref name="trial"/> should be, for this character.</summary>
-    public static Assessment Assess(InstanceRef player, int trial)
+    public static Assessment Assess(InstanceRef player, int trial, double shift = 0)
     {
         int level = Math.Max(1, (int)World.Num(player, "LVL", 1));
         // Continuous, on the game's own bands: level 1 is tier 1, 6 is 2, 11 is 3, 16 is 4.
@@ -42,6 +42,8 @@ internal static class Progression
         double target = power + Math.Min(1.0, 0.25 * (trial - 1));
         double floor = 1 + (trial - 1) / 6.0;
         target = Math.Clamp(target, Math.Min(floor, power + 1), power + 1);
+        // The difficulty setting moves it (Easy -0.5 ... Brutal +1), within the five tiers.
+        target = Math.Clamp(target + shift, 0.6, 5.4);
         // Rounded up (the player's choice), but only once the fraction passes
         // 0.4: a fresh character whose starting kit holds a tier 2 unique
         // (power 1.35) still starts at tier 1, while level 3 with half its

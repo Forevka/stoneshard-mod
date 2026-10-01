@@ -79,6 +79,17 @@ Testing notes:
   `list-commands` lists everything: core (`status`, `log`, `reload`, `call`, `builtin`, `global-*`,
   `instance-*`, `object-count`, `wait-frames`), `console <line>`, and `cheats.*`. Poll for anything that
   takes time; the host never blocks a frame. Protocol: `managed/README.md#test-host`.
+- **Stoneshard mods are tested by agents through the StoneshardHarness mod, not screenshots.**
+  Deploy it with the mod under test, and play through `tools\stoneshard.ps1`:
+  - observe: `state`, `player`, `enemies`, `objects`, `inventory`, `log`, `dialogue`;
+  - act: `goto`, `attack`, `interact`, `use`, `wait`, `say`, `press`;
+  - the same commands as `hx.*` over the test host, and in `tools\stoneshard_harness.py`.
+
+  It walks, fights, trades, loots and talks through the game's own scripts. Only picking things up
+  off the ground falls back to a click. Full reference: `managed/Mods/StoneshardHarness/README.md`.
+  Test on a **new Adventure character** (title -> Play -> New Game -> Adventure). Never press
+  Continue, which loads the user's latest real character. Mods add their own setup commands
+  (StoneshardTrials: `tr.*`).
 - Smoke tests: `tools\smoke-dwarf.ps1` (core + Console) and `tools\smoke-stoneshard.ps1` (every `cheats.*`
   command, with read-backs; needs a loaded save; never let the game save afterwards). PASS/FAIL per check.
 - To load a save: first **back up `%LOCALAPPDATA%\StoneShard`** (`game-saves.ps1 backup`). Then at 1920x1080: title, space, Play (1660,552), Continue (1660,552), and wait ~30 s. **Kill the game without saving** afterwards.

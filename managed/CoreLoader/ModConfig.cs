@@ -32,13 +32,23 @@ public sealed class ModConfig
     /// <summary>Where the settings live.</summary>
     public string Path => _path;
 
+    // A value set in this session keeps its CLR type (an int set stays an int,
+    // which will not read back as a double); one read from the file is JSON
+    // and converts freely. So any number reads as a double here.
     public double Get(string key, double fallback) =>
-        _values[key] is JsonValue v && v.TryGetValue<double>(out var d) ? d : fallback;
+        _values[key] is JsonValue v
+            ? v.TryGetValue<double>(out var d) ? d
+            : v.TryGetValue<int>(out var i) ? i
+            : v.TryGetValue<long>(out var l) ? l
+            : v.TryGetValue<float>(out var f) ? f
+            : fallback
+            : fallback;
 
     public float Get(string key, float fallback) => (float)Get(key, (double)fallback);
 
+    // Through the double reader, so 2.0 (a choice ModSettings stores) reads as 2.
     public int Get(string key, int fallback) =>
-        _values[key] is JsonValue v && v.TryGetValue<int>(out var i) ? i : fallback;
+        _values[key] is JsonValue ? (int)Math.Round(Get(key, (double)fallback)) : fallback;
 
     public bool Get(string key, bool fallback) =>
         _values[key] is JsonValue v && v.TryGetValue<bool>(out var b) ? b : fallback;

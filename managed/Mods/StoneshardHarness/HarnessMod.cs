@@ -31,7 +31,10 @@ public sealed class HarnessMod : CoreMod
             return;
         }
         _act = new Act(_at, Log);
-        Scripts.scr_smoothRoomChange.Before(OnRoomChange);
+        // After, not before: a mod may point the change elsewhere in its own
+        // Before hook (StoneshardTrials sends the tavern door into a dungeon),
+        // and the argument the original ran with is the room that comes.
+        Scripts.scr_smoothRoomChange.After(OnRoomChange);
         Scripts.scr_mouse_on_unit.Before(OnMouseOnUnit);
         // Actions advance in the game's own step, not at Present: a turn skip
         // sent from the frame's end was found to be dropped now and then.
@@ -91,7 +94,8 @@ public sealed class HarnessMod : CoreMod
 
     private void OnRoomChange(HookCall c)
     {
-        if (c.ArgCount < 1) return;
+        // A Before hook that refused the change leaves the room as it was.
+        if (c.ArgCount < 1 || c.OriginalSkipped) return;
         try
         {
             var room = c.GetArg(0);

@@ -53,6 +53,11 @@ CoreLoader began as a native cheat mod for Stoneshard. Those tools are now C# mo
 
 ## Stoneshard mods
 
+> **Testing:** every Stoneshard mod can be tested by an agent without screenshots. The
+> StoneshardHarness mod reports what the player sees and acts through the game's own scripts over
+> the test host (`tools\stoneshard.ps1 state | enemies | attack <id> | interact <id> ...`). See
+> [managed/Mods/StoneshardHarness/README.md](managed/Mods/StoneshardHarness/README.md).
+
 **Items** (StoneshardCheats)
 
 - Catalogue of 1,705 items across 94 categories, read from the game's own object table and the

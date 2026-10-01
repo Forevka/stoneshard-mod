@@ -20,10 +20,17 @@ internal sealed class Arrival
     private const int NearCells = 3;
 
     private readonly Logger _log;
+    private readonly Action _arrived;
     private long _oldPlayer = -1;
     private int _frames, _settle;
 
-    public Arrival(Logger log) => _log = log;
+    /// <param name="log">The mod's log.</param>
+    /// <param name="arrived">Run once the player stands at the entrance (moved or not).</param>
+    public Arrival(Logger log, Action arrived)
+    {
+        _log = log;
+        _arrived = arrived;
+    }
 
     public bool Pending { get; private set; }
 
@@ -45,6 +52,8 @@ internal sealed class Arrival
         {
             Pending = false;
             _log.Warning("no arrival in the trial's dungeon seen; skipping the arrival check");
+            // The trial still gets what it adds, if the player is in it after all.
+            _arrived();
             return;
         }
         if (World.Player is not { } player || World.IdKey(player.Id) == _oldPlayer || !World.InDungeon) return;
@@ -52,7 +61,8 @@ internal sealed class Arrival
         // A few frames for the room's own start code to place the player and fill the grids.
         if (++_settle < SettleFrames) return;
         Pending = false;
-        Settle(player, g);
+        try { Settle(player, g); }
+        finally { _arrived(); }
     }
 
     private readonly record struct RoomGrids(double Walls, double Positions, int W, int H);

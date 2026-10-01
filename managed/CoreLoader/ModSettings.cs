@@ -96,7 +96,7 @@ public static class ModSettings
             {
                 int i = Math.Clamp((int)Math.Round(value), 0, Math.Max(0, Options.Count - 1));
                 if ((int)GetNumber() == i) return;
-                Mod.Config.Set(Key, i);
+                Mod.Config.Set(Key, (double)i);
             }
             else
             {

@@ -141,6 +141,20 @@ internal static class Probe
             }
             return rows;
         }, "tr.gear: every worn item with its tier, quality and rarity fields");
+        TestHost.Register("tr.rooms", args =>
+        {
+            string filter = args.Count > 0 ? args[0].GetString()! : "";
+            var map = new DsMap(Globals.Get("locationsRoomsDataMap"));
+            return map.Exists ? map.Entries().Select(e => e.Key).Where(k => k.Contains(filter)).OrderBy(k => k).ToArray() : Array.Empty<string>();
+        }, "tr.rooms [filter]: the keys of the saved rooms (global.locationsRoomsDataMap) containing the filter");
+        TestHost.Register("tr.roomkeys", args =>
+        {
+            var map = new DsMap(Globals.Get("locationsRoomsDataMap"));
+            if (!map.Exists || !map.Has(args[0].GetString()!)) return "none";
+            var inner = map.Get(args[0].GetString()!);
+            var sub = new DsMap(inner);
+            return sub.Exists ? sub.Entries().Select(e => $"{e.Key} = {Gml.TypeOf(e.Value)}").ToArray() : new[] { Gml.TypeOf(inner) + ": " + inner };
+        }, "tr.roomkeys <location>: what a saved location holds (its rooms)");
         TestHost.Register("tr.call", args =>
         {
             var rest = args.Skip(1).Select(Arg).ToArray();

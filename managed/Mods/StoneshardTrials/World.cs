@@ -34,7 +34,8 @@ internal static class World
     public static readonly (int X, int Y) HubCell = (32, 10);
     public static readonly string[] DungeonKinds = { "Crypt", "Catacombs", "Bastion" };
 
-    public readonly record struct Dungeon(string Kind, int X, int Y, string Name, int Tier, bool BossAlive);
+    /// <summary>A world dungeon. Floors defaults to 1 so runs saved before it existed still read.</summary>
+    public readonly record struct Dungeon(string Kind, int X, int Y, string Name, int Tier, bool BossAlive, int Floors = 1);
 
     public static InstanceRef? Player => Objects.o_player.First;
 
@@ -75,7 +76,8 @@ internal static class World
                 int x = (int)Gml.StructGet(s, "x").AsReal, y = (int)Gml.StructGet(s, "y").AsReal;
                 list.Add(new Dungeon(kind, x, y, Gml.StructGet(s, "name").ToString(),
                     Math.Max(1, (int)Run(Scripts.scr_globaldungeonTierGet, x, y).AsReal),
-                    Truthy(Run(Scripts.scr_globaltile_dungeon_get, "boss_alive", x, y))));
+                    Truthy(Run(Scripts.scr_globaltile_dungeon_get, "boss_alive", x, y)),
+                    Run(Scripts.scr_globaltile_dungeon_get, "dungeon_amountFloors", x, y) is { IsNumber: true } floors ? Math.Max(1, (int)floors.AsReal) : 1));
             }
         }
         return list;

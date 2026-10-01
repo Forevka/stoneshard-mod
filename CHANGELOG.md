@@ -83,7 +83,13 @@ bump may break the mod API or the native CoreApi table; each version says so und
   scaled by a setting. Progress is per character and part of its save (a player attribute), so
   loading an older save brings back that save's trial; a readable copy goes to
   `Mods\StoneshardTrials\characters\`. While enabled it applies to every save, not only new ones.
-  Settings `enabled`, `xpScale`, `goldScale` (also in the MODS window); test-host commands `tr.*`.
+  Endless runs (setting `runMode`) remake a won single-floor dungeon at the wanted tier when no
+  untouched one fits: its saved floors are forgotten and its tier, recommended levels and master
+  (from the game's own tables) rewritten. A `difficulty` setting (Easy/Normal/Hard/Brutal) shifts
+  the wanted tier, and a trial whose danger runs past its dungeon's tier adds copies of the
+  dungeon's toughest enemies and, a tier past, an elite master (half again its health).
+  Settings `enabled`, `xpScale`, `goldScale`, `difficulty`, `runMode` (also in the MODS window);
+  test-host commands `tr.*`.
 - `ModSettings`: mods declare settings for the player (`Toggle`, `Slider`, `Choice`) bound to keys of
   their `Config`. The loader keeps the list and a front end draws it; registrations go with the mod.
 - **ModMenu** (Stoneshard): a **MODS** entry in the pause menu that opens a window, drawn with the
@@ -262,6 +268,10 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - `tools/savepeek.py` and 20 one-off or duplicate reverse-engineering scripts in `tools/re`.
 
 ### Fixed
+- **`ModConfig.Get(key, double)` reads any number.** A value set during the session keeps its CLR
+  type, and an int set there did not read back as a double. So a `ModSettings` choice, stored as an
+  int, never changed when clicked. Choices are now stored as numbers, and any numeric value reads
+  as a double.
 - **A failed array access no longer makes the game fail later.** The runtime reports a bad array index
   through a global flag (with the index and size beside it), which its array builtins and compiled code
   test after each access. Only the error path sets it and nothing clears it, because a real error

@@ -2,7 +2,7 @@
 
 A roguelike loop for **Stoneshard**, in the spirit of BG3's *Trials of Tav*. The mod loads only in
 that game. Still young: the loop, rewards in crowns, per-character progress and a progression that
-matches dungeons to the character work. A run is finite for now (an endless mode comes next).
+matches dungeons to the character work, in finite or endless runs, with a difficulty setting.
 
 ## Use
 
@@ -54,10 +54,42 @@ Each trial asks for a tier:
 5. **Tier**: rounded up once the fraction passes 0.4. Trial 1 with a fresh character is tier 1; level
    3 with two tier-1 and two tier-2 items on trial 3 is tier 2.
 
-The trial takes the untouched dungeon nearest that tier (the lower one on a tie), and a different
-kind from the last trial when it can. The tavern banner shows the danger the door will really lead
+The **difficulty** setting shifts the wanted danger: Easy -0.5, Normal 0, Hard +0.5, Brutal +1.
+
+**Finite runs** (the default) take the untouched dungeon nearest that tier (the lower one on a tie),
+and a different kind from the last trial when it can. The tavern banner shows the danger the door will really lead
 to. A world holds about 19 dungeons. Once every master is dead, the run is complete for good: the
 tavern door leads to Osbrook, the world map opens, and experience comes from everything again.
+
+**Endless runs** (setting *Run*) take an untouched dungeon at exactly that tier if one is left;
+otherwise they remake one at that tier, a won one first, and a different kind and dungeon from the
+last trial when they can:
+- its saved floors are forgotten, so it is generated afresh, full of enemies;
+- its tier, the levels the game recommends for it, and its master are rewritten: a master of that
+  kind and tier, from the game's own tables (a crypt at tier 3 gets an Undertaker, a Ritualist or an
+  Armored Husk).
+
+Only dungeons that began with one floor are remade, and they stay one floor. A cell's layout keeps
+its master on the floor it was made with, so a remade two-floor dungeon would have no master on
+floor 1. Crypts are never made tier 5, because the game has no tier-5 crypt layouts. When nothing
+can be remade at the wanted tier, the nearest tier that can is used, and then any untouched dungeon.
+An endless run never completes. A finished finite run takes the trials up again if *Run* is switched
+to Endless.
+
+### Harder trials
+
+When the wanted danger runs past the dungeon's tier, the trial adds to it on arrival. This happens
+with the rounding slack, when a finite run has no dungeon of the wanted tier left, or on Hard and
+Brutal:
+- **extra enemies**: none while the wanted danger is within the dungeon's tier; past it, one, and one
+  more per further 0.3 (up to 4); plus 1 on Hard and 2 on Brutal (6 at most). A fresh character's
+  first trial on Normal adds nothing. They are copies of the dungeon's own toughest kind of enemy,
+  spawned beside them, and they notice the player and fight like the natives;
+- **an elite master** once the danger runs a whole tier past, and always on Brutal: half again its
+  health, and "Elite" before its name (the master itself; a miniboss only where there is none). On a
+  natural two-floor dungeon it becomes elite when the player reaches its floor.
+
+The action log says what was added.
 
 ## How it works
 
@@ -107,6 +139,8 @@ In the pause menu, **MODS** (needs the ModMenu mod), or `Mods\StoneshardTrials.j
 | `enabled` | `true` | **Trials**: off turns the door, the map and experience back to the normal game |
 | `xpScale` | `1` | **Kill experience**: x0 to x3 |
 | `goldScale` | `1` | **Trial reward**: x0 to x3 |
+| `difficulty` | `1` | **Difficulty**: 0 Easy, 1 Normal, 2 Hard, 3 Brutal |
+| `runMode` | `0` | **Run**: 0 Finite, 1 Endless |
 
 The run lives in the save, so the files under `Mods\StoneshardTrials\characters` are for reading only.
 
@@ -119,11 +153,18 @@ The run lives in the save, so the files under `Mods\StoneshardTrials\characters`
 | `tr.assess [trial]` | level, gear score, power and the tier that trial would take |
 | `tr.next <x> <y>` | the next trial takes that dungeon |
 | `tr.dkeys <x> <y>` / `tr.dset <x> <y> <key> <value>` | read / write a dungeon's data |
+| `tr.rooms [filter]` / `tr.roomkeys <x_y>` | the saved locations, and the rooms one holds |
 | `tr.gear` | worn items with their tier and quality |
 | `tr.give-ticket` | puts a Trial Ticket in the bag |
 | `tr.return` | goes back to the tavern as a used ticket does (no ticket spent) |
 | `tr.dungeons`, `tr.where`, `tr.inst`, `tr.call`, `tr.event`, `tr.goto`, `tr.tp` | looking at the live game |
 | `tr.snap` / `tr.diff`, `tr.snapdiff`, `tr.gwatch`, `tr.dumpresult` | which globals a change or an event touches |
+
+## Testing with agents
+
+Trials can be played end to end by an agent, without screenshots, through the
+**StoneshardHarness** mod (`tools\stoneshard.ps1`). The `tr.*` commands above set up situations.
+For example, `tr.dset` with `boss_alive 0` on every dungeon makes the next endless trial remake one.
 
 ## Building
 
