@@ -44,6 +44,12 @@ bump may break the mod API or the native CoreApi table; each version says so und
   game's style says what a click on the hovered cell would do, and clicking land you have visited, or
   a cell next to one, travels there the way a border crossing does. A blocked arrival is moved to the
   nearest free cell joined to the room's edges; travel starts only from the open world (not inside a building or dungeon) and is refused with enemies nearby. Test-host commands `ft.*`.
+- **StoneshardTrials** (Stoneshard, proof of concept): a roguelike loop in the spirit of BG3's
+  *Trials of Tav*. A new Adventure's Osbrook tavern is the hub, with a banner saying to leave it. Its
+  street door opens onto a random crypt, catacombs or bastion whose boss still lives (tier 1 at first,
+  one tier more every two trials), entered the way the dungeon's own entrance enters it. Killing the
+  boss or named miniboss puts a Trial Ticket in the bag, and using it returns you to the tavern for
+  the next trial. Settings `enabled`, `level`; test-host commands `tr.*`.
 - **TavernGames** (Stoneshard): dice and card games against tavern NPCs, for crowns. Talk to an
   innkeeper, a drunk, a sellsword or anyone friendly inside a tavern and their conversation offers a
   line asking for a game ("Fancy a game? Dice, or cards?") just above the goodbye; it opens a table drawn with the game's own

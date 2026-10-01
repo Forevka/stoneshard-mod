@@ -1,0 +1,206 @@
+using System.Text.Json;
+using CoreLoader;
+using StoneShard;
+
+namespace StoneshardTrials;
+
+/// <summary>Test-host commands for looking at the live game while the mod is built.</summary>
+internal static class Probe
+{
+    public static void Register(Logger log)
+    {
+        TestHost.Register("tr.dungeons", _ => Dungeons(), "tr.dungeons: every crypt, catacombs and bastion on the world map");
+        TestHost.Register("tr.where", _ => new
+        {
+            cell = new[] { Globals.Get("playerGridX").AsReal, Globals.Get("playerGridY").AsReal },
+            inDungeon = Scripts.scr_is_in_dungeon.Call().ToString(),
+            floor = Globals.Get("locationFloor").ToString(),
+            player = Objects.o_player.First is { } p ? new[] { p.Get("x").AsReal, p.Get("y").AsReal } : null,
+        }, "tr.where: the player's cell, floor, whether in a dungeon, and position");
+        TestHost.Register("tr.inst", args => Instances(args[0].GetString()!, args.Count > 1 ? args[1].GetString()! : ""),
+            "tr.inst <object> [var,var...]: live instances (children too) with x, y, object name and the vars");
+        TestHost.Register("tr.event", args =>
+        {
+            var obj = GmlObject.Find(args[0].GetString()!) ?? throw new ArgumentException("no such object");
+            var inst = obj.Instance(args[1].GetInt32()).Resolve() ?? throw new ArgumentException("no such instance");
+            Game.CallEvent(args[2].GetString()!, inst);
+            return "ok";
+        }, "tr.event <object> <n> <event symbol>: runs an event as that instance");
+        TestHost.Register("tr.goto", args =>
+        {
+            int x = args[0].GetInt32(), y = args[1].GetInt32();
+            if (Objects.o_player.First is not { } player) return "no player";
+            int room = (int)Scripts.scr_globaltile_get_room.Call(x, y).AsReal;
+            double c = 45 * 26 + 13;
+            Scripts.scr_atr_set_simple.CallAs(player, "localX", c);
+            Scripts.scr_atr_set_simple.CallAs(player, "localY", c);
+            Globals.Set("playerGridX", x);
+            Globals.Set("playerGridY", y);
+            Scripts.scr_smoothRoomChange.CallAs(player, room, Builtins.array_create(1, 4), -1, false);
+            return Builtins.room_get_name(room).ToString();
+        }, "tr.goto <x> <y>: walks over the border into that world cell, as a border crossing does");
+        TestHost.Register("tr.snap", _ =>
+        {
+            _snap = Snapshot();
+            return _snap.Count;
+        }, "tr.snap: remembers every global's value (numbers and strings)");
+        TestHost.Register("tr.diff", _ =>
+        {
+            var now = Snapshot();
+            return now.Where(kv => !_snap.TryGetValue(kv.Key, out var old) || old != kv.Value)
+                      .Select(kv => $"{kv.Key}: {(_snap.TryGetValue(kv.Key, out var o) ? o : "(new)")} -> {kv.Value}")
+                      .OrderBy(s => s).ToArray();
+        }, "tr.diff: the globals that changed since tr.snap");
+        TestHost.Register("tr.gwatch", args =>
+        {
+            string symbol = args[0].GetString()!, global = args[1].GetString()!;
+            _watches.Add(Hooks.Before(symbol, c => Safe(log, () => log.Info($"gwatch {symbol} before: {global}={Globals.Get(global)}"))));
+            _watches.Add(Hooks.After(symbol, c => Safe(log, () => log.Info($"gwatch {symbol} after: {global}={Globals.Get(global)}"))));
+            return "watching";
+        }, "tr.gwatch <function> <global>: logs the global before and after each call");
+        TestHost.Register("tr.dumpresult", args =>
+        {
+            string symbol = args[0].GetString()!;
+            _watches.Add(Hooks.After(symbol, c => Safe(log, () =>
+            {
+                var r = new InstanceRef(c.Result);
+                if (!r.Exists) return;
+                var vars = r.VariableNames().OrderBy(n => n).Select(n => $"{n}={r.Get(n)}");
+                log.Info($"dumpresult {symbol} self={Builtins.object_get_name(c.Self.Get("object_index"))}: {string.Join("; ", vars)}");
+            })));
+            return "watching";
+        }, "tr.dumpresult <function>: logs every variable of the instance each call returns");
+        TestHost.Register("tr.snapdiff", args =>
+        {
+            string symbol = args[0].GetString()!;
+            Dictionary<string, string>? before = null;
+            Dictionary<string, string>? attrsBefore = null;
+            _watches.Add(Hooks.Before(symbol, c => Safe(log, () =>
+            {
+                before = Snapshot();
+                attrsBefore = PlayerAttributes();
+            })));
+            _watches.Add(Hooks.After(symbol, c => Safe(log, () =>
+            {
+                if (before is null) return;
+                var now = Snapshot();
+                var changed = now.Where(kv => !before.TryGetValue(kv.Key, out var o) || o != kv.Value)
+                                 .Select(kv => $"{kv.Key}: {(before.TryGetValue(kv.Key, out var o) ? o : "(new)")} -> {kv.Value}");
+                var attrs = PlayerAttributes();
+                var attrChanged = attrs.Where(kv => attrsBefore is null || !attrsBefore.TryGetValue(kv.Key, out var o) || o != kv.Value)
+                                       .Select(kv => $"atr.{kv.Key} -> {kv.Value}");
+                log.Info($"snapdiff {symbol}: {string.Join("; ", changed.Concat(attrChanged))}");
+            })));
+            return "watching";
+        }, "tr.snapdiff <function>: logs the globals and player attributes each call changes");
+        TestHost.Register("tr.gunwatch", _ =>
+        {
+            foreach (var h in _watches) h.Dispose();
+            _watches.Clear();
+            return "ok";
+        }, "tr.gunwatch: drops every tr.gwatch");
+        TestHost.Register("tr.call", args =>
+        {
+            var rest = args.Skip(1).Select(Arg).ToArray();
+            return Game.CallScript(args[0].GetString()!, rest).ToString();
+        }, "tr.call <script> [args]: calls a script and answers the result as text");
+    }
+
+    private static Dictionary<string, string> _snap = new();
+
+    // A debug hook that throws would fault the whole mod.
+    private static void Safe(Logger log, Action action)
+    {
+        try { action(); }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { log.Warning($"probe: {ex.Message}"); }
+    }
+    private static readonly List<HookHandle> _watches = new();
+
+    // Scalars only: ids of ds structures and arrays would differ for no reason worth reading.
+    private static Dictionary<string, string> Snapshot()
+    {
+        var d = new Dictionary<string, string>();
+        foreach (var name in Globals.Names())
+        {
+            try
+            {
+                var v = Globals.Get(name);
+                if (v.IsNumber || v.Kind == RValueKind.String || v.Kind == RValueKind.Reference) d[name] = v.ToString();
+            }
+            catch (GmlException) { }
+        }
+        return d;
+    }
+
+    // The player's own scalar variables (where scr_atr_set_simple's localX lands too).
+    private static Dictionary<string, string> PlayerAttributes()
+    {
+        var d = new Dictionary<string, string>();
+        if (Objects.o_player.First is not { } p) return d;
+        foreach (var name in p.VariableNames())
+        {
+            try
+            {
+                var v = p.Get(name);
+                if (v.IsNumber || v.Kind == RValueKind.String) d[name] = v.ToString();
+            }
+            catch (GmlException) { }
+        }
+        return d;
+    }
+
+    private static RValue Arg(JsonElement e) => e.ValueKind switch
+    {
+        JsonValueKind.Number => e.GetDouble(),
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        _ => e.GetString()!,
+    };
+
+    private static object Dungeons()
+    {
+        var list = new List<object>();
+        foreach (var subtype in new[] { "Crypt", "Catacombs", "Bastion" })
+        {
+            var arr = Scripts.scr_glmap_getLocationBySubType.Call(subtype);
+            int n = Gml.ArrayLength(arr);
+            for (int i = 0; i < n; i++)
+            {
+                var s = Gml.ArrayGet(arr, i);
+                int x = (int)Gml.StructGet(s, "x").AsReal, y = (int)Gml.StructGet(s, "y").AsReal;
+                int room = (int)Scripts.scr_globaltile_get_room.Call(x, y).AsReal;
+                list.Add(new
+                {
+                    subtype,
+                    x,
+                    y,
+                    name = Gml.StructGet(s, "name").ToString(),
+                    room = room >= 0 ? Builtins.room_get_name(room).ToString() : "-",
+                });
+            }
+        }
+        return list;
+    }
+
+    private static object Instances(string objectName, string vars)
+    {
+        var obj = GmlObject.Find(objectName) ?? throw new ArgumentException("no such object");
+        var names = vars.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        var rows = new List<object>();
+        int n = obj.InstanceCount;
+        for (int i = 0; i < n; i++)
+        {
+            var r = obj.Instance(i);
+            var row = new Dictionary<string, object?>
+            {
+                ["n"] = i,
+                ["object"] = Builtins.object_get_name(r.Get("object_index")).ToString(),
+                ["x"] = r.Get("x").AsReal,
+                ["y"] = r.Get("y").AsReal,
+            };
+            foreach (var v in names) row[v] = r.Has(v) ? r.Get(v).ToString() : null;
+            rows.Add(row);
+        }
+        return rows;
+    }
+}
