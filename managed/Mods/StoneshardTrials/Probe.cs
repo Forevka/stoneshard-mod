@@ -99,6 +99,13 @@ internal static class Probe
             _watches.Clear();
             return "ok";
         }, "tr.gunwatch: drops every tr.gwatch");
+        TestHost.Register("tr.tp", args =>
+        {
+            var obj = GmlObject.Find(args[0].GetString()!) ?? throw new ArgumentException("no such object");
+            var who = obj.Instance(args[1].GetInt32());
+            Scripts.scr_invisible_teleport.CallAs(who, args[2].GetDouble(), args[3].GetDouble());
+            return new[] { who.Get("x").AsReal, who.Get("y").AsReal };
+        }, "tr.tp <object> <n> <x> <y>: moves that instance with the game's own scr_invisible_teleport");
         TestHost.Register("tr.call", args =>
         {
             var rest = args.Skip(1).Select(Arg).ToArray();

@@ -48,8 +48,19 @@ bump may break the mod API or the native CoreApi table; each version says so und
   *Trials of Tav*. A new Adventure's Osbrook tavern is the hub, with a banner saying to leave it. Its
   street door opens onto a random crypt, catacombs or bastion whose boss still lives (tier 1 at first,
   one tier more every two trials), entered the way the dungeon's own entrance enters it. Killing the
-  boss or named miniboss puts a Trial Ticket in the bag, and using it returns you to the tavern for
-  the next trial. Settings `enabled`, `level`; test-host commands `tr.*`.
+  trial dungeon's boss or named miniboss puts one Trial Ticket in the bag; using it returns you to
+  the tavern for the next trial, and the innkeeper pays crowns for it (150 for tier 1, 100 more per
+  tier, a tenth more per trial behind you). During the trials the world map stays shut (key, HUD
+  button and paper maps), so travel mods cannot skip them, and experience comes only from kills,
+  scaled by a setting. Progress is per character and part of its save (a player attribute), so
+  loading an older save brings back that save's trial; a readable copy goes to
+  `Mods\StoneshardTrials\characters\`. While enabled it applies to every save, not only new ones.
+  Settings `enabled`, `xpScale`, `goldScale` (also in the MODS window); test-host commands `tr.*`.
+- `ModSettings`: mods declare settings for the player (`Toggle`, `Slider`, `Choice`) bound to keys of
+  their `Config`. The loader keeps the list and a front end draws it; registrations go with the mod.
+- **ModMenu** (Stoneshard): a **MODS** entry in the pause menu that opens a window, drawn with the
+  game's own board, buttons and text, for every setting registered through `ModSettings`. Test-host
+  commands `mm.*`.
 - **TavernGames** (Stoneshard): dice and card games against tavern NPCs, for crowns. Talk to an
   innkeeper, a drunk, a sellsword or anyone friendly inside a tavern and their conversation offers a
   line asking for a game ("Fancy a game? Dice, or cards?") just above the goodbye; it opens a table drawn with the game's own

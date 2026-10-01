@@ -95,6 +95,10 @@ internal static class World
     public static (int X, int Y) Cell =>
         ((int)Globals.Get("playerGridX").AsReal, (int)Globals.Get("playerGridY").AsReal);
 
+    /// <summary>An instance id as a number: the game hands them out as numbers or as references.</summary>
+    public static long IdKey(RValue v) =>
+        v.IsNumber ? (long)v.AsReal : v.Kind == RValueKind.Reference ? v.Int64 & 0xFFFFFFFF : -1;
+
     // The game stores flags as 0/1, true/false or undefined depending on who wrote them.
     public static bool Truthy(RValue v) => v.IsNumber ? v.AsReal > 0 : v.Kind != RValueKind.Undefined && v.AsBool;
 

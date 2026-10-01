@@ -229,6 +229,7 @@ internal static class ModManager
         Content.RemoveOwner(m);
         Values.RemoveOwner(m);
         TestHost.RemoveOwner(m);
+        ModSettings.RemoveOwner(m);
     }
 
     /// <summary>
@@ -466,6 +467,8 @@ internal static class ModManager
         GameDraw.RemoveOwner(m);
         Content.StopSounds(m);
         Input.RemoveOwner(m);
+        // Its settings' callbacks are its code too.
+        ModSettings.RemoveOwner(m);
         if (ex != null) m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded", ex);
         else m.Instance.Log.Error($"{reason} - the mod is disabled until it is reloaded");
     }

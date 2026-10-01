@@ -16,11 +16,15 @@ public sealed class TrialsMod : CoreMod
 {
     private readonly Banner _banner = new();
     private readonly Random _rng = new();
-    private bool _enabled = true;
-    private int _level = 1;
-    // The trial under way and whether it has paid out its one ticket; saved.
-    private World.Dungeon? _trial;
-    private bool _won;
+    private RunStore _store = null!;
+    // The character in play and its run (see RunStore); null at the title screen.
+    private Run? _run;
+    private long _runPlayer = -1;
+    // The run as the character carried it when last read or written: a load
+    // that restores the character's attributes after we first looked is seen
+    // by this changing.
+    private string _runStored = "";
+    private ModSettings.Setting _enabledSetting = null!, _xpScale = null!, _goldScale = null!;
     // Chosen when the hub door starts to leave, used when it changes room.
     private World.Dungeon? _next;
     // A won trial whose ticket did not fit in the bag yet.
@@ -34,22 +38,70 @@ public sealed class TrialsMod : CoreMod
 
     public override void OnInitialize()
     {
-        _enabled = Config.Get("enabled", true);
-        _level = Math.Max(1, Config.Get("level", 1));
-        (_trial, _won) = Restore(Config.Get("trial", ""));
+        _store = new RunStore(Directory, Log);
+        _enabledSetting = ModSettings.Toggle(this, "enabled", "Trials",
+            "Off: the tavern door leads to Osbrook and the world map opens again.", true);
+        _xpScale = ModSettings.Slider(this, "xpScale", "Kill experience",
+            "Experience from slain enemies; no other source gives any during the trials.", 1, 0, 3, 0.25, v => $"x{v:0.##}");
+        _goldScale = ModSettings.Slider(this, "goldScale", "Trial reward",
+            "Crowns paid for each trial won.", 1, 0, 3, 0.25, v => $"x{v:0.##}");
 
         Objects.o_transitions_door.Alarm_7.Before(c => Guard("door", () => OnDoorLeaving(c)));
         Scripts.scr_smoothRoomChange.Before(c => Guard("room change", () => OnRoomChange(c)));
         Objects.o_enemy.Destroy_0.Before(c => Guard("enemy death", () => OnEnemyDestroyed(c)));
         Objects.o_inv_map.Other_24.Before(c => Guard("map use", () => OnMapUsed(c)));
+        Scripts.scr_globalmapCreate.Before(c => Guard("world map", () => OnWorldMap(c)));
+        Scripts.scr_get_XP.Before(c => Guard("experience", () => OnExperience(c)));
         GameDraw.OnGui(DrawGui);
         if (TestHost.Enabled) RegisterCommands();
-        Log.Info($"ready (trial {_level}{(_enabled ? "" : ", turned off")})");
+        Log.Info($"ready{(_enabled ? "" : " (turned off)")}");
     }
 
     public override void OnShutdown() => _banner.Clear();
 
     public override void OnUpdate() => Guard("update", Update);
+
+    private bool _enabled => _enabledSetting.GetBool();
+
+    /// <summary>
+    /// The run of the character in play, read again whenever the player is a new
+    /// instance (a load, a new game). Null without a player.
+    /// </summary>
+    private Run? CurrentRun()
+    {
+        if (World.Player is not { } player)
+        {
+            _run = null;
+            _runPlayer = -1;
+            return null;
+        }
+        long key = World.IdKey(player.Id);
+        string stored = RunStore.Stored(player);
+        if (_run == null || key != _runPlayer || stored != _runStored)
+        {
+            // Another character, or the same one loaded from a save: nothing
+            // in flight belongs to it.
+            if (key != _runPlayer)
+            {
+                _ticketOwed = false;
+                _next = null;
+                _returnQueued = false;
+                _usedTicket = null;
+                _bannerText = null;
+            }
+            _run = _store.Read(stored);
+            _runPlayer = key;
+            _runStored = stored;
+            if (_run.Id.Length > 0) Log.Info($"run {_run.Id}: trial {_run.Level}, {_run.TrialsWon} won, {_run.GoldEarned} crowns earned");
+        }
+        return _run;
+    }
+
+    // Onto the character first (so it is saved and rolls back with the game's save), then its copy on disk.
+    private void SaveRun(Run run)
+    {
+        if (World.Player is { } player) _runStored = _store.Save(player, run);
+    }
 
     private void Update()
     {
@@ -63,7 +115,7 @@ public sealed class TrialsMod : CoreMod
         // About once a second: work out the banner and keep tickets looking like tickets
         // (a load puts the map's own text back).
         if (++_frames % 60 != 0) return;
-        if (World.Player is null)
+        if (CurrentRun() is null)
         {
             // Back at the menu: a debt belongs to the character that earned it.
             _ticketOwed = false;
@@ -119,7 +171,7 @@ public sealed class TrialsMod : CoreMod
     // world cell set to a dungeon's, is what entering that dungeon's own door does.
     private void OnRoomChange(HookCall c)
     {
-        if (!_enabled || !World.IsHubDoor(c.Self) || _next is not { } d) return;
+        if (!_enabled || !World.IsHubDoor(c.Self) || _next is not { } d || CurrentRun() is not { } run) return;
         _next = null;
         try
         {
@@ -136,12 +188,12 @@ public sealed class TrialsMod : CoreMod
             Globals.Set("floor_counter", 0);
             throw;
         }
-        _trial = d;
-        _won = false;
+        run.Trial = d;
+        run.Won = false;
         _ticketOwed = false;
-        Save();
-        Log.Info($"trial {_level}: {d.Name} ({d.Kind}, tier {d.Tier}) at {d.X},{d.Y}");
-        World.Say($"~y~Trial {_level}~/~: the door opens onto {Describe(d)}.");
+        SaveRun(run);
+        Log.Info($"trial {run.Level}: {d.Name} ({d.Kind}, tier {d.Tier}) at {d.X},{d.Y}");
+        World.Say($"~y~Trial {run.Level}~/~: the door opens onto {Describe(d)}.");
     }
 
     /// <summary>
@@ -152,7 +204,7 @@ public sealed class TrialsMod : CoreMod
     {
         var open = World.Dungeons().Where(d => d.BossAlive).ToList();
         if (open.Count == 0) return null;
-        int cap = 1 + (_level - 1) / 2;
+        int cap = 1 + ((CurrentRun()?.Level ?? 1) - 1) / 2;
         var fitting = open.Where(d => d.Tier <= cap).ToList();
         if (fitting.Count == 0) fitting = open.Where(d => d.Tier == open.Min(o => o.Tier)).ToList();
         int top = fitting.Max(d => d.Tier);
@@ -167,7 +219,33 @@ public sealed class TrialsMod : CoreMod
         _ => "a bandit-held bastion",
     };
 
-    private bool InTrial => _trial is { } t && World.InDungeon && World.Cell == (t.X, t.Y);
+    private bool InTrial => _run?.Trial is { } t && World.InDungeon && World.Cell == (t.X, t.Y);
+
+    // ------------------------------------------------------------ the world map
+
+    // The world map opens through scr_globalmapCreate. The trials go only where
+    // the tavern door sends them, and the map is also where travel mods
+    // (FastTravel) work, so it stays shut. The HUD's map button and its key (M)
+    // take noone back calmly; a paper map's Use does not (the GUI then indexes
+    // the map it expected and the game stops with an error), so maps are
+    // refused before their Use runs - see OnMapUsed.
+    private DateTime _mapRefusedAt;
+
+    private void OnWorldMap(HookCall c)
+    {
+        if (!_enabled) return;
+        if (c.Self.IsNull || c.Self.Get("object_index").AsReal != Objects.o_gui_button_map.Object?.Index) return;
+        c.SkipOriginal();
+        c.Result = -4;
+        SayMapRefused();
+    }
+
+    private void SayMapRefused()
+    {
+        if (DateTime.UtcNow - _mapRefusedAt < TimeSpan.FromSeconds(3)) return;
+        _mapRefusedAt = DateTime.UtcNow;
+        World.Say("The world map is of no use during the trials: ~y~the tavern door~/~ is the only road.");
+    }
 
     // ------------------------------------------------------------ the boss and the ticket
 
@@ -176,16 +254,16 @@ public sealed class TrialsMod : CoreMod
     // own dungeon pays, and only once: a miniboss and a boss do not make two.
     private void OnEnemyDestroyed(HookCall c)
     {
-        if (!_enabled || _won) return;
+        if (!_enabled || CurrentRun() is not { Won: false } run) return;
         var self = c.Self;
         if (self.IsNull) return;
         bool boss = World.Truthy(self.Get("isBoss")) || World.Truthy(self.Get("isMiniboss"));
         var hp = self.Get("HP");
         if (!boss || !hp.IsNumber || hp.AsReal > 0 || !InTrial) return;
         Log.Info($"boss down: {Builtins.object_get_name(self.Get("object_index"))}");
-        _won = true;
+        run.Won = true;
         _ticketOwed = true;
-        Save();
+        SaveRun(run);
         TryGiveTicket(quiet: false);
     }
 
@@ -208,8 +286,13 @@ public sealed class TrialsMod : CoreMod
         var item = c.Self;
         if (item.IsNull) return;
         var r = new InstanceRef(item.Get("id"));
-        if (!Ticket.Is(r)) return;
         c.SkipOriginal();
+        if (!Ticket.Is(r))
+        {
+            // Any other map would open the world map (see OnWorldMap).
+            SayMapRefused();
+            return;
+        }
         if (!World.InDungeon)
         {
             World.Say($"The {Ticket.Name} only works inside a trial.");
@@ -222,7 +305,7 @@ public sealed class TrialsMod : CoreMod
 
     private void ReturnToHub(InstanceRef? ticket)
     {
-        if (World.Player is not { } player) return;
+        if (World.Player is not { } player || CurrentRun() is not { } run) return;
         // What a door's alarm 7 sets before it changes room: the floor the next
         // room is on (0, out of the dungeon) and the tag of the door to arrive
         // at - the hub's own street door, as if walking in from Osbrook. Put back
@@ -245,33 +328,57 @@ public sealed class TrialsMod : CoreMod
             World.Say("~r~The ticket stays cold~/~: the way back is barred for now.");
             throw;
         }
-        // On its way: only now is the ticket spent.
+        // On its way. The run is settled and saved first, so nothing after
+        // this can leave the trial half counted; then the ticket is spent and
+        // the crowns paid.
+        int gold = 0, finished = run.Level;
+        if (run is { Won: true, Trial: { } won })
+        {
+            gold = Reward(won, run.Level);
+            run.GoldEarned += gold;
+            run.TrialsWon++;
+            run.Level++;
+        }
+        run.Trial = null;
+        run.Won = false;
+        SaveRun(run);
+        Log.Info($"back to the tavern; next is trial {run.Level}");
         if (ticket?.Resolve() is { } inst) Scripts.scr_item_destroy.CallAs(inst, inst);
-        if (_won) _level++;
-        _trial = null;
-        _won = false;
-        Save();
-        Log.Info($"back to the tavern; next is trial {_level}");
+        if (gold > 0)
+        {
+            Scripts.scr_gold_add.CallAs(player, gold);
+            World.Say($"The innkeeper counts out ~y~{gold} crowns~/~ for trial {finished}.");
+        }
     }
 
-    // ------------------------------------------------------------ saved state
+    /// <summary>
+    /// Crowns for a trial won: 150 for a tier 1 dungeon, 100 more per tier above,
+    /// a tenth more for every trial already behind, times the reward setting.
+    /// </summary>
+    private int Reward(World.Dungeon d, int level) =>
+        (int)Math.Round((150 + 100 * (Math.Max(1, d.Tier) - 1)) * (1 + 0.1 * (level - 1)) * _goldScale.GetNumber());
 
-    // The trial number and the trial under way outlive a reload or a restart of
-    // the game, so the banner and the count carry on where they were.
-    private void Save()
-    {
-        Config.Set("level", _level);
-        Config.Set("trial", _trial is { } t ? $"{t.Kind}|{t.X}|{t.Y}|{t.Tier}|{(_won ? 1 : 0)}|{t.Name}" : "");
-        Config.Save();
-    }
+    // ------------------------------------------------------------ experience
 
-    private static (World.Dungeon?, bool) Restore(string saved)
+    // Every source of experience goes through scr_get_XP(amount); a kill is the
+    // call made from o_enemy's Destroy, with the dying enemy as self. During the
+    // trials only kills count (no XP for finding places, quests, books or
+    // crafting), scaled by the setting.
+    private void OnExperience(HookCall c)
     {
-        // The name last, as the only part that could hold the separator.
-        var p = saved.Split('|', 6);
-        if (p.Length != 6 || !int.TryParse(p[1], out int x) || !int.TryParse(p[2], out int y) || !int.TryParse(p[3], out int tier))
-            return (null, false);
-        return (new World.Dungeon(p[0], x, y, p[5], tier, true), p[4] == "1");
+        if (!_enabled || c.ArgCount < 1) return;
+        bool kill = !c.Self.IsNull && Objects.o_enemy.Object is { } enemy &&
+                    (c.Self.Get("object_index").AsReal == enemy.Index ||
+                     Builtins.object_is_ancestor(c.Self.Get("object_index"), enemy.Index).AsBool);
+        if (!kill)
+        {
+            // The original returns the amount given: none.
+            c.SkipOriginal();
+            c.Result = 0;
+            return;
+        }
+        var amount = c.GetArg(0);
+        if (amount.IsNumber) c.SetArg(0, Math.Round(amount.AsReal * _xpScale.GetNumber()));
     }
 
     // ------------------------------------------------------------ the banner
@@ -281,11 +388,12 @@ public sealed class TrialsMod : CoreMod
         if (!_enabled) return null;
         // Not over the world map: its controls bar only exists while it is open.
         if (Objects.o_globalmapControlsRender.Object is { InstanceCount: > 0 }) return null;
-        if (World.HubDoor() is not null) return $"~y~Trial {_level}~/~  -  leave the tavern to start the next trial level";
+        if (_run is not { } run) return null;
+        if (World.HubDoor() is not null) return $"~y~Trial {run.Level}~/~  -  leave the tavern to start the next trial level";
         if (!InTrial) return null;
-        if (carryingTicket) return $"~y~Trial {_level}~/~  -  use the ~y~{Ticket.Name}~/~ to return to the tavern";
-        return _won ? $"~y~Trial {_level}~/~  -  make room in your bag for the ~y~{Ticket.Name}~/~"
-                    : $"~y~Trial {_level}~/~  -  slay the master of this place to earn your way back";
+        if (carryingTicket) return $"~y~Trial {run.Level}~/~  -  use the ~y~{Ticket.Name}~/~ to return to the tavern";
+        return run.Won ? $"~y~Trial {run.Level}~/~  -  make room in your bag for the ~y~{Ticket.Name}~/~"
+                       : $"~y~Trial {run.Level}~/~  -  slay the master of this place to earn your way back";
     }
 
     // Drawing only: what to say is worked out in Update.
@@ -306,9 +414,12 @@ public sealed class TrialsMod : CoreMod
         TestHost.Register("tr.state", _ => new
         {
             enabled = _enabled,
-            level = _level,
-            trial = _trial?.Name,
-            won = _won,
+            run = _run?.Id,
+            level = _run?.Level,
+            trialsWon = _run?.TrialsWon,
+            goldEarned = _run?.GoldEarned,
+            trial = _run?.Trial?.Name,
+            won = _run?.Won,
             ticketOwed = _ticketOwed,
             inHub = World.HubDoor() is not null,
             inDungeon = World.InDungeon,
