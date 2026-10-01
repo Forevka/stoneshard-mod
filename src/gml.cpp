@@ -876,12 +876,21 @@ bool InManagedCode() { return t_managedDepth > 0; }
 const char* LastError() { return g_lastError; }
 void        ClearLastError() { g_lastError[0] = '\0'; }
 
-ErrorProbe::ErrorProbe() {
+ErrorProbe::ErrorProbe() : arrayErrorBefore_(builtins::ArrayErrorFlag()) {
     std::call_once(g_vehOnce, [] { AddVectoredExceptionHandler(1, &ExceptionProbe); });
     g_lastError[0] = '\0';
     t_thrown.valid = false;
     t_handledObject = 0;
     ++g_inCall;
+}
+
+void ErrorProbe::Failed() {
+    // Only a byte this call set: one already set before it was left by the
+    // game's own code (a GML try/catch around a bad index), not ours to hide.
+    if (arrayErrorBefore_ == 0 && builtins::ArrayErrorFlag() == 1) {
+        builtins::ClearArrayErrorFlag();
+        Logf("gml: cleared the runtime's array error flag the failed call left set");
+    }
 }
 
 // Runs inside an __except filter: plain reads only.
@@ -944,6 +953,7 @@ bool CallAs(void* func, RValue* result, RValue** args, int argc, void* self, voi
     {
         ErrorProbe probe;   // restored even if a GML exception passes through to the game
         ok = GuardedScript(reinterpret_cast<ScriptFn>(func), self, other, result, argc, args, &code);
+        if (!ok) probe.Failed();
     }
     if (ok) return true;
     AfterGuardedFault(code);
@@ -971,6 +981,7 @@ bool CallEvent(void* func, void* self, void* other) {
     {
         ErrorProbe probe;
         ok = GuardedEvent(reinterpret_cast<EventFn>(func), self, other ? other : self, &code);
+        if (!ok) probe.Failed();
     }
     if (ok) return true;
     AfterGuardedFault(code);

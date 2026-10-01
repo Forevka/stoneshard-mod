@@ -339,7 +339,83 @@ bool ResolveRegistrar() {
     return true;
 }
 
+// The runtime's array-index error is a sticky global byte, not a return value.
+// Its array helpers set it (with the offending index and size in globals beside
+// it) and return; whoever called them tests the byte afterwards and raises the
+// GML error. Nothing ever clears it - a real error ends the game - so when one
+// of our guards swallows that error the byte stays set, and the next array
+// access anywhere in the game that tests it raises the game's modal error box
+// with our stale index and size. Both builtins compile to
+//   call <array helper>
+//   cmp  byte ptr [rip+flag], 0
+//   je   ok
+//   ...  lea rcx, "array_get :: Index [%d] out of range [%d]"
+// so the byte is the one compared just before that message is loaded.
+std::uint8_t* g_arrayErrorFlag = nullptr;
+
+std::uintptr_t ArrayErrorFlagIn(const char* name) {
+    const auto it = g_map.find(name);
+    if (it == g_map.end()) return 0;
+    auto fn = reinterpret_cast<std::uintptr_t>(it->second.fn);
+    // An incremental-link thunk (`jmp rel32`) stands in for the body in some builds.
+    if (InText(fn + 5) && *reinterpret_cast<const unsigned char*>(fn) == 0xE9) {
+        std::int32_t rel;
+        std::memcpy(&rel, reinterpret_cast<const void*>(fn + 1), 4);
+        fn = fn + 5 + static_cast<std::intptr_t>(rel);
+        if (!InText(fn)) return 0;
+    }
+    const std::size_t nameLen = std::strlen(name);
+    constexpr std::size_t kWindow = 0x200, kToMessage = 0x30;
+    for (std::size_t i = 0; i < kWindow; ++i) {
+        const std::uintptr_t at = fn + i;
+        if (!InText(at + kToMessage + 8)) break;
+        const auto* b = reinterpret_cast<const unsigned char*>(at);
+        if (!(b[0] == 0x80 && b[1] == 0x3D && b[6] == 0x00)) continue;   // cmp byte ptr [rip+d32], 0
+        std::int32_t d;
+        std::memcpy(&d, b + 2, 4);
+        const std::uintptr_t flag = at + 7 + static_cast<std::intptr_t>(d);
+        if (!sym::DataRange().contains(flag)) continue;
+        for (std::size_t j = 7; j < kToMessage; ++j) {
+            const auto* c = b + j;
+            if (!((c[0] == 0x48 || c[0] == 0x4C) && c[1] == 0x8D && (c[2] & 0xC7) == 0x05)) continue;
+            std::int32_t sd;
+            std::memcpy(&sd, c + 3, 4);
+            const auto str = reinterpret_cast<const char*>(at + j + 7 + static_cast<std::intptr_t>(sd));
+            if (!InRdata(reinterpret_cast<std::uintptr_t>(str)) || !SafePrintableName(str, 0x80)) continue;
+            if (std::strncmp(str, name, nameLen) == 0 && std::strncmp(str + nameLen, " :: ", 4) == 0 &&
+                std::strstr(str, "out of range"))
+                return flag;
+        }
+    }
+    return 0;
+}
+
+// Both builtins must name the same byte, and it must hold a bool now (no
+// array error is pending while the loader starts).
+void LocateArrayErrorFlag() {
+    const std::uintptr_t get = ArrayErrorFlagIn("array_get");
+    const std::uintptr_t set = ArrayErrorFlagIn("array_set");
+    if (!get || get != set) {
+        Logf("[!] builtins: array error flag not found (array_get %p, array_set %p); a failed array access "
+             "through the loader may leave the game to report it later", (void*)get, (void*)set);
+        return;
+    }
+    std::uint8_t now = 0xFF;
+    if (!gml::ReadMemory(reinterpret_cast<const void*>(get), &now, 1) || now > 1) {
+        Logf("[!] builtins: array error flag candidate %p holds %u, not a bool; not used", (void*)get, now);
+        return;
+    }
+    g_arrayErrorFlag = reinterpret_cast<std::uint8_t*>(get);
+    Logf("builtins: array error flag %p (array_get and array_set agree)", (void*)get);
+}
+
 } // namespace
+
+int ArrayErrorFlag() { return g_arrayErrorFlag ? *g_arrayErrorFlag : -1; }
+
+void ClearArrayErrorFlag() {
+    if (g_arrayErrorFlag) *g_arrayErrorFlag = 0;
+}
 
 bool Init() {
     if (g_ready) return true;
@@ -422,6 +498,7 @@ bool Init() {
     g_ready  = true;
     g_status = "ok";
     Logf("builtins: %zu resolved of %d registered, arity checks passed", g_map.size(), n);
+    LocateArrayErrorFlag();
     return true;
 }
 
@@ -464,6 +541,7 @@ bool Call(const std::string& name, gml::RValue* result,
         gml::ErrorProbe probe;   // records the GML error a failing builtin throws
         ok = GuardedCall(reinterpret_cast<TRoutine>(b.fn), result, self, other ? other : self, argc, args,
                          &code);
+        if (!ok) probe.Failed();
     }
     if (ok) return true;
     if (code == EXCEPTION_STACK_OVERFLOW) _resetstkoflw();
