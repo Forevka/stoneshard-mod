@@ -106,6 +106,41 @@ internal static class Probe
             Scripts.scr_invisible_teleport.CallAs(who, args[2].GetDouble(), args[3].GetDouble());
             return new[] { who.Get("x").AsReal, who.Get("y").AsReal };
         }, "tr.tp <object> <n> <x> <y>: moves that instance with the game's own scr_invisible_teleport");
+        TestHost.Register("tr.dkeys", args =>
+        {
+            int x = args[0].GetInt32(), y = args[1].GetInt32();
+            var keys = new[] { "dungeon_type", "dungeon_tier", "dungeon_tier_perm", "dungeon_faction", "Boss_Type", "boss_alive",
+                "IsSpecial", "is_quest_dungeon", "dungeon_is_open", "dungeon_reset", "dungeon_amountFloors", "dungeon_modification",
+                "contract_modification", "DungeonSeed", "MapZone", "mob_lvl_min", "mob_lvl_max", "generatorVersion" };
+            var player = Objects.o_player.First;
+            return keys.ToDictionary(k => k, k =>
+            {
+                try
+                {
+                    var v = player is { } p ? Scripts.scr_globaltile_dungeon_get.CallAs(p, k, x, y) : Scripts.scr_globaltile_dungeon_get.Call(k, x, y);
+                    return $"{Gml.TypeOf(v)}: {v}";
+                }
+                catch (GmlException ex) { return "error: " + ex.Message; }
+            });
+        }, "tr.dkeys <x> <y>: the dungeon data the game keeps for that world cell");
+        TestHost.Register("tr.gear", _ =>
+        {
+            var rows = new List<object>();
+            if (Objects.o_inv_slot.Object is not { } slots) return rows;
+            foreach (var r in slots.Instances())
+            {
+                if (!World.Truthy(r.Get("equipped"))) continue;
+                var row = new Dictionary<string, string> { ["object"] = Builtins.object_get_name(r.Get("object_index")).ToString() };
+                foreach (var v in new[] { "name", "Tier", "quality", "Rare", "Unique", "Treasure", "Curse", "price", "equipped_slot", "type", "slot", "Metatype", "rarity" })
+                    row[v] = r.Has(v) ? r.Get(v).ToString() : "-";
+                var data = new DsMap(r.Get("data"));
+                if (data.Exists)
+                    foreach (var k in new[] { "Name", "Tier", "rarity", "quality", "Metatype", "Slot", "Rarity" })
+                        if (data.Has(k)) row["data." + k] = data.Get(k).ToString();
+                rows.Add(row);
+            }
+            return rows;
+        }, "tr.gear: every worn item with its tier, quality and rarity fields");
         TestHost.Register("tr.call", args =>
         {
             var rest = args.Skip(1).Select(Arg).ToArray();

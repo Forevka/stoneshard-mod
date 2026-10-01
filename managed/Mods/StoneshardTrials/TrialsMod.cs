@@ -25,6 +25,8 @@ public sealed class TrialsMod : CoreMod
     // by this changing.
     private string _runStored = "";
     private ModSettings.Setting _enabledSetting = null!, _xpScale = null!, _goldScale = null!;
+    // Test host: the dungeon the next trial must take.
+    private (int X, int Y)? _forcedNext;
     // Chosen when the hub door starts to leave, used when it changes room.
     private World.Dungeon? _next;
     // A won trial whose ticket did not fit in the bag yet.
@@ -203,6 +205,11 @@ public sealed class TrialsMod : CoreMod
     private World.Dungeon? Pick()
     {
         var open = World.Dungeons().Where(d => d.BossAlive).ToList();
+        if (_forcedNext is { } f && open.FirstOrDefault(d => (d.X, d.Y) == f) is { Name: not null } forced)
+        {
+            _forcedNext = null;
+            return forced;
+        }
         if (open.Count == 0) return null;
         int cap = 1 + ((CurrentRun()?.Level ?? 1) - 1) / 2;
         var fitting = open.Where(d => d.Tier <= cap).ToList();
@@ -431,6 +438,19 @@ public sealed class TrialsMod : CoreMod
             var t = Ticket.Give();
             return t is { } r ? r.Id.ToString() : "bag full";
         }, "tr.give-ticket: puts a Trial Ticket in the bag");
+        TestHost.Register("tr.next", args =>
+        {
+            _forcedNext = (args[0].GetInt32(), args[1].GetInt32());
+            return "ok";
+        }, "tr.next <x> <y>: the next trial takes that dungeon (if its boss lives)");
+        TestHost.Register("tr.dset", args =>
+        {
+            RValue v = args[3].ValueKind == System.Text.Json.JsonValueKind.Number ? args[3].GetDouble()
+                     : args[3].GetString() is "true" ? true : args[3].GetString() is "false" ? false : args[3].GetString()!;
+            if (World.Player is not { } p) return "no player";
+            Scripts.scr_globaltile_dungeon_set.CallAs(p, args[2].GetString()!, v, args[0].GetInt32(), args[1].GetInt32());
+            return Scripts.scr_globaltile_dungeon_get.CallAs(p, args[2].GetString()!, args[0].GetInt32(), args[1].GetInt32()).ToString();
+        }, "tr.dset <x> <y> <key> <value>: writes one key of a dungeon's data");
         TestHost.Register("tr.pick", _ => Pick()?.ToString() ?? "none", "tr.pick: the dungeon the next trial would take");
         TestHost.Register("tr.return", _ =>
         {
