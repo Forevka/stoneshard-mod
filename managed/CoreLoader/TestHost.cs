@@ -504,6 +504,13 @@ public static partial class TestHost
         frame = _frame,
         modsStarted = ModManager.Started,
         mods = ModList(),
+        notLoaded = ModManager.NotLoaded.Select(n => (object)new
+        {
+            name = n.Name,
+            file = Path.GetFileName(n.Path),
+            refused = n.Refused,
+            reason = n.Reason,
+        }).ToList(),
     };
 
     private static List<object> ModList() => ModManager.Mods.Select(m => (object)new

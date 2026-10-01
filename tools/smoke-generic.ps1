@@ -185,6 +185,24 @@ Check "console reports a game error, and stays alive" {
     $alive = "$(cl console "2 * 21")".Trim()
     if (-not $r.ok -and $alive -eq "42") { $true } else { "ok=$($r.ok) error=$($r.error); afterwards '$alive'" }
 }
+# A failed array access leaves the runtime's sticky array-error byte set; the
+# loader must clear it, or the game's next array access that tests it raises
+# the game's own modal error box with the stale index (the test host then
+# stops answering). The game is left to run its own array code for a while
+# before a legitimate array_set proves the byte is clear.
+Check "failed array_get leaves no stale runtime error" {
+    # Where the loader could not find the flag it cannot clear it: this game is
+    # then exposed to the original bug, which the check reports as such.
+    if (@(cl log 5000) -match "array error flag not found") { return "the loader did not find the runtime's array error flag in this game" }
+    $r = Invoke-CoreLoader console 'array_get(array_create(6), 6)' -Raw
+    if ($r.ok) { return "the out-of-range array_get did not fail: $($r.result)" }
+    $cleared = @(cl log 200) -match "cleared the runtime's array error flag"
+    cl wait-frames 300 -TimeoutSec 30 | Out-Null
+    $set = Invoke-CoreLoader console 'array_set(array_create(3), 0, 1)' -Raw -TimeoutSec 15
+    if (-not $set.ok) { return "a legitimate array_set afterwards failed: $($set.error)" }
+    if (-not $cleared) { return "no 'cleared the runtime's array error flag' line in the log" }
+    $true
+}
 Check "unknown command is refused" {
     $r = Invoke-CoreLoader no-such-command -Raw
     if (-not $r.ok -and $r.error -match "unknown command") { $true } else { "ok=$($r.ok) error=$($r.error)" }

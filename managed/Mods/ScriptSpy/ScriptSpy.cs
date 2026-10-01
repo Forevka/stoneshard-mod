@@ -1,6 +1,7 @@
 using CoreLoader;
 
 [assembly: CoreModInfo(typeof(ScriptSpy.ScriptSpyMod), "Script Spy", "1.0.0", "Lodestone")]
+[assembly: CoreModAnyGame]
 
 namespace ScriptSpy;
 

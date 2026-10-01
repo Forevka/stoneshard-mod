@@ -69,6 +69,15 @@ struct ErrorProbe {
     ~ErrorProbe();
     ErrorProbe(const ErrorProbe&) = delete;
     ErrorProbe& operator=(const ErrorProbe&) = delete;
+
+    // The guarded call failed and our guard handled the exception. Undoes the
+    // runtime error state the game's own error handling would never get to see:
+    // the array error byte a failed array access set (builtins::ArrayErrorFlag),
+    // put back to clear if it was clear when the call began.
+    void Failed();
+
+private:
+    int arrayErrorBefore_;
 };
 
 // After a guarded call failed with exception `code`: turns what the probe

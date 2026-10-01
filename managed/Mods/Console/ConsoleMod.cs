@@ -1,6 +1,7 @@
 using CoreLoader;
 
 [assembly: CoreModInfo(typeof(CoreConsole.ConsoleMod), "Console", "1.0.0", "Lodestone")]
+[assembly: CoreModAnyGame]
 
 namespace CoreConsole;
 

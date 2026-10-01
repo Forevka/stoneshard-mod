@@ -48,6 +48,14 @@ Builtin Find(const std::string& name);
 bool Call(const std::string& name, gml::RValue* result,
           gml::RValue* args, int argc, void* self, void* other = nullptr);
 
+// The runtime's sticky array-index error byte (see LocateArrayErrorFlag in
+// builtins.cpp): its value (0 or 1), or -1 when it was not found in this
+// runtime. A failed guarded call clears it again (gml::ErrorProbe), since the
+// runtime itself never does and the next array access in the game would
+// report the swallowed error as its own. Game thread.
+int  ArrayErrorFlag();
+void ClearArrayErrorFlag();
+
 // ---------------------------------------------------------------- reflection
 //
 // The reflection API takes a GML instance handle as its first argument.

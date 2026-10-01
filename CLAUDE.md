@@ -21,7 +21,7 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 | `managed/Mods/` | Shipped mods (Console + Inspector/Objects/Globals, ScriptSpy, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost, StoneshardCheats, Reliquary - the interop-only artifacts mod, FastTravel - world-map fast travel drawn with the game's own UI pieces, TavernGames - dice/card minigames against tavern NPCs on a small `MiniGame` framework, StoneshardTrials - roguelike tavern-hub/random-dungeon loop, ModMenu - the Esc-menu MODS window for `ModSettings`) |
 | `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, FaultyGuiMod, WidgetProbe (every UI widget, and scope unwind under faults) |
 | `managed/Examples/`, `managed/Templates/CoreLoaderMod/` | HelloMod, InteropExample; the `dotnet new coreloader-mod` template |
-| `managed/CoreLoader.Analyzers/` (+ `.Tests`) | Roslyn analyzer every mod compiles with: CL0001-CL0003 lifetime rules (see `managed/README.md#analyzers`) |
+| `managed/CoreLoader.Analyzers/` (+ `.Tests`) | Roslyn analyzer every mod compiles with: CL0001-CL0003 lifetime rules, CL0004-CL0005 game declaration (see `managed/README.md#analyzers`) |
 | `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, `run-game.ps1`, `game-saves.ps1`, `coreloader.ps1` (test-host client), `smoke-*.ps1`, `checkcksum.py`; `re/` = static RE toolkit over any game's exe (`relib.py` and friends, `--exe <game.exe>` or `RE_GAME_EXE`; `ghidra/ExportGml.java`) |
 
 ## Build, deploy, run
@@ -96,7 +96,7 @@ template (`dotnet new coreloader-mod`).
 
 ```csharp
 [assembly: CoreModInfo(typeof(MyMod.Main), "My Mod", "1.0.0", "Author")]
-[assembly: CoreModGame("StoneShard")]           // optional: only load in these games (exe name)
+[assembly: CoreModGame("StoneShard")]           // required: these games (exe name), or [assembly: CoreModAnyGame]
 public sealed class Main : CoreMod
 {
     public override void OnInitialize() { }      // game thread, once the game's assets are loaded
