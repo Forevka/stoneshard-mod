@@ -7,8 +7,17 @@ Games sprite sizes, the way the arm wrestling and drinking contest art was made:
 Each source is the model's picture: objects on flat magenta (#FF00FF), except
 --mugs, the first sheet, whose objects sit on its dark slate background. The
 pieces are cut out, area-averaged down to size, their alpha snapped to 0/255
-and their palette reduced, then written to ..\\assets. See
-SPRITES-physical-games.md for the sizes and pivots the code expects.
+and their palette reduced, then written to ..\\assets.
+
+What the code expects (the pivots are set in TavernGamesMod.cs, the forearm's
+length in ArmWrestling.cs as ArmLength, the pivot to the wrist):
+
+    arm.png        36 x 46, 2 frames of 18 x 46 (the player's, the opponent's), pivot (9, 43): the elbow
+    fists.png      18 x 14, pivot (9, 7): the middle
+    mug.png        36 x 20, 2 frames of 18 x 20 (full, empty), drawn from the top-left
+    tabletop.png   64 x 12, tiled sideways
+    tug_meter.png  180 x 12, an iron cap of about 10 px at each end
+    tug_marker.png 4 x 14
 """
 
 import argparse
