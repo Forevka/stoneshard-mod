@@ -22,7 +22,7 @@ internal sealed class ArmWrestling : MiniGame
     private const double ArmScale = 2, ArmLength = 43, Reach = 78;
     private const int PlayerSleeve = 0, TheirSleeve = 1;
 
-    private readonly Sprite _arm, _fists;
+    private readonly Sprite _arm, _fists, _tabletop, _gauge, _pin;
     private readonly SkillBar _bar = new();
 
     private enum Step { Countdown, Pull, Done }
@@ -34,10 +34,22 @@ internal sealed class ArmWrestling : MiniGame
     private string _shout = "";
     private int _shoutFrames;
 
-    public ArmWrestling(Sprite arm, Sprite fists)
+    // The tug meter's art: 180 x 12 with an iron cap at each end; the pin travels between the caps.
+    private const double GaugeW = 180, GaugeH = 12, GaugeCap = 10;
+    private const double TabletopW = 64, TabletopScale = 2;
+
+    /// <param name="arm">The forearms (2 frames: the player's, the opponent's), origin at the elbow.</param>
+    /// <param name="fists">The locked hands, origin at their middle.</param>
+    /// <param name="tabletop">A tileable strip of table edge.</param>
+    /// <param name="gauge">The tug meter's bar.</param>
+    /// <param name="pin">The tug meter's marker.</param>
+    public ArmWrestling(Sprite arm, Sprite fists, Sprite tabletop, Sprite gauge, Sprite pin)
     {
         _arm = arm;
         _fists = fists;
+        _tabletop = tabletop;
+        _gauge = gauge;
+        _pin = pin;
     }
 
     public override string Id => "arm-wrestling";
@@ -187,16 +199,16 @@ internal sealed class ArmWrestling : MiniGame
 
         // The tug meter: the hands' place between the two of you. Your side
         // (left) is where you lose, theirs where you win.
-        var meter = new Area(cx - 180, area.Y + 24, 360, 8);
-        c.Fill(meter, 0x201A16, 0.95);
-        c.Fill(new Area(meter.X, meter.Y, meter.W / 2, meter.H), 0x2A2A6A, 0.5);
-        c.Fill(new Area(cx, meter.Y, meter.W / 2, meter.H), 0x2A5A2A, 0.5);
-        c.Outline(meter, 0x5A4A3A);
-        double mx = cx + _meter * meter.W / 2;
-        c.Fill(new Area(mx - 2, meter.Y - 3, 4, meter.H + 6), 0xF0F0F0);
+        // Drawn at the game's own GUI scale (one art pixel, two screen pixels).
+        double gx = cx - GaugeW / 2, gy = area.Y + 22;
+        c.Sprite(_gauge, 0, gx, gy, 1);
+        double travel = GaugeW / 2 - GaugeCap;
+        c.Sprite(_pin, 0, cx + _meter * travel - 2, gy - 1, 1);
 
         // The table edge, the two elbows on it, the hands locked above.
-        c.Fill(new Area(cx - 160, table, 320, 6), 0x2A4A6A, 0.9);
+        // Three lengths of the table's edge; the elbows rest on its top.
+        double tile = TabletopW * TabletopScale;
+        for (int i = -1; i <= 1; i++) c.Sprite(_tabletop, 0, cx - tile / 2 + i * tile, table - 2, TabletopScale);
         // The player's win leans the hands over to their (right) side; the
         // elbows and the pivot give a little the same way, which keeps the two
         // forearms close in length.
@@ -207,11 +219,12 @@ internal sealed class ArmWrestling : MiniGame
         c.SpriteRotated(_fists, 0, hx, hy, 0, ArmScale);
 
         if (_step == Step.Countdown)
-            c.Text(_timer > CountdownFrames / 2 ? "~y~Ready...~/~" : "~y~Set...~/~", cx, area.Y + 60, align: 0);
-        if (_shoutFrames > 0) c.Text($"~w~{_shout}~/~", _shout == "Hnnngh!" ? cx + 110 : _shout == "Pull!" ? cx : cx - 110, _shout == "Pull!" ? area.Y + 60 : hy - 10, align: 0);
+            c.Text(_timer > CountdownFrames / 2 ? "~y~Ready...~/~" : "~y~Set...~/~", cx, area.Y + 42, align: 0);
+        if (_shoutFrames > 0) c.Text($"~w~{_shout}~/~", _shout == "Hnnngh!" ? cx + 110 : _shout == "Pull!" ? cx : cx - 110, _shout == "Pull!" ? area.Y + 42 : hy - 10, align: 0);
 
         // The timing bar, and what to do.
-        var bar = new Area(cx - 170, table + 18, 340, 14);
+        // Below the table edge (24 high at its scale).
+        var bar = new Area(cx - 170, table + 30, 340, 14);
         _bar.Draw(c, bar);
         if (_step == Step.Pull)
             c.Text(_rest > 0 ? "~w~...~/~" : "~y~Space~/~ or click when the cursor is in the zone", cx, bar.Y + 20, align: 0);

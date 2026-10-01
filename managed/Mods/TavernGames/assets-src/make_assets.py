@@ -7,6 +7,10 @@ sampling, so they sit next to Stoneshard's own sprites.
 writes managed\\Mods\\TavernGames\\assets\\dice.png (6 frames), cards.png
 (53 frames: 13 ranks x 4 suits in suit-major order, then the back), cup.png
 (2 frames: the thimblerig cup, then its shadow) and ball.png.
+
+The arm wrestling and drinking contest art (arm, fists, mug, tabletop,
+tug_meter, tug_marker) is drawn, not generated here: import_generated.py
+brings it down to size. This script never touches those files.
 """
 
 from pathlib import Path
@@ -216,66 +220,6 @@ def ball() -> Image.Image:
     return im
 
 
-# ------------------------------------------------------------------ arm wrestling, drinking
-
-SKIN = (206, 152, 116, 255)
-SKIN_SHADE = (164, 112, 84, 255)
-SKIN_LIGHT = (230, 184, 148, 255)
-SLEEVES = [((70, 104, 60, 255), (48, 74, 40, 255)), ((118, 84, 52, 255), (84, 58, 34, 255))]
-ARM_W, ARM_H = 12, 46
-
-
-def forearm(sleeve) -> Image.Image:
-    """A forearm standing up from the elbow (the bottom), sleeve at the elbow end."""
-    cloth, cloth_dark = sleeve
-    im = Image.new("RGBA", (ARM_W, ARM_H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    # Skin from the wrist (top) down, a little wider towards the elbow.
-    for y in range(ARM_H - 12):
-        half = 3 + (y * 3) // (ARM_H - 12)
-        x0, x1 = ARM_W // 2 - half, ARM_W // 2 + half - 1
-        d.line([x0, y, x1, y], fill=SKIN)
-        im.putpixel((x0, y), OUTLINE)
-        im.putpixel((x1, y), OUTLINE)
-        if x1 - 1 > x0: im.putpixel((x1 - 1, y), SKIN_SHADE)
-        if x0 + 1 < x1: im.putpixel((x0 + 1, y), SKIN_LIGHT)
-    # The rolled sleeve and the elbow under it.
-    d.rectangle([0, ARM_H - 12, ARM_W - 1, ARM_H - 1], fill=cloth, outline=OUTLINE)
-    d.line([1, ARM_H - 8, ARM_W - 2, ARM_H - 8], fill=cloth_dark)
-    return im
-
-
-def fists() -> Image.Image:
-    """Two hands locked together, seen from the side."""
-    im = Image.new("RGBA", (18, 14), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    d.rounded_rectangle([0, 1, 17, 13], radius=4, fill=SKIN, outline=OUTLINE)
-    d.line([9, 2, 9, 12], fill=SKIN_SHADE)
-    for x in (3, 5, 12, 14):
-        d.line([x, 3, x, 6], fill=SKIN_SHADE)
-    d.line([2, 2, 7, 2], fill=SKIN_LIGHT)
-    return im
-
-
-def mug(full: bool) -> Image.Image:
-    im = Image.new("RGBA", (18, 20), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    # The handle, then the body with its hoops.
-    d.rectangle([12, 7, 16, 15], outline=OUTLINE)
-    d.rectangle([13, 8, 15, 14], outline=WOOD_DARK)
-    d.rectangle([1, 4, 13, 19], fill=WOOD, outline=OUTLINE)
-    d.line([2, 5, 2, 18], fill=WOOD_LIGHT)
-    d.line([12, 5, 12, 18], fill=WOOD_DARK)
-    for y in (7, 15):
-        d.line([2, y, 12, y], fill=BRASS)
-    if full:
-        d.rounded_rectangle([0, 0, 14, 6], radius=3, fill=(240, 234, 214, 255), outline=OUTLINE)
-        d.line([3, 2, 8, 2], fill=(255, 255, 250, 255))
-    else:
-        d.rectangle([2, 4, 12, 5], fill=WOOD_DARK)
-    return im
-
-
 def strip(frames: list[Image.Image]) -> Image.Image:
     w, h = frames[0].size
     out = Image.new("RGBA", (w * len(frames), h), (0, 0, 0, 0))
@@ -291,10 +235,7 @@ def main() -> None:
     strip(cards).save(OUT / "cards.png")
     strip([cup(), cup_shadow()]).save(OUT / "cup.png")
     ball().save(OUT / "ball.png")
-    strip([forearm(s) for s in SLEEVES]).save(OUT / "arm.png")
-    fists().save(OUT / "fists.png")
-    strip([mug(True), mug(False)]).save(OUT / "mug.png")
-    print(f"wrote dice, cards, cup, ball, arm, fists and mug sprites in {OUT}")
+    print(f"wrote dice, cards, cup and ball sprites in {OUT}")
 
 
 if __name__ == "__main__":

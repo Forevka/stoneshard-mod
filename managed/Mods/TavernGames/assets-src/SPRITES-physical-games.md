@@ -171,9 +171,14 @@ anti-aliasing."*
 
    | File | Size | Frames | Pivot |
    |---|---|---|---|
-   | `arm.png` | 24 x 46 | 2 (12 x 46) | (6, 43), the elbow |
+   | `arm.png` | 36 x 46 | 2 (18 x 46) | (9, 43), the elbow |
    | `fists.png` | 18 x 14 | 1 | (9, 7), the centre |
    | `mug.png` | 36 x 20 | 2 (18 x 20) | (0, 0), top-left |
+   | `tabletop.png` | 64 x 12 | 1, tiled sideways | (0, 0) |
+   | `tug_meter.png` / `tug_marker.png` | 180 x 12 / 4 x 14 | 1 each | (0, 0) |
+
+   The forearms became 18 px wide once real art was in: shrunk to the first brief's 12 they looked
+   thin. `import_generated.py` turns generated pictures into these files.
 
    A different size also works if you tell whoever wires it in. The pivots are set in
    `TavernGamesMod.cs` (`AddSprite(..., xOrigin, yOrigin)`) and the forearm's length in

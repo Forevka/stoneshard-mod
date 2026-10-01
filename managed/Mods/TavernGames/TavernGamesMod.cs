@@ -47,10 +47,10 @@ public sealed class TavernGamesMod : CoreMod
         var cup = Content.AddSprite("assets/cup.png", frames: 2);
         var ball = Content.AddSprite("assets/ball.png");
         // The forearm turns about its elbow, at the bottom of the frame; the fists about their middle.
-        var arm = Content.AddSprite("assets/arm.png", frames: 2, xOrigin: 6, yOrigin: 43);
+        var arm = Content.AddSprite("assets/arm.png", frames: 2, xOrigin: 9, yOrigin: 43);
         var fists = Content.AddSprite("assets/fists.png", xOrigin: 9, yOrigin: 7);
         var mug = Content.AddSprite("assets/mug.png", frames: 2);
-        _games = [new DicePoker(dice), new TwentyOne(cards), new Thimblerig(cup, ball), new ArmWrestling(arm, fists), new DrinkingContest(mug)];
+        _games = [new DicePoker(dice), new TwentyOne(cards), new Thimblerig(cup, ball), new ArmWrestling(arm, fists, Content.AddSprite("assets/tabletop.png"), Content.AddSprite("assets/tug_meter.png"), Content.AddSprite("assets/tug_marker.png")), new DrinkingContest(mug)];
         _table = new Table(_games, _ledger, Log);
         _table.CaptureKeys();
         _dialogue = new DialogueOption(WillPlay, Log);
