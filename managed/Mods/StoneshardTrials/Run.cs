@@ -16,6 +16,10 @@ internal sealed class Run
     public World.Dungeon? Trial { get; set; }
     /// <summary>The trial under way has paid out its ticket.</summary>
     public bool Won { get; set; }
+    /// <summary>The kind of dungeon the last trial was in, so the next can be another.</summary>
+    public string? LastKind { get; set; }
+    /// <summary>Every dungeon of the world has been won: the run is over and the world is open again.</summary>
+    public bool Completed { get; set; }
 }
 
 /// <summary>

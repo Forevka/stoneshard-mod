@@ -29,6 +29,8 @@ internal static class World
     public const string HubDoorTag = "r_OSbrooktavern";
     public const string DungeonRoom = "r_dungeon_generate";
     public const string StreetRoom = "r_Osbrook";
+    /// <summary>The arrival tag a dungeon entrance sets, matched by the stairs up inside.</summary>
+    public const string DungeonArrivalTag = "NA";
     public static readonly (int X, int Y) HubCell = (32, 10);
     public static readonly string[] DungeonKinds = { "Crypt", "Catacombs", "Bastion" };
 
@@ -72,7 +74,7 @@ internal static class World
                 var s = Gml.ArrayGet(arr, i);
                 int x = (int)Gml.StructGet(s, "x").AsReal, y = (int)Gml.StructGet(s, "y").AsReal;
                 list.Add(new Dungeon(kind, x, y, Gml.StructGet(s, "name").ToString(),
-                    (int)Run(Scripts.scr_globaldungeonTierGet, x, y).AsReal,
+                    Math.Max(1, (int)Run(Scripts.scr_globaldungeonTierGet, x, y).AsReal),
                     Truthy(Run(Scripts.scr_globaltile_dungeon_get, "boss_alive", x, y))));
             }
         }

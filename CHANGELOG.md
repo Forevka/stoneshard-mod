@@ -62,8 +62,12 @@ bump may break the mod API or the native CoreApi table; each version says so und
   nearest free cell joined to the room's edges; travel starts only from the open world (not inside a building or dungeon) and is refused with enemies nearby. Test-host commands `ft.*`.
 - **StoneshardTrials** (Stoneshard, proof of concept): a roguelike loop in the spirit of BG3's
   *Trials of Tav*. A new Adventure's Osbrook tavern is the hub, with a banner saying to leave it. Its
-  street door opens onto a random crypt, catacombs or bastion whose boss still lives (tier 1 at first,
-  one tier more every two trials), entered the way the dungeon's own entrance enters it. Killing the
+  street door opens onto a crypt, catacombs or bastion whose boss still lives, entered the way the
+  dungeon's own entrance enters it. Its danger tier comes from the character: power is half its
+  level tier and half the average tier (plus rarity) of its five best worn items, pressure grows a
+  quarter tier per trial up to one, and the result is rounded up past a 0.4 fraction; the nearest
+  untouched dungeon is taken. A run is finite: once every dungeon's master is dead the run is
+  complete and the world map opens again. Killing the
   trial dungeon's boss or named miniboss puts one Trial Ticket in the bag; using it returns you to
   the tavern for the next trial, and the innkeeper pays crowns for it (150 for tier 1, 100 more per
   tier, a tenth more per trial behind you). During the trials the world map stays shut (key, HUD
