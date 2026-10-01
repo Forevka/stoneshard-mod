@@ -2,6 +2,7 @@ using System.Diagnostics;
 using CoreLoader;
 
 [assembly: CoreModInfo(typeof(ValueProbe.Probe), "Value probe", "1.0.0", "Lodestone tests")]
+[assembly: CoreModAnyGame]
 
 namespace ValueProbe;
 

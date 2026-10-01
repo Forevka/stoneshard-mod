@@ -56,7 +56,11 @@ public sealed class CoreModInfoAttribute : Attribute
 
 /// <summary>
 /// Restricts a mod to games whose exe name (without extension) matches one of
-/// these, case-insensitively. A mod without it loads in every game.
+/// these, case-insensitively: <c>[assembly: CoreModGame("StoneShard")]</c>. The
+/// game's interop namespace is accepted as well ("Dwarf_Eats_Mountain").
+/// Every mod says which games it is for, with this or with
+/// <see cref="CoreModAnyGameAttribute"/>; the loader refuses a mod that says
+/// neither, rather than run code written for one game inside another.
 /// </summary>
 [AttributeUsage(AttributeTargets.Assembly)]
 public sealed class CoreModGameAttribute : Attribute
@@ -64,4 +68,15 @@ public sealed class CoreModGameAttribute : Attribute
     public string[] Games { get; }
 
     public CoreModGameAttribute(params string[] games) => Games = games;
+}
+
+/// <summary>
+/// Declares a mod that works in any game: it relies on nothing a particular
+/// game defines (no object, script or variable names of its own), like the
+/// Console or SpeedControl. The alternative to <see cref="CoreModGameAttribute"/>;
+/// a mod carries exactly one of the two.
+/// </summary>
+[AttributeUsage(AttributeTargets.Assembly)]
+public sealed class CoreModAnyGameAttribute : Attribute
+{
 }

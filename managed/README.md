@@ -101,7 +101,7 @@ everything.
 using CoreLoader;
 
 [assembly: CoreModInfo(typeof(MyMod), "My Mod", "1.0.0", "Me")]
-[assembly: CoreModGame("StoneShard")]           // optional: only load in this game
+[assembly: CoreModGame("StoneShard")]           // required: the game(s) it is for, or [assembly: CoreModAnyGame]
 
 public sealed class MyMod : CoreMod
 {
@@ -118,6 +118,19 @@ public sealed class MyMod : CoreMod
     }
 }
 ```
+
+Every mod says which games it is for, with exactly one of:
+
+- `[assembly: CoreModGame("StoneShard")]`: the game's exe name without `.exe`, compared ignoring
+  case. Its interop namespace works too (`Dwarf_Eats_Mountain` for `Dwarf Eats Mountain.exe`). List
+  several for a mod that supports more (`CoreModGame("StoneShard", "Dwarf Eats Mountain")`).
+  In any other game the mod is skipped, with a log line and a grey entry in the Loader tab.
+- `[assembly: CoreModAnyGame]`: the mod relies on nothing a particular game defines (no object,
+  script or variable names of its own), like Console or SpeedControl.
+
+A mod that declares neither, or both, is not loaded: the log and the Loader tab say what to add, and
+the test host's `status` lists it under `notLoaded`. The analyzer reports the missing declaration at
+build time (CL0004).
 
 Build it against `CoreLoader.dll`: the `Mods/` projects here inherit that setup from
 `Mods/Directory.Build.props`. Then drop the dll into `<game>\Mods\`.
@@ -139,7 +152,7 @@ public override void OnInitialize()
 ## Analyzers
 
 Mods are compiled with `CoreLoader.Analyzers`, which reports the lifetime mistakes the runtime can
-only catch as a crash. The `Mods/`, `Tests/` and `Examples/` projects here get it from their
+only catch as a crash, and a mod that does not say which game it is for. The `Mods/`, `Tests/` and `Examples/` projects here get it from their
 `Directory.Build.props`. Template mods get it from `<game>\Lodestone\Analyzers\`, where
 `tools\deploy-coreloader.ps1` installs it. It runs in the compiler only; the game never loads it.
 
@@ -148,6 +161,8 @@ only catch as a crash. The `Mods/`, `Tests/` and `Examples/` projects here get i
 | CL0001 | A field or auto-property that holds an `RValue` (or an array, collection or tuple of them), or a stored, queued or registered lambda that captures one | Strings, arrays and structs from the game are pooled and released at the end of the frame. Keep C# data (`AsReal`, `AsString`), or own the value with `Values.Keep` and release it with `Values.Free` |
 | CL0002 | A field or auto-property that holds an `Instance` or a `HookCall`, or a lambda that captures one and is stored, queued or registered (`Game.RunOnGameThread`, `Task.Run`, a field, a collection, `Hooks.Before`/`After`/`NextBefore`/`NextAfter`, `TestHost.Register`, `GameDraw.OnGui`) | An `Instance` is a raw pointer that dangles once the instance is destroyed: hold an `InstanceRef`. A `HookCall` is valid only inside its handler |
 | CL0003 | `Values.Free` on a local read from `HookCall.GetArg` or `HookCall.Result` | The game lends hook arguments and results; freeing one releases the caller's reference |
+| CL0004 (error) | A mod assembly (`[CoreModInfo]`) with neither `[CoreModGame]` nor `[CoreModAnyGame]` | The loader refuses a mod that does not say which games it is for |
+| CL0005 | A mod compiled against a generated `<Game>.Interop` whose `[CoreModGame]` does not name that game, or that declares `[CoreModAnyGame]` | An interop names one game's scripts, objects and assets; the mod cannot work anywhere else |
 
 Instance fields of a `ref struct` are exempt: it cannot outlive the call that made it. Keeping a
 value on purpose (a number, or one owned with `Values.Keep`) is fine: suppress the warning on that
@@ -310,7 +325,7 @@ the frame: `wait-frames n` answers n frames later, and a longer wait is polled f
 
 | Command | Does |
 |---|---|
-| `ping`, `status`, `mods`, `log [n]` | Liveness, game and bridge state, frame count, each mod's state and fault, the last n log lines |
+| `ping`, `status`, `mods`, `log [n]` | Liveness, game and bridge state, frame count, each mod's state and fault (`status` also lists `notLoaded`: mods skipped as being for another game, or refused for not declaring one), the last n log lines |
 | `reload <mod\|all>` | Reloads a mod, as the Loader tab does |
 | `call <script> [args]`, `builtin <name> [args]` | Calls a script or builtin. `"as":"current"` runs it as the instance the game last ran; `"as":<instance id>` runs it as that instance (needs `Game.CanResolveInstances`) |
 | `global-get <name>`, `global-set <name> <value>` | Global variables (set answers the value read back) |

@@ -273,10 +273,13 @@ internal static unsafe class Entry
         // unload the code that is drawing right now.
         if (UI.Button("Reload all")) Game.RunOnGameThread(ModManager.ReloadAll);
 
-        if (ModManager.Mods.Count == 0)
+        if (ModManager.Mods.Count == 0) UI.TextDisabled("No mods loaded.");
+
+        foreach (var n in ModManager.NotLoaded)
         {
-            UI.TextDisabled("No mods loaded.");
-            return;
+            var line = $"{n.Name} ({System.IO.Path.GetFileName(n.Path)})";
+            if (n.Refused) UI.TextColored(1f, 0.45f, 0.45f, $"{line} - not loaded: {n.Reason}");
+            else UI.TextDisabled($"{line} - skipped: {n.Reason}");
         }
 
         foreach (var m in ModManager.Mods)

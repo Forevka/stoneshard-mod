@@ -20,7 +20,7 @@
     "gameName": {
       "type": "parameter",
       "datatype": "text",
-      "description": "The game's exe name without extension, e.g. StoneShard. Restricts the mod to that game; leave empty for a mod that runs in any game.",
+      "description": "The game's exe name without extension, e.g. StoneShard. Restricts the mod to that game; leave empty for a mod that runs in any game (it then declares [CoreModAnyGame], or, with an interop, that interop's game).",
       "replaces": "GAME_NAME_PLACEHOLDER",
       "defaultValue": ""
     },

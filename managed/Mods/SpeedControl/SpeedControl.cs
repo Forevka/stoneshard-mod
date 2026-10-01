@@ -1,6 +1,7 @@
 using CoreLoader;
 
 [assembly: CoreModInfo(typeof(SpeedControl.SpeedControlMod), "Speed Control", "1.0.0", "Lodestone")]
+[assembly: CoreModAnyGame]
 
 namespace SpeedControl;
 

@@ -11,6 +11,9 @@ internal enum ModState
     Faulted,
 }
 
+/// <summary>A mod file that was not loaded into this game, and why.</summary>
+internal sealed record NotLoadedMod(string Path, string Name, string Reason, bool Refused);
+
 internal sealed class LoadedMod
 {
     // Set once construction succeeds; everything that reads it runs after that.
@@ -94,6 +97,13 @@ internal static class ModManager
 
     public static IReadOnlyList<LoadedMod> Mods => ModList;
 
+    // Mods found in the folder but not loaded here, kept for the Loader tab and
+    // the test host's status: the log line alone is easy to miss.
+    private static readonly List<NotLoadedMod> NotLoadedList = new();
+
+    /// <summary>Mods skipped as being for another game, or refused for not declaring one.</summary>
+    public static IReadOnlyList<NotLoadedMod> NotLoaded => NotLoadedList;
+
     public static string ModsDirectory => System.IO.Path.Combine(Game.Directory, "Mods");
 
     /// <summary>Set once mods have been started (after the game loaded its assets).</summary>
@@ -145,9 +155,49 @@ internal static class ModManager
         return list.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    /// <summary>
+    /// Why a mod is not for this game, or null when it is. A mod for other
+    /// games is skipped quietly (one mods folder may serve several games); one
+    /// that does not say which games it is for is refused, so its author hears
+    /// about it the first time it is run anywhere.
+    /// </summary>
+    private static NotLoadedMod? CheckGame(Assembly asm, string name)
+    {
+        var games = asm.GetCustomAttribute<CoreModGameAttribute>();
+        bool any = asm.GetCustomAttribute<CoreModAnyGameAttribute>() != null;
+        string[] named = (games?.Games ?? []).Where(g => !string.IsNullOrWhiteSpace(g)).ToArray();
+
+        string? refusal = (games, any) switch
+        {
+            (null, false) => $"{name} does not say which game it is for. Add [assembly: CoreModGame(\"{Game.Name}\")] " +
+                             "(the game's exe name; list several if it supports more) for a mod written for particular " +
+                             "games, or [assembly: CoreModAnyGame] for one that works in any game",
+            ({ }, true) => $"{name} carries both [CoreModGame] and [CoreModAnyGame]; keep the one that is true",
+            ({ }, false) when named.Length == 0 => $"{name}'s [CoreModGame] names no game; name at least one exe, " +
+                                                   "or use [CoreModAnyGame] instead",
+            _ => null,
+        };
+        if (refusal != null) return new NotLoadedMod("", name, refusal, Refused: true);
+        // The exe name, or the game's interop namespace (Dwarf_Eats_Mountain for
+        // "Dwarf Eats Mountain"), which is what an interop-based mod knows it by.
+        if (any || named.Any(g => string.Equals(g.Trim(), Game.Name, StringComparison.OrdinalIgnoreCase) ||
+                                  string.Equals(g.Trim().TrimStart('_'), InteropGenerator.SafeGameName.TrimStart('_'),
+                                                StringComparison.OrdinalIgnoreCase)))
+            return null;
+        return new NotLoadedMod("", name, $"it is for {string.Join(", ", named)}, not {Game.Name}", Refused: false);
+    }
+
+    private static bool IsNotLoaded(string path) =>
+        NotLoadedList.Any(n => string.Equals(n.Path, path, StringComparison.OrdinalIgnoreCase));
+
+    private static void ForgetNotLoaded(string path) =>
+        NotLoadedList.RemoveAll(n => string.Equals(n.Path, path, StringComparison.OrdinalIgnoreCase));
+
     private static LoadedMod? TryLoad(string path)
     {
         string file = System.IO.Path.GetFileName(path);
+        // A rebuilt file is judged afresh.
+        ForgetNotLoaded(path);
         try
         {
             if (!HasModInfo(path)) return null;
@@ -163,10 +213,11 @@ internal static class ModManager
                 return null;
             }
 
-            var games = asm.GetCustomAttribute<CoreModGameAttribute>();
-            if (games != null && !games.Games.Any(g => string.Equals(g, Game.Name, StringComparison.OrdinalIgnoreCase)))
+            if (CheckGame(asm, info.Name) is { } notHere)
             {
-                Log.Info($"skipping {info.Name}: it targets {string.Join(", ", games.Games)}, not {Game.Name}");
+                if (notHere.Refused) Log.Error($"{file}: {notHere.Reason}");
+                else Log.Info($"skipping {info.Name}: {notHere.Reason}");
+                NotLoadedList.Add(notHere with { Path = path, Name = info.Name });
                 ctx.Unload();
                 return null;
             }
@@ -293,6 +344,15 @@ internal static class ModManager
         // The running copy's settings are written first, so the new one reads them.
         try { m.Instance.Config.Save(); } catch (Exception ex) { Log.Warning($"saving {m.Instance.Info.Name}'s settings: {ex.Message}"); }
         var fresh = TryLoad(path);
+        if (fresh == null && IsNotLoaded(path))
+        {
+            // The new build is for another game, or refused: a final verdict,
+            // not a file still being written. The running copy goes with it.
+            RetryCounts.TryRemove(path, out _);
+            Unload(m);
+            Log.Info($"unloaded {System.IO.Path.GetFileName(path)}: its new build is not loaded here");
+            return;
+        }
         if (fresh == null)
         {
             if (RetryCounts.AddOrUpdate(path, 1, (_, n) => n + 1) <= 3)
@@ -321,6 +381,8 @@ internal static class ModManager
 
     public static void ReloadAll()
     {
+        // Files deleted since: nothing to report about them any more.
+        NotLoadedList.RemoveAll(n => !File.Exists(n.Path));
         foreach (var m in ModList.ToList()) Reload(m);
         // Mods added to the folder since startup.
         foreach (var path in Candidates(ModsDirectory))
@@ -384,6 +446,8 @@ internal static class ModManager
                 continue;
             }
             if (isMod) { added.Add(path); continue; }
+            // Deleted, or no longer a mod: nothing to report about it any more.
+            ForgetNotLoaded(path);
 
             // A dependency changed (e.g. a rebuilt <Game>.Interop.dll): reload the
             // mods that actually loaded an assembly by that name.

@@ -1,6 +1,7 @@
 using CoreLoader;
 
 [assembly: CoreModInfo(typeof(HelloMod.HelloMod), "Hello Mod", "0.2.0", "Lodestone")]
+[assembly: CoreModAnyGame]
 
 namespace HelloMod;
 

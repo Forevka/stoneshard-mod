@@ -1,6 +1,7 @@
 using CoreLoader;
 
 [assembly: CoreModInfo(typeof(ContentDemo.ContentDemoMod), "Content Demo", "1.0.0", "Lodestone")]
+[assembly: CoreModAnyGame]
 
 namespace ContentDemo;
 

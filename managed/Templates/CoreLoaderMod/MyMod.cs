@@ -6,6 +6,10 @@ using INTEROP_PLACEHOLDER;   // generated: Scripts.*, Objects.*, Builtins.*, Ass
 [assembly: CoreModInfo(typeof(MyMod.MyModMod), "MyMod", "0.1.0", "AUTHOR_PLACEHOLDER")]
 //#if (hasGame)
 [assembly: CoreModGame("GAME_NAME_PLACEHOLDER")]
+//#elseif (hasInterop)
+[assembly: CoreModGame("INTEROP_PLACEHOLDER")]   // the interop's game; the loader also accepts this form of its name
+//#else
+[assembly: CoreModAnyGame]   // works in any game; name the game with CoreModGame("<exe name>") if it does not
 //#endif
 
 namespace MyMod;

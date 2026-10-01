@@ -38,6 +38,30 @@ public static class Rules
         description: "A hook's arguments and result belong to the caller. Releasing one frees the caller's reference, which then crashes or corrupts the game when it is used again.",
         helpLinkUri: HelpLink);
 
+    public static readonly DiagnosticDescriptor NoGameDeclared = new(
+        id: "CL0004",
+        title: "A mod does not say which game it is for",
+        messageFormat: "{0}, and the loader refuses to load it. Declare exactly one of [assembly: CoreModGame(\"<exe name>\")] for a mod written for particular games, or [assembly: CoreModAnyGame] for one that works in any game.",
+        category: GameCategory,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "Every mod declares its games: code written for one game's objects and scripts must not run inside another.",
+        helpLinkUri: HelpLink,
+        customTags: WellKnownDiagnosticTags.CompilationEnd);
+
+    public static readonly DiagnosticDescriptor InteropGameMismatch = new(
+        id: "CL0005",
+        title: "A mod built on one game's interop declares other games",
+        messageFormat: "This mod compiles against {0} but declares {1}: it can only work in the game that interop was generated from. Name that game in [CoreModGame].",
+        category: GameCategory,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "A generated interop names one game's scripts, objects and assets; a mod written against it fails in any other game.",
+        helpLinkUri: HelpLink,
+        customTags: WellKnownDiagnosticTags.CompilationEnd);
+
+    private const string GameCategory = "CoreLoader.Games";
+
     internal const string InstanceWhy = "it is a raw CInstance pointer that dangles once the instance is destroyed; hold an InstanceRef (by id) instead";
     internal const string HookCallWhy = "a HookCall is valid only inside its handler; copy what you need (GetArg(i).AsReal, Symbol) instead";
 }

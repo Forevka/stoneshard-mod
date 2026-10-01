@@ -1,6 +1,7 @@
 using CoreLoader;
 
 [assembly: CoreModInfo(typeof(StructProbe.Probe), "Struct probe", "1.0.0", "Lodestone tests")]
+[assembly: CoreModAnyGame]
 
 namespace StructProbe;
 

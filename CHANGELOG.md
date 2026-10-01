@@ -15,8 +15,24 @@ bump may break the mod API or the native CoreApi table; each version says so und
   folder to `Lodestone\`, and interop-based projects now look for `<game>\Lodestone\Interop\`.
   A mod made from the template before this has `<CoreLoaderDir>$(GameDir)\CoreLoader</CoreLoaderDir>`
   in its csproj: change it to `$(GameDir)\Lodestone`, or it no longer finds CoreLoader.dll.
+- **Breaking:** **every mod says which games it is for.** A mod declares exactly one of
+  `[assembly: CoreModGame("<exe name>", ...)]` or the new `[assembly: CoreModAnyGame]`. A mod that
+  declares neither (or both, or a `CoreModGame` naming no game) is no longer loaded: the log and the
+  Loader tab say what to add. Before, such a mod loaded silently into every game, so a mod written
+  for one game's objects and scripts ran inside another and failed there in confusing ways. A warning
+  would be easy to miss, and the fix is one line, so the loader refuses instead. Every shipped mod,
+  example, test mod and the `dotnet new coreloader-mod` template declares its games (a template mod
+  without `--gameName` declares its interop's game, or `CoreModAnyGame` without an interop). A mod built for an earlier release without
+  `CoreModGame` needs the attribute added and a rebuild.
 
 ### Added
+- `[assembly: CoreModAnyGame]`, the explicit declaration for a mod that works in any game.
+- `CoreModGame` also accepts the game's interop namespace (`Dwarf_Eats_Mountain`) as its name.
+- Analyzer rules **CL0004** (error: a mod with `[CoreModInfo]` but no game declaration) and
+  **CL0005** (warning: a mod compiled against `<Game>.Interop` whose `[CoreModGame]` does not name
+  that game, or that declares `[CoreModAnyGame]`).
+- The Loader tab lists mods that were not loaded: skipped as being for another game (grey), or refused
+  for not declaring one (red, with the reason). The test host's `status` lists them under `notLoaded`.
 - Release packaging: `tools\package-release.ps1` packs the loader (optionally with a private .NET
   runtime) and one zip per mod, each extracting straight into a game folder, and can upload them to a
   GitHub release. `.github/workflows/release.yml` builds and tests everything on a `v*` tag and
@@ -223,6 +239,14 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - `tools/savepeek.py` and 20 one-off or duplicate reverse-engineering scripts in `tools/re`.
 
 ### Fixed
+- **A failed array access no longer makes the game fail later.** The runtime reports a bad array index
+  through a global flag (with the index and size beside it), which its array builtins and compiled code
+  test after each access. Only the error path sets it and nothing clears it, because a real error
+  stops the game. When the loader caught such an error (e.g. a Console `array_get(arr, 6)` on a
+  6-element array), the flag stayed set. The game's next array access that tests it then raised the
+  game's modal "Code Error" box with the stale index, in unrelated code and seconds to minutes later.
+  The loader now finds the flag through the `array_get`/`array_set` builtins and clears it when a
+  guarded call that set it fails. `tools\smoke-generic.ps1` checks this.
 - **Games that rebuild their swap chain no longer fail to start.** The overlay kept its back-buffer view
   across frames, which held the game's first swap chain alive after the game released it. DXGI then
   refused the replacement for the same window (`CreateSwapChain ... E_ACCESSDENIED`), and The King is
