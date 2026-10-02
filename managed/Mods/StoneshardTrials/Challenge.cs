@@ -27,14 +27,17 @@ internal static class Challenge
 
     /// <summary>
     /// How much the trial adds: nothing while the wanted danger is within the
-    /// dungeon's tier; once it runs past, one extra enemy and one more for every
-    /// 0.3 further (up to 4), and an elite master once it runs a whole tier
-    /// past. The difficulty adds its own extras (Brutal also the elite).
+    /// slack the tier's rounding allows (see <see cref="Progression.Slack"/>), so
+    /// a fresh character's first trial adds nothing; past it, one extra enemy
+    /// and one more for every 0.3 further (up to 4), and an elite master once it
+    /// runs a whole tier past. The difficulty adds its own extras (Brutal also
+    /// the elite).
     /// </summary>
     public static Plan For(double target, int dungeonTier, int difficultyExtras)
     {
         double over = Math.Round(target - dungeonTier, 6);
-        int extras = over <= 0 ? 0 : Math.Min(4, 1 + (int)Math.Floor(over / 0.3));
+        double past = Math.Round(over - Progression.Slack, 6);
+        int extras = past <= 0 ? 0 : Math.Min(4, 1 + (int)Math.Floor(past / 0.3));
         return new Plan(Math.Clamp(extras + difficultyExtras, 0, 6), over >= 1.0 || difficultyExtras >= 2);
     }
 
@@ -48,11 +51,21 @@ internal static class Challenge
     }
 
     /// <summary>
-    /// Makes the master an elite once it is there to be found: on the floor the
-    /// player arrives on, or (a natural two-floor dungeon) on the floor below.
-    /// Answers its name, or null while no master is loaded.
+    /// Finds the trial's master once it is there to be found (on the floor the
+    /// player arrives on, or on a natural two-floor dungeon's floor below) and
+    /// makes it the elite: "Elite" before its name, and at full health it gets
+    /// the elite's full health. Answers it and its own name, or null while no
+    /// master is loaded. Run again after a load or a change of floor, which
+    /// make the master anew with its plain name.
     /// </summary>
-    public static string? TryElite(Logger log)
+    /// <remarks>
+    /// The extra health does not stay by itself: every turn scr_atr_calc, run
+    /// as the unit, rebuilds max_hp from the unit's base data and clamps HP to
+    /// it. So the caller also scales max_hp after each of those calls (see
+    /// TrialsMod's elite hooks). max_hp_cosnt is the unit's unbuffed maximum,
+    /// which a write to max_hp leaves alone, so scaling from it never compounds.
+    /// </remarks>
+    public static (InstanceRef Master, string Name, bool Renamed)? TryElite(Logger log)
     {
         // The master itself first; a miniboss only where no master is to be found.
         var candidates = Enemies().Where(e => e.Master).OrderByDescending(e => World.Truthy(e.Ref.Get("isBoss"))).ToList();
@@ -62,16 +75,25 @@ internal static class Challenge
             // A master that has not finished its creation has no name or health yet.
             if (master.Get("name") is not { Kind: RValueKind.String } nameValue || World.Num(master, "max_hp") <= 0) continue;
             string name = nameValue.ToString();
-            if (name.StartsWith("Elite ", StringComparison.Ordinal)) return name["Elite ".Length..];
-            double max = Math.Round(World.Num(master, "max_hp") * EliteHealth);
-            master.Set("max_hp", max);
-            master.Set("HP", max);
-            master.Set("name", "Elite " + name);
-            log.Info($"elite master: {name}, {max} HP");
-            return name;
+            bool renamed = !name.StartsWith("Elite ", StringComparison.Ordinal);
+            if (renamed) master.Set("name", "Elite " + name);
+            else name = name["Elite ".Length..];
+            double max = World.Num(master, "max_hp"), plain = World.Num(master, "max_hp_cosnt");
+            // Without max_hp_cosnt, a master already named elite (a hot reload)
+            // already has the elite's maximum; it is not scaled again.
+            double elite = plain > 0 ? Math.Round(plain * EliteHealth) : renamed ? Math.Round(max * EliteHealth) : max;
+            // Full health: just made, or loaded at full. A wounded master (a load
+            // mid-fight) keeps its wounds.
+            if (World.Num(master, "HP") >= max) master.Set("HP", elite);
+            master.Set("max_hp", elite);
+            log.Info($"elite master: {name}, {World.Num(master, "HP")}/{elite} HP");
+            return (master, name, renamed);
         }
         return null;
     }
+
+    /// <summary>The elite's maximum health, from what the game's own recalculation just made it.</summary>
+    public static double EliteMax(double max) => Math.Round(max * EliteHealth);
 
     private readonly record struct Enemy(InstanceRef Ref, int Object, int Tier, int Gx, int Gy, bool Master);
 

@@ -38,13 +38,24 @@ internal static class Ticket
     }
 
     /// <summary>Puts a new ticket in the bag; null when the bag would not take it.</summary>
+    /// <remarks>
+    /// A full bag makes scr_inventory_add_item throw the new map on the ground
+    /// (an o_loot_map_osbrook, "throws away Map of Osbrook Outskirts") and
+    /// return noone. That plain map is no ticket, so it is taken away again.
+    /// </remarks>
     public static InstanceRef? Give()
     {
         var inventory = Inventory() ?? throw new InvalidOperationException("no o_inventory");
         var obj = GmlObject.Find(Carrier) ?? throw new InvalidOperationException($"no {Carrier}");
+        var onGround = GroundMaps();
         var made = Scripts.scr_inventory_add_item.CallAs(inventory, obj.Index);
         var item = new InstanceRef(made);
-        if (!IsInstance(made) || !item.Exists) return null;
+        if (!IsInstance(made) || !item.Exists)
+        {
+            foreach (var r in Objects.o_loot_map_osbrook.Object?.Instances() ?? Enumerable.Empty<InstanceRef>())
+                if (!onGround.Contains(World.IdKey(r.Id))) Builtins.instance_destroy(r.Id);
+            return null;
+        }
         // Already in the bag: a map that cannot be made a ticket must not stay
         // there as a free Osbrook map, or every retry would add another.
         try
@@ -87,6 +98,23 @@ internal static class Ticket
         if (World.Num(item, "charge") < 1) item.Set("charge", 1);
         if (item.Get("mid_text").ToString() != Body) item.Set("mid_text", Body);
         if (item.Get("desc").ToString() != Flavor) item.Set("desc", Flavor);
+    }
+
+    private static HashSet<long> GroundMaps() =>
+        (Objects.o_loot_map_osbrook.Object?.Instances() ?? Enumerable.Empty<InstanceRef>()).Select(r => World.IdKey(r.Id)).ToHashSet();
+
+    /// <summary>
+    /// A cheap fingerprint of what the bag holds (its items, worn ones too), so
+    /// a ticket that did not fit is tried again only once something changed.
+    /// </summary>
+    public static int BagCount()
+    {
+        if (Inventory() is not { } inventory || Objects.o_inv_slot.Object is not { } slots) return -1;
+        long bag = World.IdKey(inventory.Id);
+        int n = 0;
+        foreach (var item in slots.Instances())
+            if (World.IdKey(item.Get("owner")) == bag) n++;
+        return n;
     }
 
     // The bag itself: instance_find(o_inventory) also returns its children

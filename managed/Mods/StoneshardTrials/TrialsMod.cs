@@ -50,8 +50,7 @@ public sealed class TrialsMod : CoreMod
     private bool RunOver(Run run) => run.Completed && !EndlessRuns;
     // A won trial whose ticket did not fit in the bag yet.
     private bool _ticketOwed;
-    // The used ticket, destroyed once the way back has really started.
-    private InstanceRef? _usedTicket;
+    // A ticket was used: the way back starts on the next frame (Settle spends it).
     private bool _returnQueued;
     private string? _bannerText;
     private int _frames;
@@ -64,14 +63,14 @@ public sealed class TrialsMod : CoreMod
         _enabledSetting = ModSettings.Toggle(this, "enabled", "Trials",
             "Off: the tavern door leads to Osbrook and the world map opens again.", true);
         _xpScale = ModSettings.Slider(this, "xpScale", "Kill experience",
-            "Experience from slain enemies; no other source gives any during the trials.", 1, 0, 3, 0.25, v => $"x{v:0.##}");
+            "Experience from kills, the only source during the trials.", 1, 0, 3, 0.25, v => $"x{v:0.##}");
         _goldScale = ModSettings.Slider(this, "goldScale", "Trial reward",
             "Crowns paid for each trial won.", 1, 0, 3, 0.25, v => $"x{v:0.##}");
         _difficulty = ModSettings.Choice(this, "difficulty", "Difficulty",
-            "Easy asks half a tier less of each trial; Hard half a tier more and an extra enemy; Brutal a whole tier more, two extra enemies and an elite master.",
+            "Easy: half a tier lower. Hard: half higher, +1 enemy. Brutal: a tier higher, +2, elite master.",
             1, Difficulties);
         _runMode = ModSettings.Choice(this, "runMode", "Run",
-            "Finite: each of the world's dungeons once, and the run is over. Endless: won dungeons are made anew at the tier you need.",
+            "Finite: every dungeon once, then the run ends. Endless: won dungeons are remade.",
             0, new[] { "Finite", "Endless" });
 
         Objects.o_transitions_door.Alarm_7.Before(c => Guard("door", () => OnDoorLeaving(c)));
@@ -80,6 +79,8 @@ public sealed class TrialsMod : CoreMod
         Objects.o_inv_map.Other_24.Before(c => Guard("map use", () => OnMapUsed(c)));
         Scripts.scr_globalmapCreate.Before(c => Guard("world map", () => OnWorldMap(c)));
         Scripts.scr_get_XP.Before(c => Guard("experience", () => OnExperience(c)));
+        Scripts.scr_atr_calc.Before(c => Guard("elite health", () => OnEliteCalc(c, after: false)));
+        Scripts.scr_atr_calc.After(c => Guard("elite health", () => OnEliteCalc(c, after: true)));
         GameDraw.OnGui(DrawGui);
         if (TestHost.Enabled) RegisterCommands();
         Log.Info($"ready{(_enabled ? "" : " (turned off)")}");
@@ -115,12 +116,18 @@ public sealed class TrialsMod : CoreMod
                 _ticketOwed = false;
                 _next = null;
                 _returnQueued = false;
-                _usedTicket = null;
                 _bannerText = null;
-                _eliteOwed = false;
+                _eliteKey = -1;
+                _bagWhenFull = -1;
+                _owedSeconds = 0;
                 _plan = Challenge.Plan.None;
                 _arrival.Cancel();
             }
+            // What the character carries changed under us (a load): the copy follows.
+            if (stored != _runStored) _store.Mirror(read);
+            // A new room, a load or another character: the world read for the
+            // banner may be another world's, or out of date (CompleteIfDone).
+            _dungeonsSeen = null;
             _run = read;
             _lastRunId = read.Id;
             _runPlayer = key;
@@ -144,14 +151,12 @@ public sealed class TrialsMod : CoreMod
         if (_returnQueued)
         {
             _returnQueued = false;
-            var ticket = _usedTicket;
-            _usedTicket = null;
-            ReturnToHub(ticket);
+            ReturnToHub();
         }
         // About once a second: work out the banner and keep tickets looking like tickets
         // (a load puts the map's own text back).
         if (++_frames % 60 != 0) return;
-        if (CurrentRun() is null)
+        if (CurrentRun() is not { } run)
         {
             // Back at the menu: a debt belongs to the character that earned it.
             _ticketOwed = false;
@@ -163,6 +168,13 @@ public sealed class TrialsMod : CoreMod
         {
             Ticket.Refresh(t);
             carrying = true;
+        }
+        // Back in the tavern on foot. (While the door is leaving, the world cell
+        // is already the dungeon's, so a trial just begun is not taken for this.)
+        if (_enabled && World.Cell == World.HubCell && World.HubDoor() is not null)
+        {
+            if (run.Trial != null) Settle(run);
+            else CompleteIfDone(run, RecentDungeons());
         }
         if (_ticketOwed) TryGiveTicket(quiet: true);
         TryElite();
@@ -195,23 +207,18 @@ public sealed class TrialsMod : CoreMod
         if (!_enabled || !World.IsHubDoor(c.Self)) return;
         _next = null;
         c.Self.Set("dungeon_level_incr", 0);
+        if (CurrentRun() is not { } run) return;
+        // Walked back in and straight out again before Update noticed: the
+        // last trial is settled before the next one can overwrite it.
+        if (run.Trial != null) Settle(run);
         // A finished run is over for good: the door is a plain door again.
-        if (CurrentRun() is not { } run || RunOver(run)) return;
+        if (RunOver(run)) return;
         var all = World.Dungeons();
         var pick = Pick(all, consume: true);
         if (pick is null)
         {
-            // Over only on positive evidence: the world has dungeons and none
-            // has a master left. An empty list is a failed read, not a win.
-            // (An endless run always finds one while the world has any.)
-            if (!EndlessRuns && all.Count > 0 && all.All(d => !d.BossAlive))
-            {
-                run.Completed = true;
-                SaveRun(run);
-                Log.Info($"run {run.Id} complete: {run.TrialsWon} trials won, {run.GoldEarned} crowns");
-                World.Say("~lg~Every trial is won.~/~ No dungeon's master is left alive: the road is yours again.");
-            }
-            else Log.Warning($"no trial to take ({all.Count} dungeon(s) read); the door leads to the street this once");
+            if (!CompleteIfDone(run, all))
+                Log.Warning($"no trial to take ({all.Count} dungeon(s) read); the door leads to the street this once");
             return;
         }
         _next = pick;
@@ -249,16 +256,33 @@ public sealed class TrialsMod : CoreMod
             throw;
         }
         _plan = Challenge.For(choice.Target, d.Tier, DifficultyExtras[DifficultyIndex]);
-        _eliteOwed = false;
+        _eliteKey = -1;
         _arrival.Expect();
         run.Trial = d;
         run.Won = false;
+        // Kept on the run, so a load mid-trial finds its master elite again.
+        run.Elite = _plan.Elite;
         run.LastKind = d.Kind;
         run.LastCell = $"{d.X}_{d.Y}";
         _ticketOwed = false;
         SaveRun(run);
         Log.Info($"trial {run.Level}: {d.Name} ({d.Kind}, tier {d.Tier}) at {d.X},{d.Y}; adds {_plan}");
         World.Say($"~y~Trial {run.Level}~/~: the door opens onto {Describe(d)} ({Skulls(d.Tier)}).");
+    }
+
+    /// <summary>
+    /// Ends a finite run once every master of the world is dead. Over only on
+    /// positive evidence: the world has dungeons and none has a master left. An
+    /// empty list is a failed read, not a win. (An endless run never ends.)
+    /// </summary>
+    private bool CompleteIfDone(Run run, IReadOnlyList<World.Dungeon> all)
+    {
+        if (EndlessRuns || run.Completed || run.Trial != null || all.Count == 0 || all.Any(d => d.BossAlive)) return false;
+        run.Completed = true;
+        SaveRun(run);
+        Log.Info($"run {run.Id} complete: {run.TrialsWon} trials won, {run.GoldEarned} crowns");
+        World.Say("~lg~Every trial is won.~/~ No dungeon's master is left alive: the road is yours again.");
+        return true;
     }
 
     /// <summary>
@@ -285,15 +309,29 @@ public sealed class TrialsMod : CoreMod
             Log.Warning($"tr.next {f.X},{f.Y} cannot be the next trial (not a dungeon, won, or not one that can be remade); picking as usual");
         }
         Choice? choice;
+        var rng = PickRng(run);
         if (EndlessRuns)
         {
             (int, int)? lastCell = run.LastCell?.Split('_') is [var lx, var ly] && int.TryParse(lx, out int x) && int.TryParse(ly, out int y) ? (x, y) : null;
-            choice = Endless.Pick(all, a.Tier, run.LastKind, lastCell, _rng) is { } e ? new Choice(e.Dungeon, e.Rewrite, e.Tier, a.Target) : null;
+            choice = Endless.Pick(all, a.Tier, run.LastKind, lastCell, rng) is { } e ? new Choice(e.Dungeon, e.Rewrite, e.Tier, a.Target) : null;
         }
-        else choice = Progression.Pick(open, a.Tier, run.LastKind, _rng) is { } p ? new Choice(p, false, a.Tier, a.Target) : null;
+        else choice = Progression.Pick(open, a.Tier, run.LastKind, rng) is { } p ? new Choice(p, false, a.Tier, a.Target) : null;
         if (consume && choice is { } ch)
             Log.Info($"trial {run.Level}: {a}; {open.Count} untouched dungeon(s) left, taking tier {ch.Dungeon.Tier}{(ch.Rewrite ? $" made tier {ch.Tier}" : "")}");
         return choice;
+    }
+
+    // Ties between equally good dungeons are broken by a generator seeded with
+    // the run and its trial number, so the banner, tr.pick and the door itself
+    // name the same dungeon for as long as nothing else changes.
+    private static Random PickRng(Run run)
+    {
+        int seed = 17;
+        unchecked
+        {
+            foreach (char ch in $"{run.Id}:{run.Level}") seed = seed * 31 + ch;
+        }
+        return new Random(seed);
     }
 
     // Once in the trial's dungeon: its extra enemies, and the elite master
@@ -308,22 +346,55 @@ public sealed class TrialsMod : CoreMod
             return;
         }
         int made = Challenge.SpawnExtras(player, _plan, _rng, Log);
-        _eliteOwed = _plan.Elite;
         _plan = Challenge.Plan.None;
         if (made > 0) World.Say($"This trial is harder: ~y~{made} more~/~ lie in wait.");
         TryElite();
     }
 
-    // An elite master still to be made, for the trial under way.
-    private bool _eliteOwed;
+    // The elite master as made in this session (an instance id; -1 while it is
+    // still to be found). The run says whether there is one (Run.Elite); the
+    // instance is found again after a load or a change of floor.
+    private long _eliteKey = -1;
+    // Its health as a recalculation began (see OnEliteCalc).
+    private double _eliteHp = double.NaN;
 
     private void TryElite()
     {
-        if (!_eliteOwed || !InTrial) return;
-        if (Challenge.TryElite(Log) is not { } name) return;
-        _eliteOwed = false;
-        World.Say($"~r~{name} is an elite~/~: tougher than any master of its kind.");
+        // Once the trial is won its elite is dead: no other master takes its place.
+        if (CurrentRun() is not { Elite: true, Won: false } || !InTrial) return;
+        if (_eliteKey >= 0 && Builtins.instance_exists(_eliteKey).AsBool) return;
+        if (Challenge.TryElite(Log) is not { } elite) return;
+        _eliteKey = World.IdKey(elite.Master.Id);
+        _eliteWritten = World.Num(elite.Master, "max_hp");
+        // Said once per master: one loaded with its plain name is said again.
+        if (elite.Renamed) World.Say($"~r~{elite.Name} is an elite~/~: tougher than any master of its kind.");
     }
+
+    // scr_atr_calc, run as a unit every turn, rebuilds its max_hp and clamps
+    // its HP to it, which would undo the elite's extra health. Around that
+    // call, for the elite only: its HP is noted first, and afterwards its
+    // maximum is scaled and the HP it had put back (it takes no damage there).
+    private void OnEliteCalc(HookCall c, bool after)
+    {
+        if (_eliteKey < 0 || c.Self.IsNull || World.IdKey(c.Self.Get("id")) != _eliteKey) return;
+        var self = new InstanceRef(c.Self.Get("id"));
+        if (!after)
+        {
+            _eliteHp = World.Num(self, "HP");
+            return;
+        }
+        if (double.IsNaN(_eliteHp)) return;
+        // A call that left max_hp as we wrote it (an early way out) is not scaled again.
+        double now = World.Num(self, "max_hp");
+        double max = now == _eliteWritten ? now : Challenge.EliteMax(now);
+        self.Set("max_hp", max);
+        self.Set("HP", Math.Min(_eliteHp, max));
+        _eliteWritten = max;
+        _eliteHp = double.NaN;
+    }
+
+    // The elite's maximum as last written, so it is never scaled twice.
+    private double _eliteWritten = double.NaN;
 
     // The world's dungeons for the hub banner, read again every few seconds:
     // a read is two script calls per dungeon.
@@ -406,13 +477,23 @@ public sealed class TrialsMod : CoreMod
         TryGiveTicket(quiet: false);
     }
 
+    // The bag as it was when the ticket last did not fit, and the seconds since.
+    private int _bagWhenFull = -1, _owedSeconds;
+
     private void TryGiveTicket(bool quiet)
     {
+        // Each failed try makes the game throw a map away (and say so in the
+        // log), so a full bag is tried again only once what it holds changed,
+        // and otherwise every half minute (room made some way not counted).
+        if (quiet && Ticket.BagCount() == _bagWhenFull && ++_owedSeconds < 30) return;
+        _owedSeconds = 0;
         if (Ticket.Give() is null)
         {
+            _bagWhenFull = Ticket.BagCount();
             if (!quiet) World.Say("~r~Your bag is full~/~: make room, and the Trial Ticket will find you.");
             return;
         }
+        _bagWhenFull = -1;
         _ticketOwed = false;
         World.Say($"~lg~The trial is won.~/~ A ~y~{Ticket.Name}~/~ is in your bag: use it to return to the tavern.");
     }
@@ -440,11 +521,10 @@ public sealed class TrialsMod : CoreMod
             return;
         }
         // The room change waits for the next frame, out of the inventory's own event.
-        _usedTicket = r;
         _returnQueued = true;
     }
 
-    private void ReturnToHub(InstanceRef? ticket)
+    private void ReturnToHub()
     {
         if (World.Player is not { } player || CurrentRun() is not { } run) return;
         // What a door's alarm 7 sets before it changes room: the floor the next
@@ -469,10 +549,23 @@ public sealed class TrialsMod : CoreMod
             World.Say("~r~The ticket stays cold~/~: the way back is barred for now.");
             throw;
         }
-        // On its way. The run is settled and saved first, so nothing after
-        // this can leave the trial half counted; then the ticket is spent and
-        // the crowns paid.
+        // On its way: the used ticket goes along with any other (Settle).
+        Settle(run);
+    }
+
+    /// <summary>
+    /// Ends the trial under way once the player is on the way back to the
+    /// tavern or already in it, by a ticket or on foot (the dungeon's stairs,
+    /// then the road): a won trial is paid and counted, one not won is given
+    /// up. The run is saved first, so nothing after this can leave the trial
+    /// half counted; then every ticket is spent (a spare one would be a free
+    /// way out of the next trial) and the crowns paid.
+    /// </summary>
+    private void Settle(Run run)
+    {
+        if (World.Player is not { } player) return;
         int gold = 0, finished = run.Level;
+        bool givenUp = run is { Won: false, Trial: not null };
         if (run is { Won: true, Trial: { } won })
         {
             gold = Reward(won, run.Level);
@@ -482,14 +575,20 @@ public sealed class TrialsMod : CoreMod
         }
         run.Trial = null;
         run.Won = false;
+        run.Elite = false;
+        _ticketOwed = false;
+        _eliteKey = -1;
+        _plan = Challenge.Plan.None;
         SaveRun(run);
-        Log.Info($"back to the tavern; next is trial {run.Level}");
-        if (ticket?.Resolve() is { } inst) Scripts.scr_item_destroy.CallAs(inst, inst);
+        Log.Info($"back to the tavern{(givenUp ? ", trial given up" : "")}; next is trial {run.Level}");
+        foreach (var t in Ticket.All().ToList())
+            if (t.Resolve() is { } inst) Scripts.scr_item_destroy.CallAs(inst, inst);
         if (gold > 0)
         {
             Scripts.scr_gold_add.CallAs(player, gold);
             World.Say($"The innkeeper counts out ~y~{gold} crowns~/~ for trial {finished}.");
         }
+        else if (givenUp) World.Say($"~y~Trial {finished}~/~ is given up: its master still lives.");
     }
 
     /// <summary>
@@ -531,7 +630,7 @@ public sealed class TrialsMod : CoreMod
         // Not over the world map: its controls bar only exists while it is open.
         if (Objects.o_globalmapControlsRender.Object is { InstanceCount: > 0 }) return null;
         if (_run is not { } run) return null;
-        if (RunOver(run)) return World.HubDoor() is not null ? $"~lg~Every trial is won~/~  -  {run.TrialsWon} trials, {run.GoldEarned} crowns" : null;
+        if (RunOver(run)) return World.HubDoor() is not null ? $"~lg~Every trial is won~/~  -  {run.TrialsWon} trial{(run.TrialsWon == 1 ? "" : "s")}, {run.GoldEarned} crowns" : null;
         if (World.HubDoor() is not null)
         {
             // The tier the door will really take: the nearest untouched one.
@@ -569,6 +668,8 @@ public sealed class TrialsMod : CoreMod
             goldEarned = _run?.GoldEarned,
             trial = _run?.Trial?.Name,
             won = _run?.Won,
+            elite = _run?.Elite,
+            eliteId = _eliteKey,
             ticketOwed = _ticketOwed,
             inHub = World.HubDoor() is not null,
             inDungeon = World.InDungeon,
@@ -589,7 +690,13 @@ public sealed class TrialsMod : CoreMod
         }, "tr.assess [trial]: the character's level, gear score and power, and the tier that trial would take");
         TestHost.Register("tr.next", args =>
         {
-            _forcedNext = (args[0].GetInt32(), args[1].GetInt32());
+            if (args.Count < 2) throw new ArgumentException("usage: tr.next <x> <y>");
+            var cell = (args[0].GetInt32(), args[1].GetInt32());
+            if (World.Dungeons().FirstOrDefault(d => (d.X, d.Y) == cell) is not { Name: not null } d) return "not a dungeon";
+            _forcedNext = cell;
+            // The door makes the last check (the tier is known only then); these are the ones it will surely refuse.
+            if (!EndlessRuns && !d.BossAlive) return "won: a finite run will refuse it";
+            if (EndlessRuns && !d.BossAlive && d.Floors != 1) return "won with two floors: it cannot be remade, so it will be refused";
             return "ok";
         }, "tr.next <x> <y>: the next trial takes that dungeon (an untouched one; in an endless run, one that can be remade)");
         TestHost.Register("tr.dset", args =>

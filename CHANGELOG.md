@@ -86,8 +86,12 @@ bump may break the mod API or the native CoreApi table; each version says so und
   Endless runs (setting `runMode`) remake a won single-floor dungeon at the wanted tier when no
   untouched one fits: its saved floors are forgotten and its tier, recommended levels and master
   (from the game's own tables) rewritten. A `difficulty` setting (Easy/Normal/Hard/Brutal) shifts
-  the wanted tier, and a trial whose danger runs past its dungeon's tier adds copies of the
-  dungeon's toughest enemies and, a tier past, an elite master (half again its health).
+  the wanted tier, and a trial whose danger runs past its dungeon's tier (beyond the 0.4 the rounding
+  allows) adds copies of the dungeon's toughest enemies and, a tier past, an elite master (half again
+  its health, kept through the game's per-turn recalculation and through a save and load). A trial
+  left by the dungeon's stairs is settled when the player walks back into the tavern: a won one is
+  paid, any other given up. A ticket that does not fit a full bag comes once there is room, without
+  the game dropping spare maps. The banner sits below the character's status effects.
   Settings `enabled`, `xpScale`, `goldScale`, `difficulty`, `runMode` (also in the MODS window);
   test-host commands `tr.*`.
 - `ModSettings`: mods declare settings for the player (`Toggle`, `Slider`, `Choice`) bound to keys of

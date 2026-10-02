@@ -16,6 +16,8 @@ internal sealed class Run
     public World.Dungeon? Trial { get; set; }
     /// <summary>The trial under way has paid out its ticket.</summary>
     public bool Won { get; set; }
+    /// <summary>The trial under way has an elite master (the game does not save that on the unit).</summary>
+    public bool Elite { get; set; }
     /// <summary>The kind of dungeon the last trial was in, so the next can be another.</summary>
     public string? LastKind { get; set; }
     /// <summary>The last trial's dungeon ("x_y"), so an endless run does not take it twice running.</summary>
@@ -80,6 +82,17 @@ internal sealed class RunStore
         }
         string stored = JsonSerializer.Serialize(run, Compact);
         Scripts.scr_atr_set_simple.CallAs(player, Attribute, stored);
+        Mirror(run);
+        return stored;
+    }
+
+    /// <summary>
+    /// Writes the readable copy. Also called when a load brings back an older
+    /// run, so the copy follows the save rather than the last thing written.
+    /// </summary>
+    public void Mirror(Run run)
+    {
+        if (run.Id.Length == 0) return;
         try
         {
             Directory.CreateDirectory(_dir);
@@ -91,7 +104,6 @@ internal sealed class RunStore
         {
             _log.Warning($"could not write the copy of run {run.Id}: {ex.Message}");
         }
-        return stored;
     }
 
     // The id comes back from a save file: only its letters and digits make the

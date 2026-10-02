@@ -8,14 +8,14 @@ matches dungeons to the character work, in finite or endless runs, with a diffic
 
 1. Start a new **Adventure**. It opens in the Osbrook tavern, which is the hub: its innkeeper and
    the townsfolk trade as usual.
-2. A banner at the top of the screen reads **Trial N - leave the tavern to start the next trial
-   level**.
+2. A banner at the top of the screen (below your status effects) reads **Trial N - leave the tavern
+   to start the next trial level**.
 3. Leave by the tavern's street door. Instead of Osbrook's street, it opens onto a crypt, catacombs
    or bastion whose boss still lives, as dangerous as your character calls for (see *Progression*).
    The banner in the tavern tells you the danger that awaits.
 4. Kill the dungeon's boss or named miniboss. A **Trial Ticket** goes straight into your bag (if the
-   bag is full, it comes as soon as there is room). Each trial pays one ticket, and only in its own
-   dungeon.
+   bag is full, it comes once you make room; it is retried when the bag changes, and every half
+   minute). Each trial pays one ticket, and only in its own dungeon.
 5. Use the ticket from its context menu (right-click, **Use**). It takes you back to the tavern, the
    innkeeper pays you for the trial, and the trial number goes up.
 
@@ -34,7 +34,10 @@ Rules during the trials:
   written to `Mods\StoneshardTrials\characters\<id>.json`.
 
 The ticket only works inside a dungeon. Leaving a dungeon by its stairs puts you in the open world
-as usual; walk back into the Osbrook tavern to carry on.
+as usual; walk back into the Osbrook tavern to carry on. There the trial is settled as if you had
+used the ticket: a won trial is paid, one not won is given up, and any ticket you carry is taken
+back. (A ticket used in a trial not won brings you back too, and gives that trial up.) Once every
+master is dead, a finite run completes as soon as you are back in the tavern.
 
 While the mod is on, it changes **every** save, not only a new one: an existing character's Osbrook
 tavern door leads into the trials too. Turn it off (`enabled`) to play a normal campaign.
@@ -78,16 +81,19 @@ to Endless.
 
 ### Harder trials
 
-When the wanted danger runs past the dungeon's tier, the trial adds to it on arrival. This happens
-with the rounding slack, when a finite run has no dungeon of the wanted tier left, or on Hard and
-Brutal:
-- **extra enemies**: none while the wanted danger is within the dungeon's tier; past it, one, and one
-  more per further 0.3 (up to 4); plus 1 on Hard and 2 on Brutal (6 at most). A fresh character's
-  first trial on Normal adds nothing. They are copies of the dungeon's own toughest kind of enemy,
-  spawned beside them, and they notice the player and fight like the natives;
+When the wanted danger runs past the dungeon's tier by more than the 0.4 the rounding allows, the
+trial adds to it on arrival. This happens when a finite run has no dungeon of the wanted tier left,
+or on Hard and Brutal:
+- **extra enemies**: none while the wanted danger is within 0.4 of the dungeon's tier; past that,
+  one, and one more per further 0.3 (up to 4); plus 1 on Hard and 2 on Brutal (6 at most). A fresh
+  character's first trial on Normal adds nothing. They are copies of the dungeon's own toughest kind
+  of enemy, spawned beside them, and they notice the player and fight like the natives;
 - **an elite master** once the danger runs a whole tier past, and always on Brutal: half again its
   health, and "Elite" before its name (the master itself; a miniboss only where there is none). On a
-  natural two-floor dungeon it becomes elite when the player reaches its floor.
+  natural two-floor dungeon it becomes elite when the player reaches its floor. The run remembers it,
+  so after a save and load the master is made elite again. The game loads it with its plain maximum
+  health: an unhurt master gets the elite's full health back, and a wounded one keeps no more health
+  than that plain maximum.
 
 The action log says what was added.
 
@@ -117,8 +123,10 @@ Everything was established on the running game with the test host and Script Spy
 - The ticket is a paper map (`o_inv_map_osbrook`) tagged in its saved `data` map, with its own
   `idName` (so the game still offers **Use** once the Osbrook map has been studied), name and text.
   Its Use (`o_inv_map_Other_24`) is skipped. On the next frame the player goes to
-  `r_taverninside1floor` with `floor_counter` 0 and `position_tag` `r_OSbrooktavern`, and only once
-  that room change has started is the ticket destroyed.
+  `r_taverninside1floor` with `floor_counter` 0 and `position_tag` `r_OSbrooktavern`. Only once that
+  room change has started is the trial settled: paid if won, and every ticket the game has loaded is
+  destroyed. Walking back into the tavern (world cell 32,10 with its street door present) settles it
+  the same way.
 
 - The world map opens through `scr_globalmapCreate`. The HUD's map button (`o_gui_button_map`, also
   the M key) is refused there and receives noone. A paper map's Use is skipped before it runs, since
@@ -126,6 +134,14 @@ Everything was established on the running game with the test host and Script Spy
 - Every source of experience calls `scr_get_XP(amount)`. A kill is the call from `o_enemy`'s
   Destroy, with the dying enemy as self (and only when the player landed the blow). Every other call
   is skipped during the trials.
+- A unit's health is rebuilt every turn: `scr_atr_calc`, run as the unit, resets `max_hp` from its
+  base data and clamps `HP` to it. So around that call, for the elite only, its `HP` is noted, and
+  afterwards `max_hp` is scaled and the `HP` put back. Its unbuffed maximum is `max_hp_cosnt`.
+- A full bag makes `scr_inventory_add_item` throw the new map on the ground (an
+  `o_loot_map_osbrook`) and return noone; the mod takes that map away again.
+- The status effect icons are children of one `o_modificatorsMenu` at the top centre, in room space
+  under `global.cameraGUI` (a 960x540 view). Its `guiHeight` grows by a row as the icons wrap, and
+  the banner is drawn below it.
 - The run is a player attribute, `trialsRun`, holding it as JSON (`scr_atr_set_simple`). The game
   saves it with the character. It is written only once the character's first trial starts, and it is
   re-read whenever it changes, for instance when a load restores it.
@@ -149,7 +165,7 @@ The run lives in the save, so the files under `Mods\StoneshardTrials\characters`
 | Command | What it does |
 |---|---|
 | `tr.state` | the character's run (id, trial number, trials won, crowns earned), the current trial, tickets carried, hub or dungeon |
-| `tr.pick` | the dungeon the next trial would take |
+| `tr.pick` | the dungeon the next trial would take (ties are broken per run and trial, so the door agrees) |
 | `tr.assess [trial]` | level, gear score, power and the tier that trial would take |
 | `tr.next <x> <y>` | the next trial takes that dungeon |
 | `tr.dkeys <x> <y>` / `tr.dset <x> <y> <key> <value>` | read / write a dungeon's data |

@@ -21,6 +21,8 @@ namespace StoneshardTrials;
 internal static class Progression
 {
     public const int CoreSlots = 5;
+    /// <summary>How far the wanted danger may run past a tier before it rounds up to the next.</summary>
+    public const double Slack = 0.4;
 
     public readonly record struct Assessment(int Level, double LevelTier, double Gear, double Power, double Target, int Tier)
     {
@@ -49,7 +51,7 @@ internal static class Progression
         // (power 1.35) still starts at tier 1, while level 3 with half its
         // gear at tier 2, three trials in (1.8), goes to tier 2.
         // Rounded to 6 places first: 2.4 summed from doubles may be 2.4000000000000004.
-        int tier = Math.Clamp((int)Math.Ceiling(Math.Round(target - 0.4, 6)), 1, 5);
+        int tier = Math.Clamp((int)Math.Ceiling(Math.Round(target - Slack, 6)), 1, 5);
         return new Assessment(level, levelTier, gear, power, target, tier);
     }
 
@@ -69,12 +71,21 @@ internal static class Progression
                     if (!World.Truthy(item.Get("equipped")) || !InBag(item)) continue;
                     double tier = World.Num(item, "Tier");
                     if (tier <= 0) continue;
-                    scores.Add(tier + RarityBonus((int)World.Num(item, "quality", 1)));
+                    scores.Add(tier + RarityBonus(Quality(item)));
                 }
                 catch (Exception ex) when (ex is GmlException or InvalidCastException) { }
             }
         }
         return scores.OrderByDescending(s => s).Take(CoreSlots).Sum() / CoreSlots;
+    }
+
+    // An item made in this session carries its quality on the instance; one
+    // loaded from a save has it only in its data map, so that is read first.
+    private static int Quality(InstanceRef item)
+    {
+        var data = new DsMap(item.Get("data"));
+        if (data.Exists && data.Get("quality") is { IsNumber: true } q) return (int)q.AsReal;
+        return (int)World.Num(item, "quality", 1);
     }
 
     private static double RarityBonus(int quality) => quality switch
