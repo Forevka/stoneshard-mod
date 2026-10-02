@@ -24,6 +24,42 @@ internal sealed class Run
     public string? LastCell { get; set; }
     /// <summary>Every dungeon of the world has been won: the run is over and the world is open again.</summary>
     public bool Completed { get; set; }
+    /// <summary>The danger tier of the last trial won (the traders stock for it).</summary>
+    public int LastWonTier { get; set; } = 1;
+    /// <summary>How many trials were won when the tavern traders were last stocked; 0 before their first stock.</summary>
+    public int StockedAt { get; set; }
+    /// <summary>The tier the traders' current stock was made for.</summary>
+    public int StockTier { get; set; } = 1;
+    /// <summary>Counts the traders' stocks; each trader notes which one it has rolled.</summary>
+    public int StockSerial { get; set; }
+    /// <summary>The cards taken so far, oldest first.</summary>
+    public List<Boon> Boons { get; set; } = new();
+    /// <summary>
+    /// The cards offered for the last won trial, until one is taken or all are
+    /// discarded. Kept on the run so a load or a reload offers the same ones.
+    /// </summary>
+    public Offer? Offer { get; set; }
+}
+
+/// <summary>A card taken: which one, at what tier, after which trial, and what it chose (an item, a skill tree).</summary>
+internal sealed class Boon
+{
+    public string Id { get; set; } = "";
+    public int Tier { get; set; } = 1;
+    public int Trial { get; set; }
+    public string? Detail { get; set; }
+    /// <summary>Its cost ends once this many trials are won (0: it has none, or it lasts).</summary>
+    public int CostUntil { get; set; }
+}
+
+/// <summary>Cards on the table after a won trial.</summary>
+internal sealed class Offer
+{
+    public int Trial { get; set; }
+    public int Tier { get; set; } = 1;
+    public List<string> Cards { get; set; } = new();
+    /// <summary>What each card chose when dealt (same order as <see cref="Cards"/>).</summary>
+    public List<string?> Details { get; set; } = new();
 }
 
 /// <summary>

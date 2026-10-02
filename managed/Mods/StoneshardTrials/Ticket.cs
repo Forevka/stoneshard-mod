@@ -117,15 +117,7 @@ internal static class Ticket
         return n;
     }
 
-    // The bag itself: instance_find(o_inventory) also returns its children
-    // (other containers), so the exact object is picked out by name.
-    private static InstanceRef? Inventory()
-    {
-        if (Objects.o_inventory.Object is not { } obj) return null;
-        foreach (var r in obj.Instances())
-            if (Builtins.object_get_name(r.Get("object_index")).ToString() == Objects.o_inventory.Name) return r;
-        return null;
-    }
+    private static InstanceRef? Inventory() => World.Inventory();
 
     private static bool IsInstance(RValue v) =>
         v.IsNumber ? v.AsReal >= 0 : v.Kind == RValueKind.Reference && (v.Int64 & 0xFFFFFFFF) < 0x80000000;

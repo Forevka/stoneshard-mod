@@ -85,6 +85,18 @@ internal static class World
 
     public static int Room(string name) => (int)Builtins.asset_get_index(name).AsReal;
 
+    /// <summary>
+    /// The player's bag. instance_find(o_inventory) also returns its children
+    /// (other containers), so the exact object is picked out by name.
+    /// </summary>
+    public static InstanceRef? Inventory()
+    {
+        if (Objects.o_inventory.Object is not { } obj) return null;
+        foreach (var r in obj.Instances())
+            if (Builtins.object_get_name(r.Get("object_index")).ToString() == Objects.o_inventory.Name) return r;
+        return null;
+    }
+
     // Inside a hook the loader has no current instance to run a script as and
     // refuses the call, so world queries run as the player.
     private static RValue Run(ScriptRef script, params RValue[] args) =>

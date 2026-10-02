@@ -1,5 +1,6 @@
 using CoreLoader;
 using StoneShard;
+using StoneshardTrials.Cards;
 
 [assembly: CoreModInfo(typeof(StoneshardTrials.TrialsMod), "Stoneshard Trials", "0.1.0", "Lodestone")]
 [assembly: CoreModGame("StoneShard")]
@@ -18,6 +19,8 @@ public sealed class TrialsMod : CoreMod
     private readonly Random _rng = new();
     private RunStore _store = null!;
     private Arrival _arrival = null!;
+    private CardWindow _cards = null!;
+    private Merchants _merchants = null!;
     // The character in play and its run (see RunStore); null at the title screen.
     private Run? _run;
     private long _runPlayer = -1;
@@ -60,6 +63,9 @@ public sealed class TrialsMod : CoreMod
     {
         _store = new RunStore(Directory, Log);
         _arrival = new Arrival(Log, OnArrived);
+        _cards = new CardWindow(Log, i => Guard("card", () => TakeCard(i)), () => Guard("card", DiscardCards));
+        _merchants = new Merchants(Log);
+        _merchants.InstallHooks();
         _enabledSetting = ModSettings.Toggle(this, "enabled", "Trials",
             "Off: the tavern door leads to Osbrook and the world map opens again.", true);
         _xpScale = ModSettings.Slider(this, "xpScale", "Kill experience",
@@ -79,14 +85,46 @@ public sealed class TrialsMod : CoreMod
         Objects.o_inv_map.Other_24.Before(c => Guard("map use", () => OnMapUsed(c)));
         Scripts.scr_globalmapCreate.Before(c => Guard("world map", () => OnWorldMap(c)));
         Scripts.scr_get_XP.Before(c => Guard("experience", () => OnExperience(c)));
+        // A tree closed by a Forbidden Library card: its skills cannot be learned, nor its treatises read.
+        Hooks.Before("gml_Object_o_skill_ico_Other_10", c => Guard("tree lock", () =>
+        {
+            if (CurrentRun() is not { Boons.Count: > 0 } run || !Trees.IsLockedSkill(c.Self, Catalog.LockedTrees(run))) return;
+            c.SkipOriginal();
+            World.Say("~r~That art is closed to you~/~ for these trials.");
+        }));
+        Scripts.scr_skill_branch_study.Before(c => Guard("tree lock", () =>
+        {
+            if (CurrentRun() is not { Boons.Count: > 0 } run || !Trees.IsLockedTreatise(c.Self, Catalog.LockedTrees(run))) return;
+            c.SkipOriginal();
+            c.Result = false;
+            World.Say("~r~The treatise makes no sense to you~/~: that art is closed for these trials.");
+        }));
+        // The tavern traders are restocked by the trials only, never on the game's own timers.
+        Scripts.scr_npc_restock.Before(c => Guard("restock", () =>
+        {
+            if (Merchants.IsOurs(c.Self)) c.SkipOriginal();
+        }));
         Scripts.scr_atr_calc.Before(c => Guard("elite health", () => OnEliteCalc(c, after: false)));
         Scripts.scr_atr_calc.After(c => Guard("elite health", () => OnEliteCalc(c, after: true)));
+        // While the card window is up the keyboard is its own: no hotkey reaches
+        // the game (o_controller's Begin Step runs before any key is read).
+        Objects.o_controller.Step_1.Before(_ =>
+        {
+            if (!_cards.IsOpen) return;
+            try { Builtins.io_clear(); }
+            catch (GmlException) { }
+        });
         GameDraw.OnGui(DrawGui);
         if (TestHost.Enabled) RegisterCommands();
         Log.Info($"ready{(_enabled ? "" : " (turned off)")}");
     }
 
-    public override void OnShutdown() => _banner.Clear();
+    public override void OnShutdown()
+    {
+        _cards.Close();
+        _cards.Clear();
+        _banner.Clear();
+    }
 
     public override void OnUpdate() => Guard("update", Update);
 
@@ -122,8 +160,10 @@ public sealed class TrialsMod : CoreMod
                 _owedSeconds = 0;
                 _plan = Challenge.Plan.None;
                 _arrival.Cancel();
+                _cards.Close();
             }
-            // What the character carries changed under us (a load): the copy follows.
+            // What the character carries changed under us (a load): the copy
+            // follows, and boons the game does not save are put back.
             if (stored != _runStored) _store.Mirror(read);
             // A new room, a load or another character: the world read for the
             // banner may be another world's, or out of date (CompleteIfDone).
@@ -148,6 +188,7 @@ public sealed class TrialsMod : CoreMod
     private void Update()
     {
         _arrival.Tick();
+        _cards.Update();
         if (_returnQueued)
         {
             _returnQueued = false;
@@ -161,6 +202,7 @@ public sealed class TrialsMod : CoreMod
             // Back at the menu: a debt belongs to the character that earned it.
             _ticketOwed = false;
             _bannerText = null;
+            _cards.Close();
             return;
         }
         bool carrying = false;
@@ -175,9 +217,26 @@ public sealed class TrialsMod : CoreMod
         {
             if (run.Trial != null) Settle(run);
             else CompleteIfDone(run, RecentDungeons());
+            // The cards of the last won trial, once the player stands in the tavern.
+            if (run.Offer is { } offer && !_cards.IsOpen && World.Player is { } p)
+                _cards.Open(offer, new CardLook(offer.Tier, Math.Max(1, (int)World.Num(p, "LVL", 1))));
+            if (run.TrialsWon > 0 && !RunOver(run)) TendMerchants(run);
         }
+        // The window shows the run's offer or nothing (a load or a test command may have changed it).
+        if (_cards.IsOpen && (!_enabled || run.Offer is not { } shown || !_cards.Shows(shown))) _cards.Close();
         if (_ticketOwed) TryGiveTicket(quiet: true);
         TryElite();
+        if (run.Boons.Count > 0 && World.Player is { } owner)
+        {
+            // The trials are over (or off): no cost outlasts them.
+            if ((!_enabled || RunOver(run)) && run.Boons.Any(b => b.CostUntil > 0))
+            {
+                ExpireCosts(owner, run, all: true);
+                SaveRun(run);
+            }
+            ReapplyBoons(owner, run);
+            if (_enabled) Trees.GreyOut(Catalog.LockedTrees(run));
+        }
         // Cleared first: a banner that fails to work out must not leave the old one up.
         _bannerText = null;
         _bannerText = BannerText(carrying);
@@ -324,12 +383,12 @@ public sealed class TrialsMod : CoreMod
     // Ties between equally good dungeons are broken by a generator seeded with
     // the run and its trial number, so the banner, tr.pick and the door itself
     // name the same dungeon for as long as nothing else changes.
-    private static Random PickRng(Run run)
+    private static Random PickRng(Run run, string salt = "")
     {
         int seed = 17;
         unchecked
         {
-            foreach (char ch in $"{run.Id}:{run.Level}") seed = seed * 31 + ch;
+            foreach (char ch in $"{run.Id}:{run.Level}{salt}") seed = seed * 31 + ch;
         }
         return new Random(seed);
     }
@@ -572,6 +631,10 @@ public sealed class TrialsMod : CoreMod
             run.GoldEarned += gold;
             run.TrialsWon++;
             run.Level++;
+            run.LastWonTier = Math.Clamp(won.Tier, 1, 5);
+            ExpireCosts(player, run);
+            // The cards for this win, dealt now and kept on the run, shown in the tavern.
+            run.Offer = Deal(player, run, run.LastWonTier, finished);
         }
         run.Trial = null;
         run.Won = false;
@@ -591,6 +654,129 @@ public sealed class TrialsMod : CoreMod
         else if (givenUp) World.Say($"~y~Trial {finished}~/~ is given up: its master still lives.");
     }
 
+    // ------------------------------------------------------------ the traders
+
+    // From the first win on. Their stock is made after wins 1, 3, 5... and
+    // held for two trials; it lives in the world save, so it rolls back with
+    // the run.
+    private void TendMerchants(Run run)
+    {
+        bool due = run.StockedAt == 0 || run.TrialsWon - run.StockedAt >= 2;
+        int tier = due ? run.LastWonTier : run.StockTier;
+        int serial = due ? run.StockSerial + 1 : run.StockSerial;
+        // A refresh that did not reach every trader is tried again next time;
+        // the ones it did reach know this stock by its serial and are left alone.
+        if (!_merchants.Tend(tier, due, serial) || !due) return;
+        run.StockedAt = run.TrialsWon;
+        run.StockTier = tier;
+        run.StockSerial = serial;
+        SaveRun(run);
+    }
+
+    // ------------------------------------------------------------ the cards
+
+    // Seeded by the run and the trial, like the dungeon pick, so the same win deals the same hand.
+    private Offer Deal(InstanceRef player, Run run, int tier, int trial)
+    {
+        var offer = Deck.Deal(Catalog.All, new CardContext(player, run, tier, PickRng(run, $"cards{trial}"), Log), trial);
+        Log.Info($"trial {trial}: cards {string.Join(", ", offer.Cards)} (tier {tier})");
+        return offer;
+    }
+
+    private void TakeCard(int index)
+    {
+        // Whatever happens below, the window shows no card that cannot be taken.
+        if (World.Player is not { } player || CurrentRun() is not { Offer: { } offer } run)
+        {
+            _cards.Close();
+            return;
+        }
+        if (index < 0 || index >= offer.Cards.Count || Catalog.Find(offer.Cards[index]) is not { } card) return;
+        string? chosen = index < offer.Details.Count ? offer.Details[index] : null;
+        // Recorded and saved before it is done: a card that fails halfway must
+        // not stay on the table to be taken (and its first half given) again.
+        int costTrials = card.CostTrials(offer.Tier);
+        var boon = new Boon
+        {
+            Id = card.Id, Tier = offer.Tier, Trial = offer.Trial, Detail = chosen,
+            CostUntil = costTrials > 0 ? run.TrialsWon + costTrials : 0,
+        };
+        run.Boons.Add(boon);
+        run.Offer = null;
+        _cards.Close();
+        SaveRun(run);
+        try
+        {
+            boon.Detail = card.Apply(new CardContext(player, run, offer.Tier, PickRng(run, $"take{offer.Trial}"), Log), chosen) ?? chosen;
+            if (card.CostBuff != null) Effects.LongBuff(player, card.CostBuff, card.Id);
+            SaveRun(run);
+        }
+        catch (Exception ex) when (ex is GmlException or InvalidOperationException)
+        {
+            Log.Warning($"card {card.Id} was taken but not fully given: {ex.Message}");
+            World.Say($"~r~{card.Title}~/~ fizzles: not all of it took hold.");
+            return;
+        }
+        Log.Info($"took {card.Id} (tier {offer.Tier}){(boon.Detail != null ? $": {boon.Detail}" : "")}");
+        World.Say($"~lg~{card.Title}~/~ is yours.");
+    }
+
+    private void DiscardCards()
+    {
+        _cards.Close();
+        if (CurrentRun() is not { Offer: not null } run) return;
+        run.Offer = null;
+        SaveRun(run);
+        Log.Info("turned the cards down");
+        World.Say("You turn the boons down.");
+    }
+
+    // Costs that last some trials end once that many are won; all of them
+    // end when the trials do (a finished run, or Trials turned off).
+    private void ExpireCosts(InstanceRef player, Run run, bool all = false)
+    {
+        foreach (var boon in run.Boons.Where(b => b.CostUntil > 0 && (all || run.TrialsWon >= b.CostUntil)))
+        {
+            if (Catalog.Find(boon.Id) is not { } card || (card.Expire == null && card.CostBuff == null))
+            {
+                boon.CostUntil = 0;
+                continue;
+            }
+            try
+            {
+                if (card.CostBuff != null) Effects.EndBuff(player, card.CostBuff, card.Id);
+                card.Expire?.Invoke(new CardContext(player, run, boon.Tier, PickRng(run, $"ex{boon.Trial}"), Log), boon);
+                // Only once ended: a cost that failed to end is tried again.
+                boon.CostUntil = 0;
+                World.Say($"The cost of ~y~{card.Title}~/~ is paid in full.");
+            }
+            catch (Exception ex) when (ex is GmlException or InvalidOperationException)
+            {
+                Log.Warning($"boon {boon.Id}: {ex.Message}");
+            }
+        }
+    }
+
+    // What the game does not keep of the boons taken (night vision, custom
+    // buff numbers) is put back: after a load, and with every new player
+    // instance (each room). Every boon's Reapply does nothing when it is there.
+    private void ReapplyBoons(InstanceRef player, Run run)
+    {
+        foreach (var boon in run.Boons)
+        {
+            if (Catalog.Find(boon.Id) is not { } card) continue;
+            try
+            {
+                // A timed cost stays on, and lasting, until it is paid.
+                if (boon.CostUntil > 0 && card.CostBuff != null) Effects.KeepBuff(player, card.CostBuff, card.Id);
+                card.Reapply?.Invoke(new CardContext(player, run, boon.Tier, PickRng(run, $"re{boon.Trial}"), Log), boon);
+            }
+            catch (Exception ex) when (ex is GmlException or InvalidOperationException)
+            {
+                Log.Warning($"boon {boon.Id}: {ex.Message}");
+            }
+        }
+    }
     /// <summary>
     /// Crowns for a trial won: 150 for a tier 1 dungeon, 100 more per tier above,
     /// a tenth more for every trial already behind, times the reward setting.
@@ -647,6 +833,11 @@ public sealed class TrialsMod : CoreMod
     // Drawing only: what to say is worked out in Update.
     private void DrawGui()
     {
+        if (_cards.IsOpen)
+        {
+            _cards.Draw();
+            return;
+        }
         if (_bannerText is not { } text || World.Player is null) return;
         try { _banner.Draw(text); }
         catch (GmlException ex)
@@ -676,6 +867,47 @@ public sealed class TrialsMod : CoreMod
             inTrial = InTrial,
             tickets = Ticket.All().Count(),
         }, "tr.state: the trial number, the current trial, tickets, where the player is");
+        TestHost.Register("tr.offer", _ => new
+        {
+            open = _cards.IsOpen,
+            offer = CurrentRun()?.Offer,
+            boons = _run?.Boons,
+        }, "tr.offer: the cards on the table (and whether their window is open) and the boons taken");
+        TestHost.Register("tr.deal", args =>
+        {
+            if (World.Player is not { } p || CurrentRun() is not { } run) return "no player";
+            int tier = Math.Clamp(args.Count > 0 ? args[0].GetInt32() : 1, 1, 5);
+            run.Offer = Deal(p, run, tier, run.Level);
+            if (args.Count > 1)
+            {
+                var ctx = new CardContext(p, run, tier, PickRng(run, "tr.deal"), Log);
+                var cards = args.Skip(1).Select(a => Catalog.Find(a.GetString()!)).OfType<CardDef>().Take(Deck.Size).ToList();
+                run.Offer.Cards = cards.Select(c => c.Id).ToList();
+                run.Offer.Details = cards.Select(c => c.Prepare?.Invoke(ctx)).ToList();
+            }
+            SaveRun(run);
+            return run.Offer;
+        }, "tr.deal [tier] [card ids...]: puts cards on the table now (shown in the tavern); ids choose them");
+        TestHost.Register("tr.take", args =>
+        {
+            if (args.Count < 1) throw new ArgumentException("usage: tr.take <0-2>");
+            TakeCard(args[0].GetInt32());
+            return _run?.Boons.LastOrDefault();
+        }, "tr.take <n>: takes the n-th card on the table (0-based), as its TAKE button does");
+        TestHost.Register("tr.discard", _ =>
+        {
+            DiscardCards();
+            return "ok";
+        }, "tr.discard: turns all the cards down, as DISCARD ALL does");
+        TestHost.Register("tr.traders", args =>
+        {
+            if (args.Count > 0 && args[0].GetString() == "restock" && CurrentRun() is { } run)
+            {
+                run.StockedAt = 0;
+                SaveRun(run);
+            }
+            return Merchants.Describe();
+        }, "tr.traders [restock]: the tavern traders (where, tiers, stock size); restock makes their stock anew on the next tavern tick");
         TestHost.Register("tr.give-ticket", _ =>
         {
             var t = Ticket.Give();

@@ -42,6 +42,39 @@ master is dead, a finite run completes as soon as you are back in the tavern.
 While the mod is on, it changes **every** save, not only a new one: an existing character's Osbrook
 tavern door leads into the trials too. Turn it off (`enabled`) to play a normal campaign.
 
+## Boons and traders
+
+**Cards.** When you come back to the tavern after a won trial, a window lays out three cards. Take
+one, or turn them all down. The offer is part of the run, so a reload offers the same three. A
+card's numbers grow with the won trial's danger tier (1-5), and the stronger cards carry a cost,
+shown in red. The current set is provisional, taken from the research catalogue's starter set
+(`.omc/research/trials-rewards-catalogue.md`):
+
+| Card | Gives | Costs |
+|---|---|---|
+| Heavy Purse | 500 crowns per level, x1.0 to x1.8 by tier | - |
+| Hard Bargain | +1 / 1 / 2 / 2 / 3 ability points | the worn armour or jewellery piece named on the card |
+| Vampirism | lifesteal +10 / 10 / 15 / 20 / 20%, for good | evasion -3 / -3 / -5 / -5 / -5 |
+| Night Eyes | night vision, for good | - |
+| Alchemist's Gift | a potion of healing and regeneration (life drain from tier 3, fortitude at 5; two from tier 4) | - |
+| Forbidden Library | treatises of two trees named on the card (tier I, I, II, II, III) | a third tree is closed for the run |
+| Trained Body | +1 / 1 / 2 / 2 / 3 attribute points | Curse of Decay for 3 + tier trials |
+| Light Feet | evasion +3 / 4 / 5 / 6 / 8, for good | - |
+| Deep Reserves | maximum energy +8 / 12 / 16 / 20 / 25, for good | Eternal hangover for 2 trials |
+| Stone Skin (tier 3+) | Stone Skin for good | Mark of the Feast for 3 trials |
+| Unholy Pact | Unholy Blessing for good | Vampiric Corruption for good |
+
+Permanent effects that do not stack (Vampirism, Night Eyes, Stone Skin, Unholy Pact) are offered
+once per run. A closed tree is greyed in the Abilities window, its skills cannot be learned and its
+treatises make no sense. A cost "for N trials" ends when that many more trials are won.
+
+**Traders.** From the first won trial on, two traders stand by the innkeeper's counter: a smith
+(weapons, armour, shields, tools) and a merchant (potions, medicine, scrolls, treatises, jewellery,
+tools, valuables). They are real NPCs: talk to them and pick "Have anything for sale?". Nothing is
+locked; crowns are the only price. Their stock is made for the last won trial's tier (the smith's
+reaches one tier higher) after trials 1, 3, 5... and kept for two trials, never restocked by the
+game's own timers. It is part of the world save, so it rolls back with the run.
+
 ## Progression
 
 A dungeon's danger is its tier (1-5, the game's skulls). The tier sets its enemies' tiers (1, 1-2,
@@ -142,6 +175,26 @@ Everything was established on the running game with the test host and Script Spy
 - The status effect icons are children of one `o_modificatorsMenu` at the top centre, in room space
   under `global.cameraGUI` (a 960x540 view). Its `guiHeight` grows by a row as the icons wrap, and
   the banner is drawn below it.
+- Cards act through the game's own paths. Attribute and ability points are the `AP` and `SP` keys
+  of the character's data (their names are swapped against the UI: `AP` is shown as SP), and
+  bonus keys such as `bEVS` and `bMp` add to the derived stats; the game saves all of them. A
+  lasting status is the buff instance, owned by the player, in its `buffs` list, with its own
+  Alarm 2 run and then 99999 turns (some buffs set their own duration in that alarm). The game
+  saves it but refills its numbers from the buff's defaults, and `night_vision` is a variable of
+  the player instance; both are written again every second, which covers loads and the new player
+  instance of every room. Potions are built as StoneshardCheats builds them (rewriting a fresh
+  bottle's `atrdlist` in its Alarm 0). A closed tree is `disabled` on its `o_skill_category_*`,
+  plus Before hooks on the skill icon's learn event (`o_skill_ico` Other_10) and on
+  `scr_skill_branch_study`.
+- The traders are `o_npc_smith_osbrook` and `o_npc_merchant_mannshire` (Osbrook's own merchant
+  opens with his caravan-quest introduction), made with `instance_create_depth` and given their
+  own `id_name`. Their stock is the entry of that name in the `npc_data` map of the kind's home
+  tile (Osbrook 32,10, Mannshire 26,23); the trade window rolls it with `is_restock` from the
+  trader's `Equipment_Tier_*`, rarity chances, `Stock_Size` and `selling_loot_category`. The roll
+  runs the trader's own User Event 9, which rewrites that list, so an After hook on it puts the
+  merchant's range back. Town NPCs walk their day's schedule, so the traders are put back on their
+  spot, idle, every second the player is in the tavern. `scr_npc_restock` is skipped for them.
+  Details: `.omc/research/trials-merchants.md`.
 - The run is a player attribute, `trialsRun`, holding it as JSON (`scr_atr_set_simple`). The game
   saves it with the character. It is written only once the character's first trial starts, and it is
   re-read whenever it changes, for instance when a load restores it.
@@ -171,6 +224,10 @@ The run lives in the save, so the files under `Mods\StoneshardTrials\characters`
 | `tr.dkeys <x> <y>` / `tr.dset <x> <y> <key> <value>` | read / write a dungeon's data |
 | `tr.rooms [filter]` / `tr.roomkeys <x_y>` | the saved locations, and the rooms one holds |
 | `tr.gear` | worn items with their tier and quality |
+| `tr.offer` | the cards on the table, whether their window is open, and the boons taken |
+| `tr.deal [tier] [card ids...]` | puts cards on the table now (they show in the tavern) |
+| `tr.take <n>` / `tr.discard` | takes the n-th card (0-based) / turns them all down |
+| `tr.traders [restock]` | the tavern traders (where, tiers, stock rows); `restock` remakes their stock |
 | `tr.give-ticket` | puts a Trial Ticket in the bag |
 | `tr.return` | goes back to the tavern as a used ticket does (no ticket spent) |
 | `tr.dungeons`, `tr.where`, `tr.inst`, `tr.call`, `tr.event`, `tr.goto`, `tr.tp` | looking at the live game |

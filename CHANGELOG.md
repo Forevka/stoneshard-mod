@@ -92,6 +92,14 @@ bump may break the mod API or the native CoreApi table; each version says so und
   left by the dungeon's stairs is settled when the player walks back into the tavern: a won one is
   paid, any other given up. A ticket that does not fit a full bag comes once there is room, without
   the game dropping spare maps. The banner sits below the character's status effects.
+  After each won trial the tavern offers three **cards** (a window in the game's style): take one
+  or turn them down. Rewards such as crowns, ability or attribute points, lasting lifesteal,
+  evasion, energy, night vision, statuses, potions and treatises, many with a cost (a lost piece
+  of gear, a closed skill tree, a curse for some trials); numbers grow with the trial's tier, and
+  the run keeps the boons, re-applying what the game does not save. From the first win, two real
+  **traders** (a smith and a merchant) stand in the tavern and sell, for crowns only, a stock made
+  for the last trial's tier after trials 1, 3, 5... Test-host commands `tr.offer`, `tr.deal`,
+  `tr.take`, `tr.discard`, `tr.traders`.
   Settings `enabled`, `xpScale`, `goldScale`, `difficulty`, `runMode` (also in the MODS window);
   test-host commands `tr.*`.
 - `ModSettings`: mods declare settings for the player (`Toggle`, `Slider`, `Choice`) bound to keys of
