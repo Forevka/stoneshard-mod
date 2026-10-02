@@ -22,3 +22,8 @@ EXPORTS
     VerInstallFileW             = Proxy_VerInstallFileW
     VerQueryValueA              = Proxy_VerQueryValueA
     VerQueryValueW              = Proxy_VerQueryValueW
+
+; Loaded-as-a-GameMaker-extension route (tools/data-extension): the game's own
+; extension loader resolves this symbol at start-up, which makes it LoadLibrary
+; us. See src/extension_entry.cpp. Harmless on the version.dll proxy route.
+    coreloader_extension_probe
