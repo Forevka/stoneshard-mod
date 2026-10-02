@@ -26,6 +26,26 @@ bump may break the mod API or the native CoreApi table; each version says so und
   `CoreModGame` needs the attribute added and a rebuild.
 
 ### Added
+- **Lodestone Installer**, the new end-user install method: a native Win32 app
+  (`lodestone_installer.exe`) that discovers the YYC game it sits next to, shows its name and
+  install state, and installs/uninstalls the loader by registering it as a GameMaker extension in
+  `data.win` (Install/Uninstall). Because the game loads the DLL through its own extension system,
+  there is no `version.dll` proxy for antivirus to flag, and once installed the mods load however the
+  game is started (its own `.exe`, Steam, a shortcut) - the installer is not needed to play. The
+  `data.win` edit is done by a small bundled **LodestonePatcher** (`managed/Launcher/`, GPL-3.0, built
+  from the pinned `external/UndertaleModTool` submodule - see `NOTICE`); it is invoked as a separate
+  process so the copyleft stays contained and the installer itself needs no .NET. Releases now ship
+  `Lodestone-Installer-<ver>-win64.zip` as the primary artifact (~4.5 MB; the patcher's runtime set is
+  trimmed to the three DLLs it actually uses). The `version.dll` loader zip is now opt-in
+  (`package-release.ps1 -Loader`) and `deploy-coreloader.ps1` stays the development install.
+- **data.win extension route (proof of concept)**, an alternative to the `version.dll` proxy that
+  registers the loader as a native GameMaker *extension* inside a game's `data.win`, so the game's own
+  extension loader `LoadLibrary`s it at start-up (the same mechanism that already loads Steamworks,
+  FastAstar and ImGui_GM in the test games). The DLL's `DllMain` then boots the loader exactly as on
+  the proxy route. `tools\data-extension\` holds an UndertaleModTool script (`add_extension.csx`), a
+  wrapper (`Install-Extension.ps1`, with `-Revert`) and a README; `src/extension_entry.cpp` exports the
+  single symbol the extension binds to. No injection or exe patching, and the game loads the DLL through
+  its sanctioned extension system.
 - **StoneshardHarness**, a development mod that lets a script or an agent play Stoneshard over the
   test host without screenshots. `hx.state`, `hx.player`, `hx.enemies`, `hx.npcs`, `hx.objects`,
   `hx.inventory`, `hx.log`, `hx.dialogue` and `hx.buttons` describe what the player sees, with

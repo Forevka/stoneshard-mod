@@ -1,0 +1,26 @@
+Lodestone / CoreLoader — third-party notices
+============================================
+
+GPL-3.0 component: LodestonePatcher + UndertaleModLib
+-----------------------------------------------------
+The Lodestone installer rewrites a game's `data.win` to register the loader as a
+native GameMaker extension. That rewrite is done by **LodestonePatcher**
+(managed/Launcher/LodestonePatcher), a small console program that links
+**UndertaleModLib**, part of UndertaleModTool:
+
+    UndertaleModTool — © UnderminersTeam and contributors
+    https://github.com/UnderminersTeam/UndertaleModTool
+    Licensed under the GNU General Public License v3.0.
+
+Because UndertaleModLib is GPL-3.0 (copyleft), LodestonePatcher is also licensed
+under the **GNU GPL v3.0** (see managed/Launcher/LICENSE). UndertaleModLib is used
+unmodified, built from the pinned submodule external/UndertaleModTool (tag
+0.9.2.0). The full GPL-3.0 text ships with each release as COPYING.GPL-3.0.txt.
+
+Scope of the GPL obligation
+---------------------------
+The GPL-3.0 terms apply to LodestonePatcher and the UndertaleModLib code it links.
+The native installer (lodestone_installer) runs LodestonePatcher as a separate
+process (arm's-length aggregation, not linking) and, together with the rest of
+the CoreLoader/Lodestone loader, mods, and tooling, is not a derivative work of
+LodestonePatcher and keeps its own license.

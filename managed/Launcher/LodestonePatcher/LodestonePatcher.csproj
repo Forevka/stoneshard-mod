@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    LodestonePatcher is GPL-3.0: it links UndertaleModLib (GPL-3.0) to rewrite a
+    game's data.win. It is a standalone console the native launcher invokes as a
+    separate process, which keeps the copyleft boundary around this project only.
+    See LICENSE in this folder and the top-level NOTICE.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>LodestonePatcher</AssemblyName>
+    <RollForward>Major</RollForward>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Land next to the other managed outputs, in its own subfolder. -->
+    <OutputPath>$(ManagedOutRoot)Launcher\</OutputPath>
+    <!-- UndertaleModLib's public surface exposes types from its own dependencies;
+         the ProjectReference flows them transitively. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\external\UndertaleModTool\UndertaleModLib\UndertaleModLib.csproj" />
+  </ItemGroup>
+
+</Project>
