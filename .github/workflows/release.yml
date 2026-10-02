@@ -2,13 +2,12 @@
 # packs them with tools/package-release.ps1.
 #
 # A pushed tag v<Version> (matching <Version> in managed/CoreLoader/CoreLoader.csproj)
-# creates a DRAFT release with the launcher bundle and per-mod zips. Mods written
-# against a generated interop (FastTravel, Reliquary) cannot be built here - there
-# is no game - so add them from a machine with Stoneshard installed, then publish
-# the draft:
+# creates a DRAFT release with the zips. Mods written against a generated interop
+# (FastTravel, Reliquary) cannot be built here - there is no game - so add them
+# from a machine with Stoneshard installed, then publish the draft:
 #
 #   dotnet build managed\CoreLoader.sln -c Release
-#   tools\package-release.ps1 -Mods FastTravel,Reliquary -NoLauncher -Upload v<Version>
+#   tools\package-release.ps1 -Mods FastTravel,Reliquary -NoLoader -Upload v<Version>
 #
 # Run by hand (workflow_dispatch), it builds and keeps the zips as a workflow
 # artifact without releasing anything.
@@ -30,8 +29,6 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive   # external/UndertaleModTool + its Underanalyzer, built by LodestonePatcher
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -59,7 +56,7 @@ jobs:
         run: dotnet test managed/CoreLoader.Analyzers.Tests -c Release --no-build
 
       - name: Package
-        run: tools/package-release.ps1
+        run: tools/package-release.ps1 -BundleRuntime
 
       - uses: actions/upload-artifact@v4
         with:
@@ -78,6 +75,6 @@ jobs:
           $changelog = Get-Content CHANGELOG.md -Raw
           $m = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($version))\][^\n]*\n(.*?)(?=^## \[|\z)")
           $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "Lodestone $version" }
-          $notes += "`n`n**Install:** extract ``Lodestone-Installer-$version-win64.zip`` into the game folder (next to the .exe) and run ``lodestone_installer.exe`` -> Install. Then start the game normally. Needs the .NET 10 runtime. Extra mod zips drop into the game's ``Mods`` folder. INSERT opens the overlay."
+          $notes += "`n`n**Install:** extract ``Lodestone-$version-win64.zip`` into the game folder (next to the .exe), then any mod zips the same way. INSERT opens the overlay."
           Set-Content -Path notes.md -Value $notes -Encoding utf8
           gh release create $env:TAG (Get-ChildItem dist/*.zip).FullName --draft --title "Lodestone $version" --notes-file notes.md

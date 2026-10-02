@@ -54,7 +54,6 @@ set(IMGUI_SOURCES
 add_library(coreloader SHARED
     src/dllmain.cpp
     src/proxy.cpp
-    src/extension_entry.cpp
     src/hooks.cpp
     src/overlay.cpp
     src/log.cpp
@@ -96,23 +95,4 @@ target_link_options(coreloader PRIVATE
 set_target_properties(coreloader PROPERTIES
     OUTPUT_NAME "version"
     PREFIX ""
-)
-
-# ------------------------------------------------------ lodestone_installer.exe
-# A tiny native Win32 installer that registers the loader as a GameMaker
-# extension in a game's data.win (delegating the data.win edit to the separate
-# LodestonePatcher.exe). GUI subsystem, static CRT (same as the loader), so it
-# has no .NET or VC++ redist dependency of its own.
-add_executable(lodestone_installer WIN32 launcher/main.cpp)
-
-set_target_properties(lodestone_installer PROPERTIES
-    OUTPUT_NAME "lodestone_installer"
-)
-
-target_compile_definitions(lodestone_installer PRIVATE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
-    UNICODE
-    _UNICODE
-    _CRT_SECURE_NO_WARNINGS
 )
