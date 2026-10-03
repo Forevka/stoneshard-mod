@@ -12,7 +12,7 @@ overlay (**INSERT** toggles it). Nothing is hardcoded: every function, object an
 by name at runtime, so a patch that moves addresses around costs nothing. It works on six YYC games
 so far (see [Tested on](#tested-on)), and it generates a typed interop project from the running game.
 
-Writing mods, the API, the shipped mods and how the loader works: **[the documentation site](https://forevka.github.io/stoneshard-mod/)** (source in [`docs-site/`](docs-site/)).
+Writing mods, the API, the shipped mods and how the loader works: **[the documentation site](https://lodestone.forevka.dev/)** (source in [`docs-site/`](docs-site/)).
 
 ## Tested on
 

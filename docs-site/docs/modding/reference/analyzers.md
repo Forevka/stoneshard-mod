@@ -231,5 +231,5 @@ declare every game the interop covers.
 
 ## Making an analyzer help link work
 
-Every rule's `helpLinkUri` is `https://forevka.github.io/stoneshard-mod/modding/reference/analyzers#clNNNN`,
+Every rule's `helpLinkUri` is `https://lodestone.forevka.dev/modding/reference/analyzers#clNNNN`,
 which is why the headings above carry explicit ids (`{#cl0001}` and so on) and must not be renamed.

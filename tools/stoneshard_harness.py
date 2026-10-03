@@ -18,7 +18,7 @@ Looking: state, player, enemies [all], npcs [all], objects [reach] [all],
 inventory, log [n], dialogue, buttons, screen <gx> <gy>.
 Acting: move, goto, attack, interact, use, wait, say, press, key, click,
 actions (each returns hx.result once the action is done).
-Protocol: https://forevka.github.io/stoneshard-mod/modding/reference/test-host
+Protocol: https://lodestone.forevka.dev/modding/reference/test-host
 """
 import json
 import os

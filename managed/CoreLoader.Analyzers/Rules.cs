@@ -7,7 +7,7 @@ public static class Rules
 {
     private const string Category = "CoreLoader.Lifetime";
     // Each rule links to its own section of the documentation site's analyzer page.
-    private const string HelpLink = "https://forevka.github.io/stoneshard-mod/modding/reference/analyzers#";
+    private const string HelpLink = "https://lodestone.forevka.dev/modding/reference/analyzers#";
 
     public static readonly DiagnosticDescriptor StoredRValue = new(
         id: "CL0001",

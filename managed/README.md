@@ -6,13 +6,13 @@ API keep the CoreLoader name. It is a `version.dll` placed next to the game exe,
 per-game setup. On first launch it finds the game's scripts, object events and builtins, then starts
 .NET inside the game and loads C# mods from `Mods\`.
 
-**The mod-author guide lives on the documentation site: <https://forevka.github.io/stoneshard-mod/>**
+**The mod-author guide lives on the documentation site: <https://lodestone.forevka.dev/>**
 (source in [`docs-site/`](../docs-site/)).
 
-- [Getting started](https://forevka.github.io/stoneshard-mod/modding/getting-started): the template, building, deploying, hot reload.
-- [Cookbook](https://forevka.github.io/stoneshard-mod/modding/cookbook): "so you want to..." recipes taken from the shipped mods.
-- [API reference](https://forevka.github.io/stoneshard-mod/modding/reference/api), [analyzers](https://forevka.github.io/stoneshard-mod/modding/reference/analyzers), [test host](https://forevka.github.io/stoneshard-mod/modding/reference/test-host).
-- [Loader internals](https://forevka.github.io/stoneshard-mod/internals/architecture): how the loader finds, hooks and calls the game's code.
+- [Getting started](https://lodestone.forevka.dev/modding/getting-started): the template, building, deploying, hot reload.
+- [Cookbook](https://lodestone.forevka.dev/modding/cookbook): "so you want to..." recipes taken from the shipped mods.
+- [API reference](https://lodestone.forevka.dev/modding/reference/api), [analyzers](https://lodestone.forevka.dev/modding/reference/analyzers), [test host](https://lodestone.forevka.dev/modding/reference/test-host).
+- [Loader internals](https://lodestone.forevka.dev/internals/architecture): how the loader finds, hooks and calls the game's code.
 
 The quickest start:
 

@@ -9,8 +9,8 @@ const config: Config = {
   tagline: 'C# mods for any YYC-compiled GameMaker game',
   favicon: 'img/favicon.svg',
 
-  url: 'https://forevka.github.io',
-  baseUrl: '/stoneshard-mod/',
+  url: 'https://lodestone.forevka.dev',
+  baseUrl: '/',
   organizationName: 'Forevka',
   projectName: 'stoneshard-mod',
   trailingSlash: false,
