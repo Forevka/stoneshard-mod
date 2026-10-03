@@ -1,0 +1,32 @@
+/* Stone greys with an amber accent, matching the overlay. */
+:root {
+  --ifm-color-primary: #b7791f;
+  --ifm-color-primary-dark: #a56d1c;
+  --ifm-color-primary-darker: #9c671a;
+  --ifm-color-primary-darkest: #805516;
+  --ifm-color-primary-light: #c98522;
+  --ifm-color-primary-lighter: #d28b24;
+  --ifm-color-primary-lightest: #dc9d43;
+  --ifm-code-font-size: 92%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #e0a84a;
+  --ifm-color-primary-dark: #dc9b30;
+  --ifm-color-primary-darker: #d69426;
+  --ifm-color-primary-darkest: #b17a1f;
+  --ifm-color-primary-light: #e4b564;
+  --ifm-color-primary-lighter: #e6bc71;
+  --ifm-color-primary-lightest: #ecce98;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* "Source:" lines under snippets: a bare <small> after a code block, which MDX
+   leaves outside any paragraph. */
+.markdown > small {
+  display: block;
+  margin-top: calc(-1 * var(--ifm-leading) + 0.25rem);
+  margin-bottom: var(--ifm-paragraph-margin-bottom);
+  opacity: 0.8;
+}

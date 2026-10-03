@@ -38,3 +38,7 @@ managed/CoreLoader.Dev.slnx
 
 # local code index
 .codegraph/
+
+# Documentation site (docs-site/build is covered by build/ above)
+node_modules/
+docs-site/.docusaurus/
