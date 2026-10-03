@@ -30,9 +30,10 @@ namespace StoneshardTrials;
 internal sealed class Merchants
 {
     public const string Prefix = "lodestone_";
-    // In a trader's stock entry: which stock (the trials won when it was made) it holds.
-    private const string StockKey = "lodestone_stock";
-    private static readonly (int X, int Y) Osbrook = World.HubCell, Mannshire = (26, 23);
+    // In a trader's stock entry: which stock (the trials won when it was made) it holds,
+    // and which stock its potions were added to.
+    private const string StockKey = "lodestone_stock", PotionKey = "lodestone_potions";
+    private static readonly (int X, int Y) Osbrook = World.HubCell, Mannshire = (26, 23), Brynn = (26, 33);
 
     // Home: the settlement tile whose npc_data holds this kind's stock.
     // Sells: category/count pairs that replace its own selling_loot_category
@@ -48,13 +49,17 @@ internal sealed class Merchants
         ("potion", 4), ("medicine", 4), ("scroll", 3), ("treatise", 3), ("jewelry", 3), ("tool", 2), ("valuable", 1),
     };
 
-    // Beside the innkeeper's counter, where the research's clones stood.
+    // Against the hall's back wall (row 11, either side of the fireplace), clear of
+    // the walkway (rows 12-13) to the street door at cell 24,14; read off the room's
+    // walkability grid (hx.screen). Cell (gx, gy) is room (gx * 26 + 13, gy * 26 + 13).
     // Osbrook's own merchant (Bert) opens with his caravan-quest introduction,
     // so the goods come from Mannshire's.
     private static readonly Trader[] Traders =
     {
-        new(Prefix + "arms", Objects.o_npc_smith_osbrook.Name, Osbrook, 585, 377, 1, 35, 15, 1.5),
-        new(Prefix + "goods", Objects.o_npc_merchant_mannshire.Name, Mannshire, 533, 377, 0, 25, 10, 1.5, Goods),
+        new(Prefix + "arms", Objects.o_npc_smith_osbrook.Name, Osbrook, 455, 299, 1, 35, 15, 1.5),
+        new(Prefix + "goods", Objects.o_npc_merchant_mannshire.Name, Mannshire, 559, 299, 0, 25, 10, 1.5, Goods),
+        // Brynn's jeweller (Letar): rings, amulets and gems; trade on first talk, no quest gate.
+        new(Prefix + "curios", Objects.o_npc_jeweller01gq.Name, Brynn, 611, 299, 1, 30, 15, 2),
     };
 
     private readonly Logger _log;
@@ -141,6 +146,56 @@ internal sealed class Merchants
         return all;
     }
 
+    // The game rolls no potions for its "potion" category (no consumable carries
+    // it; every potion is an o_inv_bottle with rolled effects). So while the
+    // merchant's trade window is open, once per stock, built bottles are added
+    // to it as the window: they become stock rows on closing and keep their
+    // effects (.omc/research/trials-next.md 3).
+    private static readonly string[] PotionTags =
+    {
+        "good_pt_healing", "good_pt_regeneration", "good_pt_lifesteal", "good_pt_mana", "good_pt_mana_drain", "good_pt_accuracy",
+        "good_pt_evasive", "good_pt_rage", "good_pt_fortifying", "good_pt_painkilling", "good_pt_pure", "good_pt_antivenom",
+    };
+
+    /// <summary>Adds the stock's potions to the goods trader, while its trade window is open and once per stock.</summary>
+    public void StockPotions(Random rng)
+    {
+        if (Objects.o_trade_inventory.First is not { } window) return;
+        var owner = window.Get("owner");
+        if (World.IdKey(owner) < 0 || new InstanceRef(owner) is not { Exists: true } npc || npc.Get("id_name").ToString() != Prefix + "goods") return;
+        var entry = new DsMap(Scripts.scr_npc_get_global_data.CallAs(npc));
+        if (!entry.Exists || entry.Get(StockKey) is not { IsNumber: true } stock) return;
+        if (entry.Get(PotionKey) is { IsNumber: true } done && done.AsReal == stock.AsReal) return;
+        entry.Set(PotionKey, stock.AsReal);
+        int count = 3 + _stockTier / 2, effects = Math.Clamp(1 + _stockTier / 2, 1, 3);
+        for (int i = 0; i < count; i++)
+        {
+            var tags = PotionTags.OrderBy(_ => rng.Next()).Take(effects).ToList();
+            Cards.Effects.Potion(tags, _log, into: window);
+        }
+        _log.Info($"trader {Prefix}goods: {count} potion(s) of {effects} effect(s) added to stock {stock.AsReal}");
+    }
+
+    // ------------------------------------------------------------ the stash
+
+    // A chest by the tavern's wall, made once the trials have paid out: no lock,
+    // and is_execute set so it opens empty instead of rolling chest loot. It is
+    // a savable room entity: found again by its object and place on every visit.
+    // In the corner of the lower-left room (cell 14,17), out of everyone's way.
+    private const double StashX = 377, StashY = 455;
+
+    public void KeepStash()
+    {
+        if (Objects.o_chest.Object is not { } chests) return;
+        foreach (var c in chests.Instances())
+            if (Math.Abs(World.Num(c, "x") - StashX) < 4 && Math.Abs(World.Num(c, "y") - StashY) < 4) return;
+        var made = new InstanceRef(Builtins.instance_create_depth(StashX, StashY, -StashY, chests.Index));
+        if (!made.Exists) return;
+        made.Set("is_lock", 0);
+        made.Set("is_execute", 1);
+        _log.Info("the tavern stash is set down");
+    }
+
     /// <summary>For the test host: each trader found, where it stands, its tiers and how many rows its stock has.</summary>
     public static object Describe() => Traders.Select(t =>
     {
@@ -197,6 +252,26 @@ internal sealed class Merchants
         if (Math.Abs(World.Num(npc, "x") - t.X) > 13 || Math.Abs(World.Num(npc, "y") - t.Y) > 13)
             Scripts.scr_invisible_teleport.CallAs(npc, t.X, t.Y);
         if (npc.Get("state").ToString() != "idle") npc.Set("state", "idle");
+        KeepVisible(npc);
+    }
+
+    // A trader made away from its town is drawn squashed flat (stScaleY 0)
+    // until it counts as living (is_life), on the floor the tavern's own
+    // people are on (myfloor, "T1" in the Osbrook tavern), and not hidden by
+    // a door it never walked through (isHidden). Seen on 0.9.4.25: the arms
+    // trader and the jeweller came in with is_life false and myfloor "S1".
+    private static void KeepVisible(InstanceRef npc)
+    {
+        // Never a trader the player has struck down: only while it has health.
+        if (!World.Truthy(npc.Get("is_life")) && World.Num(npc, "HP", 1) > 0) npc.Set("is_life", true);
+        if (World.Truthy(npc.Get("isHidden"))) npc.Set("isHidden", false);
+        if (GmlObject.Find("o_npc_innkeeper_osbrook")?.Instances().FirstOrDefault() is { } host
+            && host.Get("myfloor") is { Kind: RValueKind.String } floor
+            && npc.Get("myfloor").ToString() != floor.ToString())
+        {
+            npc.Set("myfloor", floor);
+            npc.Set("myfloor_counter", host.Get("myfloor_counter"));
+        }
     }
 
     // The trader's entry in npc_data, made on its home tile when it has none.

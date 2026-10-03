@@ -265,19 +265,19 @@ internal static class Catalog
         // The run itself.
         new()
         {
-            Id = "merchants-favour", Title = "Merchant's Favour",
+            Id = "merchants-favour", Title = "Merchant's Favour", ForTrialsAhead = true,
             Gains = _ => new[] { "The tavern traders' next two stocks", "come a tier higher, with rarer goods" },
             Apply = (ctx, _) => Done(() => ctx.Run.FavourRefreshes = 2),
         },
         new()
         {
-            Id = "second-look", Title = "Second Look",
+            Id = "second-look", Title = "Second Look", ForTrialsAhead = true,
             Gains = _ => new[] { "One more card to choose from", "after the next trial" },
             Apply = (ctx, _) => Done(() => ctx.Run.ExtraCards++),
         },
         new()
         {
-            Id = "blood-money", Title = "Blood Money", Power = 2, SelfCosted = true,
+            Id = "blood-money", Title = "Blood Money", Power = 2, SelfCosted = true, ForTrialsAhead = true,
             CanOffer = ctx => ctx.Run.BloodPay <= 1,
             Gains = l => new[] { $"The next trial pays x{BloodPay(l.Tier)}" },
             Costs = l => new[] { $"and is {(l.Tier >= 4 ? "a whole tier" : "half a tier")} more dangerous" },

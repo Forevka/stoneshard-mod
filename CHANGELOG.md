@@ -93,8 +93,12 @@ bump may break the mod API or the native CoreApi table; each version says so und
   untouched one fits: its saved floors are forgotten and its tier, recommended levels and master
   (from the game's own tables) rewritten. A `difficulty` setting (Easy/Normal/Hard/Brutal) shifts
   the wanted tier, and a trial whose danger runs past its dungeon's tier (beyond the 0.4 the rounding
-  allows) adds copies of the dungeon's toughest enemies and, a tier past, an elite master (half again
-  its health, kept through the game's per-turn recalculation and through a save and load). A trial
+  allows) adds copies of the dungeon's toughest enemies and, a tier past, an elite master with one of
+  the game's unused boss prefixes (Persistent, Powerful, Resistant, Nimble, Leeching, Watchful):
+  half again its health plus the prefix's stats, as lasting statuses the game saves. Past tier 5 an
+  endless run makes every enemy stronger with each tier-5 win, and a remade dungeon's master gets a
+  name fitting its new kind. A master that falls by another hand pays half. The game autosaves on
+  arriving in a trial and when one is settled in the tavern (setting `autosave`). A trial
   left by the dungeon's stairs is settled when the player walks back into the tavern: a won one is
   paid, any other given up. A ticket that does not fit a full bag comes once there is room, without
   the game dropping spare maps. The banner sits below the character's status effects.
@@ -104,11 +108,15 @@ bump may break the mod API or the native CoreApi table; each version says so und
   fourth card, harder trials for double pay, or richer traders), and strong ones come with one of
   17 costs (a tithe, a debuff for some trials, a lost piece of gear, a closed skill tree, an
   attribute); numbers grow with the trial's tier, and the run keeps the boons, re-applying what the
-  game does not save. From the first win, two real
-  **traders** (a smith and a merchant) stand in the tavern and sell, for crowns only, a stock made
-  for the last trial's tier after trials 1, 3, 5... Test-host commands `tr.offer`, `tr.deal`,
-  `tr.take`, `tr.discard`, `tr.traders`.
-  Settings `enabled`, `xpScale`, `goldScale`, `difficulty`, `runMode` (also in the MODS window);
+  game does not save. Cards can be rare or legendary (a reward a tier or two higher), and a hand
+  can be rerolled for crowns. A short animated lore intro (placeholder art, with an art brief in
+  `Intro\SLIDES.md`) plays the first time a character stands in the tavern. From the first win, three real
+  **traders** (a smith, a merchant with ready-made potions, and a jeweller) stand in the tavern and
+  sell, for crowns only, a stock made for the last trial's tier after trials 1, 3, 5... The
+  innkeeper heals and treats wounds for crowns, and a chest serves as a stash. Cards that act on the trials ahead (Second Look,
+  Blood Money, Merchant's Favour) are not offered on the win that ends a finite run. Test-host
+  commands `tr.offer`, `tr.deal`, `tr.take`, `tr.discard`, `tr.reroll`, `tr.traders`, `tr.intro`.
+  Settings `enabled`, `xpScale`, `goldScale`, `difficulty`, `runMode`, `autosave` (also in the MODS window);
   test-host commands `tr.*`.
 - `ModSettings`: mods declare settings for the player (`Toggle`, `Slider`, `Choice`) bound to keys of
   their `Config`. The loader keeps the list and a front end draws it; registrations go with the mod.

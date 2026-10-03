@@ -23,7 +23,11 @@ matches dungeons to the character work, in finite or endless runs, with a diffic
 Rules during the trials:
 - **Crowns are the reward.** A trial won pays 150 crowns for a tier 1 dungeon and 100 more per tier
   above that. Each trial already behind you adds a tenth. Spend them in the tavern and build the
-  character however you like.
+  character however you like. A master that falls by another hand (an ally, a trap, another enemy)
+  still wins the trial, but the innkeeper pays only half.
+- **The game saves for you** (setting *Autosave*, on by default) when you arrive in a trial's
+  dungeon and when a trial is settled back in the tavern, into the game's own rotating autosave slots, so a death costs
+  one trial at most.
 - **Experience comes only from kills.** Finding places, quests, books, crafting and traps give none.
   Kill experience is scaled by the *Kill experience* setting, which is meant to become the difficulty
   selector.
@@ -45,8 +49,19 @@ tavern door leads into the trials too. Turn it off (`enabled`) to play a normal 
 
 ## Boons and traders
 
+**The intro.** The first time a character stands in the tavern with the trials on, a short
+slideshow tells how the old gods took them for their trials (six slides; click or Space to go on,
+SKIP or Esc to skip). The pictures are placeholders for now: `Intro\SLIDES.md` is the art brief,
+with each slide's narration, a description and an image-generation prompt; dropping real 1920x1080
+PNGs with the same names into `Intro\slides\` replaces them. A character already on its trials
+when this came in sees it once too, the next time it is in the tavern. `tr.intro` plays it again.
+
 **Cards.** When you come back to the tavern after a won trial, a window lays out three cards (four
-after a Second Look). Take one, or turn them all down. The offer is part of the run, so a reload
+after a Second Look). Take one, or turn them all down, or pay for a new hand (REROLL: 100 crowns
+per tier, doubling with each reroll of the same offer). A card can be **rare** (its reward a tier
+higher) or **legendary** (two tiers higher, and no cost drawn); both grow likelier with the tier,
+but a tier-5 card is never rare (it could go no higher), only common or legendary (free). Second Look, Blood Money and Merchant's
+Favour are not offered on the win that ends a finite run. The offer is part of the run, so a reload
 offers the same cards. A card is a reward, and a strong reward comes with a cost of about its weight,
 shown in red; numbers grow with the won trial's danger tier (1-5). The set is the research
 catalogue's (`.omc/research/trials-rewards-catalogue.md`) as approved: 51 of 53 entries (raw wound
@@ -85,12 +100,21 @@ them (they are back within a second). A custom status (Elusiveness, the swaps...
 game's own statuses, so if the game gives that status too, the boon's numbers replace it. Blood
 Money's extra danger stops at the top of tier 5; its pay does not.
 
-**Traders.** From the first won trial on, two traders stand by the innkeeper's counter: a smith
-(weapons, armour, shields, tools) and a merchant (potions, medicine, scrolls, treatises, jewellery,
-tools, valuables). They are real NPCs: talk to them and pick "Have anything for sale?". Nothing is
-locked; crowns are the only price. Their stock is made for the last won trial's tier (the smith's
-reaches one tier higher) after trials 1, 3, 5... and kept for two trials, never restocked by the
-game's own timers. It is part of the world save, so it rolls back with the run.
+**Traders.** From the first won trial on, three traders stand in the tavern's upper hall: a smith
+(weapons, armour, shields, tools), a merchant (potions, medicine, scrolls, treatises, jewellery,
+tools, valuables) and a jeweller (rings, amulets and curios, reaching a tier higher like the smith,
+in a larger stock). They are real NPCs: talk to them and pick "Have anything for sale?".
+Nothing is locked; crowns are the only price. Their stock is made for the last won trial's tier (the
+smith's reaches one tier higher) after trials 1, 3, 5... and kept for two trials, never restocked
+by the game's own timers. The merchant also carries a few ready-made potions (healing,
+regeneration and the like, identified), more at higher tiers. It is part of the world save, so it
+rolls back with the run.
+
+**Innkeeper and stash.** Brukk, the innkeeper, offers two more lines in his conversation once the
+trials are on: "Patch me up, head to toe" (every body part healed, wounds, bleeding, poison, pain and
+the like ended, health full: 40 crowns plus 20 per level) and "Just dress my wounds" (half the
+healing, bleeding and open wounds ended, half the price). A chest in the corner of the lower-left room is a stash that keeps what you leave in it between
+trials.
 
 ## Progression
 
@@ -126,8 +150,12 @@ Only dungeons that began with one floor are remade, and they stay one floor. A c
 its master on the floor it was made with, so a remade two-floor dungeon would have no master on
 floor 1. Crypts are never made tier 5, because the game has no tier-5 crypt layouts. When nothing
 can be remade at the wanted tier, the nearest tier that can is used, and then any untouched dungeon.
-An endless run never completes. A finished finite run takes the trials up again if *Run* is switched
-to Endless.
+A remade dungeon's master gets a name that fits its new kind (the game builds it afresh). An endless
+run never completes. A finished finite run takes the trials up again if *Run* is switched to
+Endless.
+
+Past tier 5 the dungeons go no higher, so every tier-5 trial already won makes the next one's
+enemies stronger: +10% health, +5% weapon damage and +2 accuracy per win, up to ten wins.
 
 ### Harder trials
 
@@ -139,11 +167,12 @@ or on Hard and Brutal:
   character's first trial on Normal adds nothing. They are copies of the dungeon's own toughest kind
   of enemy, spawned beside them, and they notice the player and fight like the natives;
 - **an elite master** once the danger runs a whole tier past, and always on Brutal: half again its
-  health, and "Elite" before its name (the master itself; a miniboss only where there is none). On a
-  natural two-floor dungeon it becomes elite when the player reaches its floor. The run remembers it,
-  so after a save and load the master is made elite again. The game loads it with its plain maximum
-  health: an unhurt master gets the elite's full health back, and a wounded one keeps no more health
-  than that plain maximum.
+  health and one prefix, picked per trial, before its name (the master itself; a miniboss only where
+  there is none). The prefixes are the game's own unused boss prefixes: **Persistent** (another half
+  of health), **Powerful** (+25% weapon damage), **Resistant** (-15% damage taken, +10 protection),
+  **Nimble** (+15 evasion), **Leeching** (+20 lifesteal) and **Watchful** (+20 accuracy, +10 crit
+  chance). On a natural two-floor dungeon it becomes elite when the player reaches its floor. Its
+  strength is lasting statuses the game saves with it, so a save and load keeps it.
 
 The action log says what was added.
 
@@ -184,9 +213,14 @@ Everything was established on the running game with the test host and Script Spy
 - Every source of experience calls `scr_get_XP(amount)`. A kill is the call from `o_enemy`'s
   Destroy, with the dying enemy as self (and only when the player landed the blow). Every other call
   is skipped during the trials.
-- A unit's health is rebuilt every turn: `scr_atr_calc`, run as the unit, resets `max_hp` from its
-  base data and clamps `HP` to it. So around that call, for the elite only, its `HP` is noted, and
-  afterwards `max_hp` is scaled and the `HP` put back. Its unbuffed maximum is `max_hp_cosnt`.
+- A unit's stats are rebuilt every turn (`scr_atr_calc`), so the elite's and the endless enemies'
+  extra strength is one `o_temp_incr_atr` per stat (`atr`, `param`, `is_enemy_modificator`, 99999
+  turns), the status the game itself uses for lasting enemy changes; the game saves and reapplies
+  them. A master killed by the player has `last_attacker` set to the player in its Destroy event.
+- The autosave is the game's own `scr_dialogue_perform_autosave`, run as the player once it is the
+  player's turn, standing still, with no conversation or trade open.
+- A remade dungeon's master name is built from `Boss_Name_Compound` in the dungeon's tile data, made
+  for its old master; it is cleared, and the game builds a new one for the new master.
 - A full bag makes `scr_inventory_add_item` throw the new map on the ground (an
   `o_loot_map_osbrook`) and return noone; the mod takes that map away again.
 - The status effect icons are children of one `o_modificatorsMenu` at the top centre, in room space
@@ -211,9 +245,15 @@ Everything was established on the running game with the test host and Script Spy
   runs the trader's own User Event 9, which rewrites that list, so an After hook on it puts the
   merchant's range back. Town NPCs walk their day's schedule, so the traders are put back on their
   spot, idle, every second the player is in the tavern. `scr_npc_restock` is skipped for them.
-  Details: `.omc/research/trials-merchants.md`.
+  The jeweller is `o_npc_jeweller01gq` (home tile Brynn, 26,33). A trader made away from its town can
+  come in drawn flat (`stScaleY` 0): it is kept `is_life`, not `isHidden`, and on the innkeeper's
+  `myfloor`. The merchant's potions are built bottles added with `scr_inventory_add_item` run as the
+  open trade window's `o_trade_inventory`, once per stock. The stash is an `o_chest`, unlocked.
+  Brukk's lines are fragment keys added to his options (`scr_dialogue_sort_options`), as TavernGames
+  adds its own; healing is `scr_injuryChange` per body part, ailments end with their duration set to
+  1. Details: `.omc/research/trials-merchants.md`, `.omc/research/trials-next.md`.
 - The run is a player attribute, `trialsRun`, holding it as JSON (`scr_atr_set_simple`). The game
-  saves it with the character. It is written only once the character's first trial starts, and it is
+  saves it with the character. It is written once the character's intro has been seen or its first trial starts, and it is
   re-read whenever it changes, for instance when a load restores it.
 
 ## Settings
@@ -227,6 +267,7 @@ In the pause menu, **MODS** (needs the ModMenu mod), or `Mods\StoneshardTrials.j
 | `goldScale` | `1` | **Trial reward**: x0 to x3 |
 | `difficulty` | `1` | **Difficulty**: 0 Easy, 1 Normal, 2 Hard, 3 Brutal |
 | `runMode` | `0` | **Run**: 0 Finite, 1 Endless |
+| `autosave` | `true` | **Autosave**: on arriving in a trial and when one is paid |
 
 The run lives in the save, so the files under `Mods\StoneshardTrials\characters` are for reading only.
 
@@ -243,7 +284,8 @@ The run lives in the save, so the files under `Mods\StoneshardTrials\characters`
 | `tr.gear` | worn items with their tier and quality |
 | `tr.offer` | the cards on the table, whether their window is open, and the boons taken |
 | `tr.deal [tier] [card ids...]` | puts cards on the table now (they show in the tavern) |
-| `tr.take <n>` / `tr.discard` | takes the n-th card (0-based) / turns them all down |
+| `tr.take <n>` / `tr.discard` / `tr.reroll` | takes the n-th card (0-based) / turns them all down / deals a new hand for crowns |
+| `tr.intro [skip]` | plays the lore intro (skip: closes it and marks it seen) |
 | `tr.traders [restock]` | the tavern traders (where, tiers, stock rows); `restock` remakes their stock |
 | `tr.give-ticket` | puts a Trial Ticket in the bag |
 | `tr.return` | goes back to the tavern as a used ticket does (no ticket spent) |

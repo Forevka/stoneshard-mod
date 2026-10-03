@@ -120,8 +120,25 @@ internal static class Endless
         Set(player, d, "mob_lvl_max", max);
         Set(player, d, "Boss_Type", master);
         Set(player, d, "boss_alive", true);
+        ForgetBossName(player, d, log);
         log.Info($"rewrote {d.Name} ({d.Kind} at {d.X},{d.Y}) from tier {d.Tier} to {tier}, master {master}");
         return d with { Tier = tier, BossAlive = true };
+    }
+
+    // The master's name comes from the dungeon's Boss_Name_Compound (its seeds,
+    // faction and title pool), built for the old Boss_Type: an Undertaker kept
+    // a proselyte's "Theognostic Harold". Cleared, the game builds a fitting one
+    // for the new master when it is made (and on loads).
+    private static void ForgetBossName(InstanceRef player, World.Dungeon d, Logger log)
+    {
+        try
+        {
+            var tile = new DsMap(Scripts.scr_globaltile_get_tile.CallAs(player, d.X, d.Y));
+            var dungeon = tile.Exists ? new DsMap(tile.Get("dungeon")) : default;
+            var compound = dungeon.Exists ? new DsMap(dungeon.Get("Boss_Name_Compound")) : default;
+            if (compound.Exists) compound.Clear();
+        }
+        catch (GmlException ex) { log.Warning($"{d.Name}: the old master's name stays ({ex.Message})"); }
     }
 
     private static string? MasterFor(string kind, int tier, Random rng)

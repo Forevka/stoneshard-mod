@@ -10,6 +10,21 @@ internal static class Probe
     public static void Register(Logger log)
     {
         TestHost.Register("tr.dungeons", _ => Dungeons(), "tr.dungeons: every crypt, catacombs and bastion on the world map");
+        TestHost.Register("tr.vars", args =>
+        {
+            // Every variable of one instance, with its kind and value.
+            var self = new InstanceRef(args[0].GetDouble());
+            if (!self.Exists) return "no such instance";
+            var names = Game.CallBuiltin("variable_instance_get_names", self.Id);
+            var found = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            for (int i = 0, n = Gml.ArrayLength(names); i < n; i++)
+            {
+                string name = Gml.ArrayGet(names, i).ToString();
+                var v = self.Get(name);
+                found[name] = $"{v.Kind}: {v}";
+            }
+            return found;
+        }, "tr.vars <id>: every variable of an instance, with its kind and value");
         TestHost.Register("tr.globals", args =>
         {
             // global is instance -5; the names come back as a GML array.

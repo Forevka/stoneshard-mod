@@ -201,7 +201,10 @@ internal static class Effects
     /// A potion with exactly these effect tags. The bottle is given now; its
     /// effects are written when the game rolls it, on a later step.
     /// </summary>
-    public static void Potion(IReadOnlyList<string> tags, Logger log)
+    /// <param name="tags">The effect tags it carries (good_pt_healing...).</param>
+    /// <param name="log">Where the build is reported (it finishes on a later step).</param>
+    /// <param name="into">The container to put it in (an open trade window: the trader's stock); the bag when null.</param>
+    public static void Potion(IReadOnlyList<string> tags, Logger log, InstanceRef? into = null)
     {
         if (Objects.o_inv_bottle.Object is not { } bottles) throw new InvalidOperationException("no o_inv_bottle");
         var before = bottles.Instances().Select(r => World.IdKey(r.Id)).ToHashSet();
@@ -217,7 +220,10 @@ internal static class Effects
             BottleTimeout, () => log.Warning("potion: the bottle never rolled; it stays a plain potion"));
         try
         {
-            if (Item(Objects.o_inv_bottle.Name) is { } made) aimed = World.IdKey(made.Id);
+            var made = into is { } container
+                ? new InstanceRef(Scripts.scr_inventory_add_item.CallAs(container, bottles.Index))
+                : Item(Objects.o_inv_bottle.Name);
+            if (made is { } bottle && World.IdKey(bottle.Id) >= 0 && bottle.Exists) aimed = World.IdKey(bottle.Id);
         }
         catch
         {

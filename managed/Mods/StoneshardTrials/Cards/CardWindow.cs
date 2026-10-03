@@ -18,15 +18,20 @@ internal sealed class CardWindow
     private readonly Logger _log;
     private readonly Action<int> _take;
     private readonly Action _discard;
+    private readonly Action _reroll;
+    // What a reroll costs now, and whether the player can pay it.
+    private readonly Func<Offer, (int Price, bool Affordable)> _rerollPrice;
     private Offer? _offer;
     private CardLook _look;
     private string _lastError = "";
 
-    public CardWindow(Logger log, Action<int> take, Action discard)
+    public CardWindow(Logger log, Action<int> take, Action discard, Action reroll, Func<Offer, (int Price, bool Affordable)> rerollPrice)
     {
         _log = log;
         _take = take;
         _discard = discard;
+        _reroll = reroll;
+        _rerollPrice = rerollPrice;
     }
 
     public bool IsOpen => _offer != null;
@@ -64,6 +69,7 @@ internal sealed class CardWindow
         if (_canvas.ButtonAt(x, y) is not { } id) return;
         Sfx("snd_button_click");
         if (id == "discard") _discard();
+        else if (id == "reroll") _reroll();
         else if (id.StartsWith("take:", StringComparison.Ordinal) && int.TryParse(id[5..], out int i)) _take(i);
     }
 
@@ -92,14 +98,22 @@ internal sealed class CardWindow
         double w = Math.Min(CardW, (Window.W - 40 - (n - 1) * CardGap) / Math.Max(1, n));
         double total = n * w + (n - 1) * CardGap, x = Window.CenterX - total / 2;
         for (int i = 0; i < n; i++, x += w + CardGap)
-            DrawCard(i, Catalog.Find(offer.Cards[i]), new Area(x, CardTop, w, CardH),
-                _look with { Detail = At(offer.Details, i) }, Catalog.FindCost(At(offer.Costs, i)), _look with { Detail = At(offer.CostDetails, i) });
-        c.Button("discard", "DISCARD ALL", new Area(Window.CenterX - 70, Window.Y + Window.H - 40, 140, 26));
+            DrawCard(i, Catalog.Find(offer.Cards[i]), new Area(x, CardTop, w, CardH), offer.RarityAt(i),
+                _look with { Tier = offer.CardTier(i), Detail = At(offer.Details, i) }, Catalog.FindCost(At(offer.Costs, i)), _look with { Detail = At(offer.CostDetails, i) });
+        var (price, affordable) = _rerollPrice(offer);
+        c.Button("reroll", affordable ? $"REROLL ({price})" : $"~gr~REROLL ({price})~/~", new Area(Window.CenterX - 160, Window.Y + Window.H - 40, 150, 26));
+        c.Button("discard", "DISCARD ALL", new Area(Window.CenterX + 10, Window.Y + Window.H - 40, 150, 26));
     }
 
     private static string? At(List<string?> list, int i) => i < list.Count ? list[i] : null;
 
-    private void DrawCard(int index, CardDef? card, Area a, CardLook look, CostDef? cost, CardLook costLook)
+    // Rarity: a coloured stripe under the title and its name by the tier (0xBBGGRR).
+    private static readonly (string Name, string Colour, int Stripe)[] Rarities =
+    {
+        ("", "~gr~", 0x3A4552), ("rare", "~lg~", 0xC08A3A), ("legendary", "~y~", 0x2AB4E8),
+    };
+
+    private void DrawCard(int index, CardDef? card, Area a, int rarity, CardLook look, CostDef? cost, CardLook costLook)
     {
         var c = _canvas;
         c.Board(a);
@@ -108,8 +122,10 @@ internal sealed class CardWindow
             c.Text("~gr~(no longer in the game)~/~", a.CenterX, a.CenterY, align: 0);
             return;
         }
-        c.Text($"~w~{card.Title}~/~", a.CenterX, a.Y + 14, align: 0, wrap: a.W - 24);
-        c.Text($"~gr~tier {look.Tier}~/~", a.CenterX, a.Y + 32, align: 0);
+        var (rarityName, colour, stripe) = Rarities[Math.Clamp(rarity, 0, Rarities.Length - 1)];
+        c.Text($"{(rarity >= 2 ? "~y~" : "~w~")}{card.Title}~/~", a.CenterX, a.Y + 14, align: 0, wrap: a.W - 24);
+        c.Text($"{colour}{(rarityName.Length > 0 ? rarityName + " - " : "")}tier {look.Tier}~/~", a.CenterX, a.Y + 32, align: 0);
+        if (rarity > 0) c.Fill(new Area(a.X + 12, a.Y + 47, a.W - 24, 2), stripe);
         double y = a.Y + 52;
         if (card.Icon != null && c.Sprite(card.Icon, 0, new Area(a.CenterX - 24, y, 48, 48))) y += 58;
         else y += 6;

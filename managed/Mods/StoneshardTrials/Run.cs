@@ -16,8 +16,13 @@ internal sealed class Run
     public World.Dungeon? Trial { get; set; }
     /// <summary>The trial under way has paid out its ticket.</summary>
     public bool Won { get; set; }
-    /// <summary>The trial under way has an elite master (the game does not save that on the unit).</summary>
+    /// <summary>The trial under way has an elite master (the game does not save that on the unit), and its prefix.</summary>
     public bool Elite { get; set; }
+    public string? EliteAffix { get; set; }
+    /// <summary>The trial's master died, but not by the player's hand: it pays half.</summary>
+    public bool WonByOther { get; set; }
+    /// <summary>Endless trials at tier 5 won so far: each makes the next ones' enemies stronger.</summary>
+    public int Tier5Wins { get; set; }
     /// <summary>The kind of dungeon the last trial was in, so the next can be another.</summary>
     public string? LastKind { get; set; }
     /// <summary>The last trial's dungeon ("x_y"), so an endless run does not take it twice running.</summary>
@@ -34,6 +39,8 @@ internal sealed class Run
     public int StockRareBonus { get; set; }
     /// <summary>Counts the traders' stocks; each trader notes which one it has rolled.</summary>
     public int StockSerial { get; set; }
+    /// <summary>The character has seen (or skipped) the lore intro.</summary>
+    public bool IntroSeen { get; set; }
     /// <summary>Extra cards in the next offer (Second Look).</summary>
     public int ExtraCards { get; set; }
     /// <summary>Blood Money: the next trial's added danger, and what its reward is multiplied by (1: none).</summary>
@@ -57,6 +64,8 @@ internal sealed class Boon
     public int Tier { get; set; } = 1;
     public int Trial { get; set; }
     public string? Detail { get; set; }
+    /// <summary>The tier its cost was paid at (the offer's; the reward's may be higher by its rarity).</summary>
+    public int CostTier { get; set; }
     /// <summary>The cost it came with (a CostDef id), and what that cost chose.</summary>
     public string? Cost { get; set; }
     public string? CostDetail { get; set; }
@@ -77,6 +86,15 @@ internal sealed class Offer
     /// <summary>Each card's cost (a CostDef id, or null) and what it chose.</summary>
     public List<string?> Costs { get; set; } = new();
     public List<string?> CostDetails { get; set; } = new();
+    /// <summary>Each card's rarity: 0 common, 1 rare (its reward a tier higher), 2 legendary (two higher, no drawn cost).</summary>
+    public List<int> Rarities { get; set; } = new();
+    /// <summary>How many times this offer was rerolled (each reroll costs twice the last).</summary>
+    public int Rerolls { get; set; }
+
+    public int RarityAt(int i) => i < Rarities.Count ? Rarities[i] : 0;
+
+    /// <summary>The tier a card's reward is given at: the offer's, raised by its rarity.</summary>
+    public int CardTier(int i) => Math.Clamp(Tier + RarityAt(i), 1, 5);
 }
 
 /// <summary>

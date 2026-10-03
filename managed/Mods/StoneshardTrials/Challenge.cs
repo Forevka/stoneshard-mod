@@ -51,21 +51,30 @@ internal static class Challenge
     }
 
     /// <summary>
+    /// Elite prefixes, named from the game's own (unused) boss prefix table
+    /// (table_bosses_types), each a set of lasting stat changes on top of the
+    /// elite's half again of health.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, Dictionary<string, double>> Affixes = new Dictionary<string, Dictionary<string, double>>
+    {
+        ["Persistent"] = new() { ["max_hp"] = 0.5 },        // a share of the plain maximum (see Stats)
+        ["Powerful"] = new() { ["Weapon_Damage"] = 25 },
+        ["Resistant"] = new() { ["Damage_Received"] = -15, ["PRR"] = 10 },
+        ["Nimble"] = new() { ["EVS"] = 15 },
+        ["Leeching"] = new() { ["Lifesteal"] = 20 },
+        ["Watchful"] = new() { ["Hit_Chance"] = 20, ["CRT"] = 10 },
+    };
+
+    /// <summary>
     /// Finds the trial's master once it is there to be found (on the floor the
     /// player arrives on, or on a natural two-floor dungeon's floor below) and
-    /// makes it the elite: "Elite" before its name, and at full health it gets
-    /// the elite's full health. Answers it and its own name, or null while no
-    /// master is loaded. Run again after a load or a change of floor, which
-    /// make the master anew with its plain name.
+    /// makes it the elite: its prefix before its name, and lasting buffs for
+    /// half again of its health and the prefix's stats. The buffs are saved
+    /// with it, so after a load only the name (which the game rebuilds from the
+    /// dungeon) is written again. Answers it, its own name, the prefix and
+    /// whether it was made just now; null while no master is loaded.
     /// </summary>
-    /// <remarks>
-    /// The extra health does not stay by itself: every turn scr_atr_calc, run
-    /// as the unit, rebuilds max_hp from the unit's base data and clamps HP to
-    /// it. So the caller also scales max_hp after each of those calls (see
-    /// TrialsMod's elite hooks). max_hp_cosnt is the unit's unbuffed maximum,
-    /// which a write to max_hp leaves alone, so scaling from it never compounds.
-    /// </remarks>
-    public static (InstanceRef Master, string Name, bool Renamed)? TryElite(Logger log)
+    public static (InstanceRef Master, string Name, string Affix, bool Made)? TryElite(string affix, Logger log)
     {
         // The master itself first; a miniboss only where no master is to be found.
         var candidates = Enemies().Where(e => e.Master).OrderByDescending(e => World.Truthy(e.Ref.Get("isBoss"))).ToList();
@@ -75,26 +84,74 @@ internal static class Challenge
             // A master that has not finished its creation has no name or health yet.
             if (master.Get("name") is not { Kind: RValueKind.String } nameValue || World.Num(master, "max_hp") <= 0) continue;
             string name = nameValue.ToString();
-            bool renamed = !name.StartsWith("Elite ", StringComparison.Ordinal);
-            if (renamed) master.Set("name", "Elite " + name);
-            else name = name["Elite ".Length..];
-            double max = World.Num(master, "max_hp"), plain = World.Num(master, "max_hp_cosnt");
-            // Without max_hp_cosnt, a master already named elite (a hot reload)
-            // already has the elite's maximum; it is not scaled again.
-            double elite = plain > 0 ? Math.Round(plain * EliteHealth) : renamed ? Math.Round(max * EliteHealth) : max;
-            // Full health: just made, or loaded at full. A wounded master (a load
-            // mid-fight) keeps its wounds.
-            if (World.Num(master, "HP") >= max) master.Set("HP", elite);
-            master.Set("max_hp", elite);
-            log.Info($"elite master: {name}, {World.Num(master, "HP")}/{elite} HP");
-            return (master, name, renamed);
+            string prefix = affix + " ";
+            // A save from before the prefixes named it "Elite X".
+            if (name.StartsWith("Elite ", StringComparison.Ordinal)) { name = name[6..]; master.Set("name", name); }
+            if (name.StartsWith(prefix, StringComparison.Ordinal)) name = name[prefix.Length..];
+            else master.Set("name", prefix + name);
+            bool made = false;
+            if (!EnemyBuffs.HasOurs(master))
+            {
+                double max = World.Num(master, "max_hp");
+                bool full = World.Num(master, "HP") >= max;
+                EnemyBuffs.Add(master, Stats(affix, max));
+                // Made at full health: it starts at its new maximum.
+                if (full) master.Set("HP", World.Num(master, "max_hp"));
+                made = true;
+                log.Info($"elite master: {affix} {name}, {World.Num(master, "HP")}/{World.Num(master, "max_hp")} HP");
+            }
+            return (master, name, affix, made);
         }
         return null;
     }
 
-    /// <summary>The elite's maximum health, from what the game's own recalculation just made it.</summary>
-    public static double EliteMax(double max) => Math.Round(max * EliteHealth);
+    /// <summary>
+    /// Endless runs past tier 5: the dungeons go no higher, so every enemy of
+    /// the trial gets lasting buffs that grow with the tier-5 trials already
+    /// won (<paramref name="steps"/>, capped at 10): +10% health, +5% weapon
+    /// damage and +2 accuracy per step. Enemies already buffed by the mod (the
+    /// elite) are left alone, and so are masters while <paramref name="spareMasters"/>
+    /// (one still to be made the elite) and enemies not yet fully made.
+    /// Answers how many were scaled.
+    /// </summary>
+    public static int ScaleForEndless(int steps, bool spareMasters, Logger log)
+    {
+        steps = Math.Clamp(steps, 0, 10);
+        if (steps == 0) return 0;
+        int scaled = 0;
+        foreach (var e in Enemies())
+        {
+            try
+            {
+                if ((spareMasters && e.Master) || EnemyBuffs.HasOurs(e.Ref)) continue;
+                double max = World.Num(e.Ref, "max_hp");
+                if (max <= 0) continue;
+                bool full = World.Num(e.Ref, "HP") >= max;
+                EnemyBuffs.Add(e.Ref, new Dictionary<string, double>
+                {
+                    ["max_hp"] = Math.Round(max * 0.1 * steps),
+                    ["Weapon_Damage"] = 5 * steps,
+                    ["Hit_Chance"] = 2 * steps,
+                });
+                if (full) e.Ref.Set("HP", World.Num(e.Ref, "max_hp"));
+                scaled++;
+            }
+            catch (Exception ex) when (ex is GmlException or InvalidOperationException) { log.Warning($"scaling an enemy: {ex.Message}"); }
+        }
+        log.Info($"endless past tier 5: {scaled} enemy(ies) scaled by {steps} step(s)");
+        return scaled;
+    }
 
+    // Half again of health for every elite, and the prefix's own (Persistent
+    // adds another share of the plain maximum).
+    private static Dictionary<string, double> Stats(string affix, double plainMax)
+    {
+        var stats = new Dictionary<string, double> { ["max_hp"] = Math.Round(plainMax * (EliteHealth - 1)) };
+        if (Affixes.TryGetValue(affix, out var extra))
+            foreach (var (k, v) in extra)
+                stats[k] = k == "max_hp" ? stats.GetValueOrDefault("max_hp") + Math.Round(plainMax * v) : v;
+        return stats;
+    }
     private readonly record struct Enemy(InstanceRef Ref, int Object, int Tier, int Gx, int Gy, bool Master);
 
     private static List<Enemy> Enemies()

@@ -2,8 +2,12 @@ using CoreLoader;
 
 namespace StoneshardTrials.Cards;
 
-/// <summary>What a card's actions get: the player, the run, the card's tier and a generator.</summary>
-internal readonly record struct CardContext(InstanceRef Player, Run Run, int Tier, Random Rng, Logger Log)
+/// <summary>
+/// What a card's actions get: the player, the run, the card's tier and a
+/// generator; MoreTrials is false on the win that ends a finite run (cards
+/// about the trials ahead have nothing to act on then).
+/// </summary>
+internal readonly record struct CardContext(InstanceRef Player, Run Run, int Tier, Random Rng, Logger Log, bool MoreTrials = true)
 {
     public int Level => Math.Max(1, (int)World.Num(Player, "LVL", 1));
 }
@@ -41,6 +45,8 @@ internal sealed class CardDef
     public int MinTier { get; init; } = 1;
     /// <summary>Taken at most once per run (a permanent effect that does not stack).</summary>
     public bool Unique { get; init; }
+    /// <summary>Acts on the trials ahead (Second Look, Blood Money, Merchant's Favour): not offered when none follow.</summary>
+    public bool ForTrialsAhead { get; init; }
     /// <summary>
     /// The status objects it keeps on the player. No two boons of a run share
     /// one: after a load the game makes them anew without the mod's tag, and
@@ -112,7 +118,8 @@ internal static class Deck
             if (Catalog.FindCost(b.Cost) is { Buff: { } debuff }) carried.Add(debuff);
         // Forced (the test host): those cards, in that order, whatever the rules say.
         var pool = force?.ToList() ??
-                   all.Where(c => ctx.Tier >= c.MinTier && !(c.Unique && taken.Contains(c.Id)) && !c.Carriers.Any(carried.Contains) && Offerable(c.Id, c.CanOffer, ctx)).ToList();
+                   all.Where(c => ctx.Tier >= c.MinTier && !(c.Unique && taken.Contains(c.Id)) && !(c.ForTrialsAhead && !ctx.MoreTrials) &&
+                                  !c.Carriers.Any(carried.Contains) && Offerable(c.Id, c.CanOffer, ctx)).ToList();
         var offer = new Offer { Trial = trial, Tier = ctx.Tier };
         while (offer.Cards.Count < size && pool.Count > 0)
         {
@@ -120,9 +127,15 @@ internal static class Deck
             pool.Remove(card);
             // Two cards of one hand must not share a status either.
             pool.RemoveAll(c => c.Carriers.Any(card.Carriers.Contains));
-            if (!Prepared(card.Id, card.Prepare, ctx, out var detail)) continue;
+            // Rarer with the tier: rare 20-40%, legendary 4-12% of the cards dealt.
+            int rarity = RollRarity(ctx.Tier, ctx.Rng);
+            // At tier 5 a rare card would give nothing more; a legendary still comes free.
+            if (rarity == 1 && ctx.Tier >= 5) rarity = 0;
+            var cardCtx = ctx with { Tier = Math.Clamp(ctx.Tier + rarity, 1, 5) };
+            if (!Prepared(card.Id, card.Prepare, cardCtx, out var detail)) continue;
             string? costId = null, costDetail = null;
-            if (!card.SelfCosted && (card.Power >= 2 || card.Cost != null))
+            // A legendary card comes free, unless its cost is its own (Forbidden Library's closed tree).
+            if (!card.SelfCosted && ((card.Power >= 2 && rarity < 2) || card.Cost != null))
             {
                 var kept = carried.Concat(card.Carriers).ToHashSet();
                 if (!PrepareCost(card, costs, ctx, detail, kept, out var cost, out costDetail)) continue;
@@ -132,6 +145,7 @@ internal static class Deck
             carried.UnionWith(card.Carriers);
             pool.RemoveAll(c => c.Carriers.Any(carried.Contains));
             offer.Cards.Add(card.Id);
+            offer.Rarities.Add(rarity);
             offer.Details.Add(detail);
             offer.Costs.Add(costId);
             offer.CostDetails.Add(costDetail);
@@ -164,6 +178,13 @@ internal static class Deck
         cost = null;
         detail = null;
         return false;
+    }
+
+    private static int RollRarity(int tier, Random rng)
+    {
+        int roll = rng.Next(100);
+        if (roll < 2 + 2 * tier) return 2;
+        return roll < 2 + 2 * tier + 15 + 5 * tier ? 1 : 0;
     }
 
     private static T Draw<T>(List<T> from, Func<T, int> weight, Random rng)

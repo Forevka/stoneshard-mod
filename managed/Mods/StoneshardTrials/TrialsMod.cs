@@ -1,6 +1,7 @@
 using CoreLoader;
 using StoneShard;
 using StoneshardTrials.Cards;
+using StoneshardTrials.Intro;
 
 [assembly: CoreModInfo(typeof(StoneshardTrials.TrialsMod), "Stoneshard Trials", "0.1.0", "Lodestone")]
 [assembly: CoreModGame("StoneShard")]
@@ -20,6 +21,7 @@ public sealed class TrialsMod : CoreMod
     private RunStore _store = null!;
     private Arrival _arrival = null!;
     private CardWindow _cards = null!;
+    private IntroScreen _intro = null!;
     private Merchants _merchants = null!;
     // The character in play and its run (see RunStore); null at the title screen.
     private Run? _run;
@@ -30,7 +32,7 @@ public sealed class TrialsMod : CoreMod
     private string _runStored = "";
     // The run last seen, kept across rooms and menus (unlike _run).
     private string? _lastRunId;
-    private ModSettings.Setting _enabledSetting = null!, _xpScale = null!, _goldScale = null!, _runMode = null!, _difficulty = null!;
+    private ModSettings.Setting _enabledSetting = null!, _xpScale = null!, _goldScale = null!, _runMode = null!, _difficulty = null!, _autosave = null!;
     // Test host: the dungeon the next trial must take.
     private (int X, int Y)? _forcedNext;
 
@@ -63,9 +65,14 @@ public sealed class TrialsMod : CoreMod
     {
         _store = new RunStore(Directory, Log);
         _arrival = new Arrival(Log, OnArrived);
-        _cards = new CardWindow(Log, i => Guard("card", () => TakeCard(i)), () => Guard("card", DiscardCards));
+        _cards = new CardWindow(Log, i => Guard("card", () => TakeCard(i)), () => Guard("card", DiscardCards),
+            () => Guard("card", Reroll), offer => RerollPrice(offer) is var price ? (price, _gold < 0 || _gold >= price) : default);
+        _intro = new IntroScreen(Log, Directory);
+        _intro.Finished += () => Guard("intro", OnIntroDone);
         _merchants = new Merchants(Log);
         _merchants.InstallHooks();
+        // The innkeeper heals between trials, in the tavern, while the trials are on.
+        new Services(Log, () => _enabled && World.HubDoor() is not null && CurrentRun() is not null).Install();
         _enabledSetting = ModSettings.Toggle(this, "enabled", "Trials",
             "Off: the tavern door leads to Osbrook and the world map opens again.", true);
         _xpScale = ModSettings.Slider(this, "xpScale", "Kill experience",
@@ -78,6 +85,8 @@ public sealed class TrialsMod : CoreMod
         _runMode = ModSettings.Choice(this, "runMode", "Run",
             "Finite: every dungeon once, then the run ends. Endless: won dungeons are remade.",
             0, new[] { "Finite", "Endless" });
+        _autosave = ModSettings.Toggle(this, "autosave", "Autosave",
+            "Saves when a trial starts and when it is paid, so a death costs one trial.", true);
 
         Objects.o_transitions_door.Alarm_7.Before(c => Guard("door", () => OnDoorLeaving(c)));
         Scripts.scr_smoothRoomChange.Before(c => Guard("room change", () => OnRoomChange(c)));
@@ -104,13 +113,13 @@ public sealed class TrialsMod : CoreMod
         {
             if (Merchants.IsOurs(c.Self)) c.SkipOriginal();
         }));
-        Scripts.scr_atr_calc.Before(c => Guard("elite health", () => OnEliteCalc(c, after: false)));
-        Scripts.scr_atr_calc.After(c => Guard("elite health", () => OnEliteCalc(c, after: true)));
         // While the card window is up the keyboard is its own: no hotkey reaches
         // the game (o_controller's Begin Step runs before any key is read).
         Objects.o_controller.Step_1.Before(_ =>
         {
-            if (!_cards.IsOpen) return;
+            // The intro reads its keys here, before io_clear wipes them for the frame.
+            if (_intro.IsOpen) Guard("intro keys", _intro.CaptureKeys);
+            if (!_cards.IsOpen && !_intro.IsOpen) return;
             try { Builtins.io_clear(); }
             catch (GmlException) { }
         });
@@ -121,6 +130,7 @@ public sealed class TrialsMod : CoreMod
 
     public override void OnShutdown()
     {
+        _intro.Clear();
         _cards.Close();
         _cards.Clear();
         _banner.Clear();
@@ -161,6 +171,10 @@ public sealed class TrialsMod : CoreMod
                 _plan = Challenge.Plan.None;
                 _arrival.Cancel();
                 _cards.Close();
+                _intro.Close();
+                _autosaveDue = Due.None;
+                _returnPlaced = true;
+                _scaledFloor = null;
             }
             // What the character carries changed under us (a load): the copy
             // follows, and boons the game does not save are put back.
@@ -188,6 +202,7 @@ public sealed class TrialsMod : CoreMod
     private void Update()
     {
         _arrival.Tick();
+        _intro.Update();
         _cards.Update();
         if (_returnQueued)
         {
@@ -203,6 +218,7 @@ public sealed class TrialsMod : CoreMod
             _ticketOwed = false;
             _bannerText = null;
             _cards.Close();
+            _intro.Close();
             return;
         }
         bool carrying = false;
@@ -215,17 +231,36 @@ public sealed class TrialsMod : CoreMod
         // is already the dungeon's, so a trial just begun is not taken for this.)
         if (_enabled && World.Cell == World.HubCell && World.HubDoor() is not null)
         {
+            if (World.Player is { } returned) PlaceAfterReturn(returned);
             if (run.Trial != null) Settle(run);
             else CompleteIfDone(run, RecentDungeons());
+            // The story first, once per character, the first time they stand in the tavern.
+            if (!run.IntroSeen && !_intro.IsOpen && !_cards.IsOpen)
+            {
+                _intro.Start();
+                Log.Info("intro: starting");
+            }
             // The cards of the last won trial, once the player stands in the tavern.
-            if (run.Offer is { } offer && !_cards.IsOpen && World.Player is { } p)
+            if (_cards.IsOpen && World.Player is { } owner0)
+            {
+                try { _gold = Effects.GoldCount(owner0); }
+                catch (GmlException) { _gold = -1; }
+            }
+            if (run.Offer is { } offer && !_cards.IsOpen && !_intro.IsOpen && World.Player is { } p)
                 _cards.Open(offer, new CardLook(offer.Tier, Math.Max(1, (int)World.Num(p, "LVL", 1))));
-            if (run.TrialsWon > 0 && !RunOver(run)) TendMerchants(run);
+            if (run.TrialsWon > 0 && !RunOver(run))
+            {
+                TendMerchants(run);
+                _merchants.KeepStash();
+                _merchants.StockPotions(PickRng(run, $"potions{run.StockSerial}"));
+            }
         }
         // The window shows the run's offer or nothing (a load or a test command may have changed it).
         if (_cards.IsOpen && (!_enabled || run.Offer is not { } shown || !_cards.Shows(shown))) _cards.Close();
         if (_ticketOwed) TryGiveTicket(quiet: true);
         TryElite();
+        ScaleFloor();
+        if (_enabled) TryAutosave(run);
         if (run.Boons.Count > 0 && World.Player is { } owner)
         {
             // The trials are over (or off): no cost outlasts them.
@@ -319,8 +354,9 @@ public sealed class TrialsMod : CoreMod
         _arrival.Expect();
         run.Trial = d;
         run.Won = false;
-        // Kept on the run, so a load mid-trial finds its master elite again.
+        // Kept on the run, so a load mid-trial finds its master elite again (with its prefix).
         run.Elite = _plan.Elite;
+        run.EliteAffix = _plan.Elite ? Challenge.Affixes.Keys.ElementAt(PickRng(run, "affix").Next(Challenge.Affixes.Count)) : null;
         run.LastKind = d.Kind;
         run.LastCell = $"{d.X}_{d.Y}";
         _ticketOwed = false;
@@ -393,68 +429,69 @@ public sealed class TrialsMod : CoreMod
         return new Random(seed);
     }
 
-    // Once in the trial's dungeon: its extra enemies, and the elite master
-    // when it is on this floor (else it waits for it; see Update).
+    // Once in the trial's dungeon: its extra enemies, past tier 5 in an endless
+    // run every enemy's scaling, the elite master when it is on this floor
+    // (else it waits for it; see Update), and an autosave.
     private void OnArrived()
     {
         // Only in the trial's own dungeon (the arrival check may have timed out elsewhere).
-        if (!_plan.Any || World.Player is not { } player || !InTrial)
+        if (World.Player is not { } player || !InTrial)
         {
             if (_plan.Any) Log.Warning($"arrived outside the trial ({World.Cell.X},{World.Cell.Y}, in dungeon {World.InDungeon}); the trial adds nothing");
             _plan = Challenge.Plan.None;
             return;
         }
-        int made = Challenge.SpawnExtras(player, _plan, _rng, Log);
+        if (_plan.Any)
+        {
+            int made = Challenge.SpawnExtras(player, _plan, _rng, Log);
+            if (made > 0) World.Say($"This trial is harder: ~y~{made} more~/~ lie in wait.");
+        }
         _plan = Challenge.Plan.None;
-        if (made > 0) World.Say($"This trial is harder: ~y~{made} more~/~ lie in wait.");
+        // The elite first, so the scaling (which leaves buffed enemies alone) does not stack on it.
         TryElite();
+        _scaledFloor = null;
+        ScaleFloor();
+        // A death from here costs this trial only.
+        _autosaveDue = Due.InTrial;
+    }
+
+    // Past tier 5 in an endless run, every enemy of each floor of the trial is
+    // made stronger once (a natural two-floor dungeon keeps its master below).
+    // A master still waiting to be made the elite is left for TryElite.
+    private string? _scaledFloor, _scalingFloor;
+    private int _scaleTries;
+
+    private void ScaleFloor()
+    {
+        if (!EndlessRuns || !InTrial || CurrentRun() is not { Trial.Tier: >= 5, Tier5Wins: > 0 } run) return;
+        string floor = $"{World.Cell.X}_{World.Cell.Y}_{Globals.Get("floor_counter")}";
+        if (floor == _scaledFloor) return;
+        if (floor != _scalingFloor) { _scalingFloor = floor; _scaleTries = 0; }
+        bool spareMasters = run is { Elite: true, Won: false };
+        int scaled = Challenge.ScaleForEndless(run.Tier5Wins, spareMasters, Log);
+        // A floor's enemies may not all be made on its first tick: tried for a
+        // few seconds unless some were scaled (after a load, none need it).
+        if (scaled > 0 || ++_scaleTries >= 5) _scaledFloor = floor;
+        if (scaled > 0)
+            World.Say($"~r~The gods raise the stakes~/~: every foe here is stronger ({run.Tier5Wins} {(run.Tier5Wins == 1 ? "trial" : "trials")} past the highest danger).");
     }
 
     // The elite master as made in this session (an instance id; -1 while it is
-    // still to be found). The run says whether there is one (Run.Elite); the
-    // instance is found again after a load or a change of floor.
+    // still to be found). The run says whether there is one (Run.Elite) and its
+    // prefix; the instance is found again after a load or a change of floor.
     private long _eliteKey = -1;
-    // Its health as a recalculation began (see OnEliteCalc).
-    private double _eliteHp = double.NaN;
 
     private void TryElite()
     {
         // Once the trial is won its elite is dead: no other master takes its place.
-        if (CurrentRun() is not { Elite: true, Won: false } || !InTrial) return;
+        if (CurrentRun() is not { Elite: true, Won: false } run || !InTrial) return;
         if (_eliteKey >= 0 && Builtins.instance_exists(_eliteKey).AsBool) return;
-        if (Challenge.TryElite(Log) is not { } elite) return;
+        string affix = run.EliteAffix ?? "Persistent";
+        if (Challenge.TryElite(affix, Log) is not { } elite) return;
         _eliteKey = World.IdKey(elite.Master.Id);
-        _eliteWritten = World.Num(elite.Master, "max_hp");
-        // Said once per master: one loaded with its plain name is said again.
-        if (elite.Renamed) World.Say($"~r~{elite.Name} is an elite~/~: tougher than any master of its kind.");
+        // Said once, when made (after a load its buffs are back already).
+        if (elite.Made) World.Say($"~r~{affix} {elite.Name}~/~ is an elite: tougher than any master of its kind.");
     }
-
-    // scr_atr_calc, run as a unit every turn, rebuilds its max_hp and clamps
-    // its HP to it, which would undo the elite's extra health. Around that
-    // call, for the elite only: its HP is noted first, and afterwards its
-    // maximum is scaled and the HP it had put back (it takes no damage there).
-    private void OnEliteCalc(HookCall c, bool after)
-    {
-        if (_eliteKey < 0 || c.Self.IsNull || World.IdKey(c.Self.Get("id")) != _eliteKey) return;
-        var self = new InstanceRef(c.Self.Get("id"));
-        if (!after)
-        {
-            _eliteHp = World.Num(self, "HP");
-            return;
-        }
-        if (double.IsNaN(_eliteHp)) return;
-        // A call that left max_hp as we wrote it (an early way out) is not scaled again.
-        double now = World.Num(self, "max_hp");
-        double max = now == _eliteWritten ? now : Challenge.EliteMax(now);
-        self.Set("max_hp", max);
-        self.Set("HP", Math.Min(_eliteHp, max));
-        _eliteWritten = max;
-        _eliteHp = double.NaN;
-    }
-
-    // The elite's maximum as last written, so it is never scaled twice.
-    private double _eliteWritten = double.NaN;
-
     // The world's dungeons for the hub banner, read again every few seconds:
     // a read is two script calls per dungeon.
     private List<World.Dungeon>? _dungeonsSeen;
@@ -529,8 +566,17 @@ public sealed class TrialsMod : CoreMod
         bool boss = World.Truthy(self.Get("isBoss")) || World.Truthy(self.Get("isMiniboss"));
         var hp = self.Get("HP");
         if (!boss || !hp.IsNumber || hp.AsReal > 0 || !InTrial) return;
-        Log.Info($"boss down: {Builtins.object_get_name(self.Get("object_index"))}");
+        // last_attacker is the killer (the game gives kill XP only when is_player of it);
+        // a check that fails must not cost the win, so it counts as the player's.
+        bool byPlayer = true;
+        try
+        {
+            if (World.Player is { } p) byPlayer = World.Truthy(Scripts.is_player.CallAs(p, self.Get("last_attacker")));
+        }
+        catch (GmlException ex) { Log.Warning($"who killed the master: {ex.Message}"); }
+        Log.Info($"boss down: {Builtins.object_get_name(self.Get("object_index"))}{(byPlayer ? "" : ", not by the player")}");
         run.Won = true;
+        run.WonByOther = !byPlayer;
         _ticketOwed = true;
         SaveRun(run);
         TryGiveTicket(quiet: false);
@@ -610,6 +656,7 @@ public sealed class TrialsMod : CoreMod
         }
         // On its way: the used ticket goes along with any other (Settle).
         Settle(run);
+        _returnPlaced = false;
     }
 
     /// <summary>
@@ -627,7 +674,8 @@ public sealed class TrialsMod : CoreMod
         bool givenUp = run is { Won: false, Trial: not null };
         if (run is { Won: true, Trial: { } won })
         {
-            gold = (int)Math.Round(Reward(won, run.Level) * Math.Max(1, run.BloodPay));
+            gold = (int)Math.Round(Reward(won, run.Level) * Math.Max(1, run.BloodPay) * (run.WonByOther ? 0.5 : 1));
+            if (EndlessRuns && won.Tier >= 5) run.Tier5Wins++;
             run.GoldEarned += gold;
             run.TrialsWon++;
             run.Level++;
@@ -642,9 +690,12 @@ public sealed class TrialsMod : CoreMod
             run.BloodShift = 0;
             run.BloodPay = 1;
         }
+        bool halfPay = run.WonByOther;
         run.Trial = null;
         run.Won = false;
         run.Elite = false;
+        run.EliteAffix = null;
+        run.WonByOther = false;
         _ticketOwed = false;
         _eliteKey = -1;
         _plan = Challenge.Plan.None;
@@ -655,9 +706,68 @@ public sealed class TrialsMod : CoreMod
         if (gold > 0)
         {
             Scripts.scr_gold_add.CallAs(player, gold);
-            World.Say($"The innkeeper counts out ~y~{gold} crowns~/~ for trial {finished}.");
+            World.Say(halfPay
+                ? $"The master fell, but not by your hand: the innkeeper counts out only ~y~{gold} crowns~/~ for trial {finished}."
+                : $"The innkeeper counts out ~y~{gold} crowns~/~ for trial {finished}.");
         }
         else if (givenUp) World.Say($"~y~Trial {finished}~/~ is given up: its master still lives.");
+        // Saved once back in the tavern: Settle also runs from a ticket in the
+        // dungeon, with the room change to the tavern only just started.
+        _autosaveDue = Due.InHub;
+    }
+
+    // A return by ticket is placed at the street door by its tag, but after a
+    // save (an autosave in the dungeon) the next room change keeps the old
+    // coordinates instead, outside the tavern's walls. So on the first tavern
+    // tick after a return, a player far from the door is put just inside it.
+    private bool _returnPlaced = true;
+    private static readonly (double X, double Y) InsideDoor = (24 * 26 + 13, 13 * 26 + 13);
+
+    private void PlaceAfterReturn(InstanceRef player)
+    {
+        if (_returnPlaced) return;
+        _returnPlaced = true;
+        if (World.HubDoor() is not { } door) return;
+        double px = World.Num(player, "x"), py = World.Num(player, "y");
+        double dx = px - World.Num(door, "x"), dy = py - World.Num(door, "y");
+        if (dx * dx + dy * dy <= 80 * 80) return;
+        Scripts.scr_invisible_teleport.CallAs(player, InsideDoor.X, InsideDoor.Y);
+        Log.Info($"back in the tavern at {px},{py}, far from the door: moved inside it");
+    }
+
+    // ------------------------------------------------------------ autosave
+
+    // An autosave asked for (a trial reached, a trial settled), made on the first
+    // quiet moment: the player's turn, not moving, no window or conversation.
+    // Where it is due: a save is a room change into the current room, so one
+    // made while the player is still leaving for elsewhere would race it.
+    private enum Due { None, InTrial, InHub }
+    private Due _autosaveDue;
+
+    private void TryAutosave(Run run)
+    {
+        if (_autosaveDue == Due.None || !_autosave.GetBool() || _intro.IsOpen || _cards.IsOpen || World.Player is not { } player) return;
+        if (!World.Truthy(player.Get("turn_available")) || World.Truthy(player.Get("is_moving"))) return;
+        if (Objects.o_dialogue.Object is { InstanceCount: > 0 } || Objects.o_trade_inventory.Object is { InstanceCount: > 0 }) return;
+        // Not during a room change (a door, a ticket, or a save already under way).
+        if (Objects.o_smoothRoomChanger.Object is { InstanceCount: > 0 } || Objects.o_autosave_trigger.Object is { InstanceCount: > 0 }) return;
+        bool inHub = World.Cell == World.HubCell && World.HubDoor() is not null;
+        if (_autosaveDue == Due.InHub && (!inHub || run.Trial != null)) return;
+        if (_autosaveDue == Due.InTrial && (inHub || run.Trial == null || !InTrial)) return;
+        _autosaveDue = Due.None;
+        Scripts.scr_dialogue_perform_autosave.CallAs(player);
+        Log.Info("autosaved");
+    }
+
+    // ------------------------------------------------------------ the intro
+
+    // Seen once it is over, however it ended (BEGIN, SKIP or Esc): the run keeps that.
+    private void OnIntroDone()
+    {
+        if (CurrentRun() is not { } run || run.IntroSeen) return;
+        run.IntroSeen = true;
+        SaveRun(run);
+        Log.Info("intro: seen");
     }
 
     // ------------------------------------------------------------ the traders
@@ -687,11 +797,15 @@ public sealed class TrialsMod : CoreMod
 
     // Seeded by the run and the trial, like the dungeon pick, so the same win
     // deals the same hand. Second Look adds its cards to this one offer.
-    private Offer Deal(InstanceRef player, Run run, int tier, int trial, IReadOnlyList<CardDef>? force = null)
+    private Offer Deal(InstanceRef player, Run run, int tier, int trial, IReadOnlyList<CardDef>? force = null, int reroll = 0, int? size = null)
     {
-        int size = Deck.Size + run.ExtraCards;
-        run.ExtraCards = 0;
-        var offer = Deck.Deal(Catalog.All, Catalog.Costs, new CardContext(player, run, tier, PickRng(run, $"cards{trial}"), Log), trial, size, force);
+        // A reroll keeps its hand's size; a new offer takes Second Look's extra cards.
+        int count = size ?? Deck.Size + run.ExtraCards;
+        if (size == null) run.ExtraCards = 0;
+        bool more = MoreTrials();
+        var ctx = new CardContext(player, run, tier, PickRng(run, reroll == 0 ? $"cards{trial}" : $"cards{trial}r{reroll}"), Log, more);
+        var offer = Deck.Deal(Catalog.All, Catalog.Costs, ctx, trial, Math.Max(1, count), force);
+        offer.Rerolls = reroll;
         Log.Info($"trial {trial}: cards {string.Join(", ", offer.Cards.Select((c, i) => offer.Costs[i] is { } cost ? $"{c} ({cost})" : c))} (tier {tier})");
         return offer;
     }
@@ -707,19 +821,21 @@ public sealed class TrialsMod : CoreMod
         if (index < 0 || index >= offer.Cards.Count || Catalog.Find(offer.Cards[index]) is not { } card) return;
         string? chosen = At(offer.Details, index), costId = At(offer.Costs, index), costChosen = At(offer.CostDetails, index);
         var cost = Catalog.FindCost(costId);
+        // The reward is given at the card's tier (raised by its rarity); its cost at the offer's.
+        int tier = offer.CardTier(index);
         // Recorded and saved before it is done: a card that fails halfway must
         // not stay on the table to be taken (and its first half given) again.
         int costTrials = cost?.Trials(offer.Tier) ?? 0;
         var boon = new Boon
         {
-            Id = card.Id, Tier = offer.Tier, Trial = offer.Trial, Detail = chosen, Cost = cost?.Id, CostDetail = costChosen,
+            Id = card.Id, Tier = tier, CostTier = offer.Tier, Trial = offer.Trial, Detail = chosen, Cost = cost?.Id, CostDetail = costChosen,
             CostUntil = costTrials > 0 ? run.TrialsWon + costTrials : 0,
         };
         run.Boons.Add(boon);
         run.Offer = null;
         _cards.Close();
         SaveRun(run);
-        var ctx = new CardContext(player, run, offer.Tier, PickRng(run, $"take{offer.Trial}"), Log);
+        var ctx = new CardContext(player, run, tier, PickRng(run, $"take{offer.Trial}"), Log);
         try { boon.Detail = card.Apply(ctx, chosen) ?? chosen; }
         catch (Exception ex) when (ex is GmlException or InvalidOperationException)
         {
@@ -734,7 +850,7 @@ public sealed class TrialsMod : CoreMod
         {
             try
             {
-                if (cost.Apply != null) boon.CostDetail = cost.Apply(ctx, costChosen) ?? costChosen;
+                if (cost.Apply != null) boon.CostDetail = cost.Apply(ctx with { Tier = offer.Tier }, costChosen) ?? costChosen;
                 if (cost.Buff != null) Effects.LongBuff(player, cost.Buff, cost.Tag);
                 boon.CostPaid = true;
             }
@@ -749,6 +865,55 @@ public sealed class TrialsMod : CoreMod
     }
 
     private static string? At(List<string?> list, int i) => i < list.Count ? list[i] : null;
+
+    // Whether a trial follows this one: the win that ends a finite run has none.
+    // Read during Settle, so it must not throw; a failed or empty read says yes
+    // (an empty list is a failed read, as in CompleteIfDone).
+    private bool MoreTrials()
+    {
+        if (EndlessRuns) return true;
+        try
+        {
+            var all = World.Dungeons();
+            return all.Count == 0 || all.Any(d => d.BossAlive);
+        }
+        catch (Exception ex) when (ex is GmlException or InvalidOperationException)
+        {
+            Log.Warning($"reading the dungeons: {ex.Message}");
+            return true;
+        }
+    }
+
+    /// <summary>What a reroll of the offer costs now: 100 crowns per tier, doubled by each reroll before.</summary>
+    private static int RerollPrice(Offer offer) => 100 * Math.Max(1, offer.Tier) * (1 << Math.Min(offer.Rerolls, 10));
+
+    // A new hand for crowns: the same trial, size and tier, another draw.
+    private void Reroll()
+    {
+        if (World.Player is not { } player || CurrentRun() is not { Offer: { } offer } run) return;
+        int price = RerollPrice(offer);
+        if (Effects.GoldCount(player) < price)
+        {
+            World.Say($"A new hand costs ~y~{price} crowns~/~: you have too few.");
+            return;
+        }
+        // Dealt first, paid after: a hand that cannot be dealt costs nothing.
+        var hand = Deal(player, run, offer.Tier, offer.Trial, reroll: offer.Rerolls + 1, size: Math.Max(1, offer.Cards.Count));
+        if (hand.Cards.Count == 0)
+        {
+            World.Say("The innkeeper has no other hand to deal.");
+            return;
+        }
+        Effects.TakeGold(player, price);
+        run.Offer = hand;
+        SaveRun(run);
+        _gold = Effects.GoldCount(player);
+        // Straight to the new hand: closed for a tick, the game would get the input back.
+        _cards.Close();
+        _cards.Open(hand, new CardLook(hand.Tier, Math.Max(1, (int)World.Num(player, "LVL", 1))));
+        Log.Info($"rerolled the cards for {price} crowns");
+        World.Say($"For ~y~{price} crowns~/~, the innkeeper deals another hand.");
+    }
 
     private void DiscardCards()
     {
@@ -774,7 +939,7 @@ public sealed class TrialsMod : CoreMod
             try
             {
                 if (cost.KeptBuff(boon) is { } debuff) Effects.EndBuff(player, debuff, cost.Tag);
-                if (boon.CostPaid) cost.Expire?.Invoke(new CardContext(player, run, boon.Tier, PickRng(run, $"ex{boon.Trial}"), Log), boon);
+                if (boon.CostPaid) cost.Expire?.Invoke(new CardContext(player, run, boon.CostTier > 0 ? boon.CostTier : boon.Tier, PickRng(run, $"ex{boon.Trial}"), Log), boon);
                 // Only once ended: a cost that failed to end is tried again.
                 boon.CostUntil = 0;
                 World.Say($"The cost of ~y~{Catalog.Find(boon.Id)?.Title ?? boon.Id}~/~ is paid in full.");
@@ -787,6 +952,8 @@ public sealed class TrialsMod : CoreMod
     }
 
     private readonly HashSet<string> _boonWarnings = new();
+    // The player's crowns as of the last tick (-1 unknown), for the REROLL label drawn every frame.
+    private int _gold = -1;
 
     // What the game does not keep of the boons taken (night vision, custom
     // buff numbers) is put back: after a load, and with every new player
@@ -866,6 +1033,12 @@ public sealed class TrialsMod : CoreMod
     // Drawing only: what to say is worked out in Update.
     private void DrawGui()
     {
+        // Over the whole screen: nothing of the mod's is drawn under it.
+        if (_intro.IsOpen)
+        {
+            _intro.Draw();
+            return;
+        }
         if (_cards.IsOpen)
         {
             _cards.Draw();
@@ -924,6 +1097,18 @@ public sealed class TrialsMod : CoreMod
             TakeCard(args[0].GetInt32());
             return _run?.Boons.LastOrDefault();
         }, "tr.take <n>: takes the n-th card on the table (0-based), as its TAKE button does");
+        TestHost.Register("tr.intro", args =>
+        {
+            if (args.Count > 0 && args[0].GetString() == "skip") { _intro.Close(); OnIntroDone(); return "skipped"; }
+            _cards.Close();
+            _intro.Start();
+            return "started";
+        }, "tr.intro [skip]: plays the lore intro now (skip: closes it and marks it seen)");
+        TestHost.Register("tr.reroll", _ =>
+        {
+            Reroll();
+            return CurrentRun()?.Offer;
+        }, "tr.reroll: deals a new hand for crowns, as the REROLL button does");
         TestHost.Register("tr.discard", _ =>
         {
             DiscardCards();

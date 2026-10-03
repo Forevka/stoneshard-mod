@@ -6,4 +6,10 @@
     <InteropGame>StoneShard</InteropGame>
   </PropertyGroup>
 
+  <!-- The intro's pictures ship in Mods/StoneshardTrials/Intro/slides (Intro\make_placeholders.py makes the stand-ins). -->
+  <ItemGroup>
+    <None Include="Intro\slides\*.png" Link="StoneshardTrials\Intro\slides\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
