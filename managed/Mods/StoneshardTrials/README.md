@@ -9,7 +9,8 @@ matches dungeons to the character work, in finite or endless runs, with a diffic
 1. Start a new **Adventure**. It opens in the Osbrook tavern, which is the hub: its innkeeper and
    the townsfolk trade as usual.
 2. A banner at the top of the screen (below your status effects) reads **Trial N - leave the tavern
-   to start the next trial level**.
+   to start the next trial level**. It steps aside while you hover a status icon, whose tooltip
+   opens where it sits.
 3. Leave by the tavern's street door. Instead of Osbrook's street, it opens onto a crypt, catacombs
    or bastion whose boss still lives, as dangerous as your character calls for (see *Progression*).
    The banner in the tavern tells you the danger that awaits.

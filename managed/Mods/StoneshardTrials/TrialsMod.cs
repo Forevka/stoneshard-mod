@@ -872,6 +872,9 @@ public sealed class TrialsMod : CoreMod
             return;
         }
         if (_bannerText is not { } text || World.Player is null) return;
+        // A status icon's tooltip (o_hoverBuff, while the mouse is on one) opens
+        // just below the icons, where the banner sits: the banner steps aside.
+        if (Objects.o_hoverBuff.Object is { InstanceCount: > 0 }) return;
         try { _banner.Draw(text); }
         catch (GmlException ex)
         {
