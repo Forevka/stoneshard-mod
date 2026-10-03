@@ -179,6 +179,7 @@ public sealed class TrialsMod : CoreMod
                 _scaledFloor = null;
                 _forcedNext = null;
                 _forcedTier = null;
+                _spillCheck = null;
             }
             // What the character carries changed under us (a load): the copy
             // follows, and boons the game does not save are put back.
@@ -239,8 +240,10 @@ public sealed class TrialsMod : CoreMod
         if (_enabled && World.Cell == World.HubCell && World.HubDoor() is not null)
         {
             if (World.Player is { } returned) PlaceAfterReturn(returned);
+            CheckSpill();
             if (run.Trial != null) Settle(run);
-            else CompleteIfDone(run, RecentDungeons());
+            PayPending(run);
+            if (run.Trial == null) CompleteIfDone(run, RecentDungeons());
             // The story first, once per character, the first time they stand in the tavern.
             if (!run.IntroSeen && !_intro.IsOpen && !_cards.IsOpen)
             {
@@ -312,6 +315,10 @@ public sealed class TrialsMod : CoreMod
         // Walked back in and straight out again before Update noticed: the
         // last trial is settled before the next one can overwrite it.
         if (run.Trial != null) Settle(run);
+        // Still in the tavern: paid now, before the door takes the player to the next trial.
+        PayPending(run);
+        // No tavern tick follows to weigh the bag: the game's own message tells of a spill.
+        _spillCheck = null;
         // A finished run is over for good: the door is a plain door again.
         if (RunOver(run)) return;
         var all = World.Dungeons();
@@ -406,7 +413,7 @@ public sealed class TrialsMod : CoreMod
             {
                 if (tierAsked is int ta && forced.Floors == 1)
                 {
-                    Log.Warning($"tr.next: {forced.Name} ({forced.Kind}) remade at tier {ta} as asked, whatever the Unsafe table says");
+                    if (!Endless.CanBe(forced.Kind, ta)) Log.Warning($"tr.next: {forced.Name} ({forced.Kind}) remade at tier {ta} as asked, though the Unsafe table lists it");
                     return new Choice(forced, true, ta, a.Target);
                 }
                 bool rewrite = EndlessRuns && (!forced.BossAlive || forced.Tier != a.Tier);
@@ -705,6 +712,15 @@ public sealed class TrialsMod : CoreMod
             run.BloodPay = 1;
         }
         bool halfPay = run.WonByOther;
+        // Handed over in the tavern (PayPending): a ticket settles while the
+        // player is still leaving the dungeon, where crowns a full bag drops
+        // would stay behind and the room change swallows the innkeeper's words.
+        run.PendingGold += gold;
+        if (gold > 0)
+            run.PendingNote = halfPay
+                ? $"The master fell, but not by your hand: the innkeeper counts out only ~y~{gold} crowns~/~ for trial {finished}."
+                : $"The innkeeper counts out ~y~{gold} crowns~/~ for trial {finished}.";
+        else if (givenUp) run.PendingNote = $"~y~Trial {finished}~/~ is given up: its master still lives.";
         run.Trial = null;
         run.Won = false;
         run.Elite = false;
@@ -717,14 +733,7 @@ public sealed class TrialsMod : CoreMod
         Log.Info($"back to the tavern{(givenUp ? ", trial given up" : "")}; next is trial {run.Level}");
         foreach (var t in Ticket.All().ToList())
             if (t.Resolve() is { } inst) Scripts.scr_item_destroy.CallAs(inst, inst);
-        if (gold > 0)
-        {
-            Scripts.scr_gold_add.CallAs(player, gold);
-            World.Say(halfPay
-                ? $"The master fell, but not by your hand: the innkeeper counts out only ~y~{gold} crowns~/~ for trial {finished}."
-                : $"The innkeeper counts out ~y~{gold} crowns~/~ for trial {finished}.");
-        }
-        else if (givenUp) World.Say($"~y~Trial {finished}~/~ is given up: its master still lives.");
+
         // Saved once back in the tavern: Settle also runs from a ticket in the
         // dungeon, with the room change to the tavern only just started.
         _autosaveDue = Due.InHub;
@@ -749,6 +758,43 @@ public sealed class TrialsMod : CoreMod
         Log.Info($"back in the tavern at {px},{py}, far from the door: moved inside it");
     }
 
+    // The settled trial's crowns and words, once the player stands in the
+    // tavern. The run is saved in the same frame as the crowns are added, so
+    // no game save can hold one without the other.
+    private void PayPending(Run run)
+    {
+        if ((run.PendingGold <= 0 && run.PendingNote == null) || World.Player is not { } player) return;
+        int gold = run.PendingGold;
+        string? note = run.PendingNote;
+        run.PendingGold = 0;
+        run.PendingNote = null;
+        SaveRun(run);
+        if (note != null) World.Say(note);
+        if (gold <= 0) return;
+        int before = SafeGold(player);
+        Scripts.scr_gold_add.CallAs(player, gold);
+        // A full bag has no room for new stacks of crowns: the game drops them
+        // at the player's feet, but only after this call (the count right
+        // after it still holds them), so the bag is weighed on the next tick.
+        if (before >= 0) _spillCheck = (before + gold, gold);
+    }
+
+    private (int Expected, int Paid)? _spillCheck;
+
+    private void CheckSpill()
+    {
+        if (_spillCheck is not { } s || World.Player is not { } player) return;
+        _spillCheck = null;
+        int now = SafeGold(player);
+        if (now >= 0 && now < s.Expected && s.Expected - now <= s.Paid)
+            World.Say($"Your bag is full: ~y~{s.Expected - now} crowns~/~ lie at your feet.");
+    }
+    private static int SafeGold(InstanceRef player)
+    {
+        try { return Effects.GoldCount(player); }
+        catch (GmlException) { return -1; }
+    }
+
     // ------------------------------------------------------------ autosave
 
     // An autosave asked for (a trial reached, a trial settled), made on the first
@@ -766,7 +812,7 @@ public sealed class TrialsMod : CoreMod
         // Not during a room change (a door, a ticket, or a save already under way).
         if (Objects.o_smoothRoomChanger.Object is { InstanceCount: > 0 } || Objects.o_autosave_trigger.Object is { InstanceCount: > 0 }) return;
         bool inHub = World.Cell == World.HubCell && World.HubDoor() is not null;
-        if (_autosaveDue == Due.InHub && (!inHub || run.Trial != null)) return;
+        if (_autosaveDue == Due.InHub && (!inHub || run.Trial != null || run.PendingGold > 0)) return;
         if (_autosaveDue == Due.InTrial && (inHub || run.Trial == null || !InTrial)) return;
         _autosaveDue = Due.None;
         Scripts.scr_dialogue_perform_autosave.CallAs(player);

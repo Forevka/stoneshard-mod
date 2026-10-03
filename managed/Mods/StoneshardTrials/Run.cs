@@ -23,6 +23,9 @@ internal sealed class Run
     public bool WonByOther { get; set; }
     /// <summary>Endless trials at tier 5 won so far: each makes the next ones' enemies stronger.</summary>
     public int Tier5Wins { get; set; }
+    /// <summary>Crowns settled but not yet handed over, and what the innkeeper says: paid once the player stands in the tavern.</summary>
+    public int PendingGold { get; set; }
+    public string? PendingNote { get; set; }
     /// <summary>The kind of dungeon the last trial was in, so the next can be another.</summary>
     public string? LastKind { get; set; }
     /// <summary>The last trial's dungeon ("x_y"), so an endless run does not take it twice running.</summary>

@@ -63,26 +63,55 @@ internal sealed class Services
     public static int HealPrice(InstanceRef player) => 40 + 20 * Level(player);
     public static int TreatPrice(InstanceRef player) => HealPrice(player) / 2;
 
-    private static bool IsInnkeeper(Instance dialogue)
+    // The NPC a conversation is with: the first of these fields that holds a
+    // live o_npc_* (another may hold the player or a window).
+    private static InstanceRef? Speaker(Instance dialogue)
     {
-        if (dialogue.IsNull) return false;
+        if (dialogue.IsNull) return null;
         foreach (var name in new[] { "speaker_instance", "interact_id", "owner" })
         {
-            var v = dialogue.Get(name);
-            if (World.IdKey(v) < 0) continue;
-            var npc = new InstanceRef(v);
-            if (npc.Exists && Builtins.object_get_name(npc.Get("object_index")).ToString() == Innkeeper) return true;
+            try
+            {
+                var v = dialogue.Get(name);
+                if (World.IdKey(v) < 0) continue;
+                var npc = new InstanceRef(v);
+                if (npc.Exists && Builtins.object_get_name(npc.Get("object_index")).ToString().StartsWith("o_npc_", StringComparison.Ordinal))
+                    return npc;
+            }
+            catch (GmlException) { }
         }
-        return false;
+        return null;
     }
+
+    private static bool IsInnkeeper(Instance dialogue) =>
+        Speaker(dialogue) is { } npc && Builtins.object_get_name(npc.Get("object_index")).ToString() == Innkeeper;
+
+    private const string TradeKey = "trade";
+    // Trading, leaving, and a smith's or jeweller's own services (repairs, identifying).
+    private static bool KeptTraderLine(string key) =>
+        key is TradeKey or LeaveKey or EndKey
+        // Lines other mods add (TavernGames' games) are theirs to offer.
+        || key.StartsWith("lodestone_", StringComparison.Ordinal)
+        || key.Contains("repair", StringComparison.OrdinalIgnoreCase) || key.Contains("identif", StringComparison.OrdinalIgnoreCase);
 
     private void AddOptions(HookCall c)
     {
-        if (!_open() || !IsInnkeeper(c.Self)) return;
+        if (!_open()) return;
         var options = c.Result;
         if (Gml.TypeOf(options) != "array") return;
         int n = Gml.ArrayLength(options);
         var keys = Enumerable.Range(0, n).Select(i => Gml.ArrayGet(options, i)).Select(v => v.Kind == RValueKind.String ? v.ToString() : "").ToList();
+        // A tavern trader is a town's NPC brought in to sell: its town's work
+        // and lessons (the Mannshire merchant's quests) do not belong here, so
+        // its main menu keeps only trading and leaving.
+        if (Speaker(c.Self) is { } speaker && speaker.Get("id_name") is { Kind: RValueKind.String } id
+            && id.ToString().StartsWith("lodestone_", StringComparison.Ordinal) && keys.Contains(TradeKey))
+        {
+            for (int i = n - 1; i >= 0; i--)
+                if (!KeptTraderLine(keys[i])) Builtins.array_delete(options, i, 1);
+            return;
+        }
+        if (!IsInnkeeper(c.Self)) return;
         // Only on the main menu, the one that offers a way out.
         if (!keys.Contains(LeaveKey) || keys.Contains(Heal)) return;
         Builtins.array_insert(options, keys.IndexOf(LeaveKey), Treat);

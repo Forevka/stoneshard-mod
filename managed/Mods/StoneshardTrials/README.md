@@ -92,7 +92,7 @@ Weakness, Gluttony, Heart of Darkness, Eternal hangover, Mark of the Feast, Bloo
 Coughing, Weariness (fatigue gain), an Old Wound, Shattered Gear (a worn piece named on the card),
 Forbidden Art (a skill tree closed for the run: greyed in the Abilities window, its skills cannot be
 learned, its treatises make no sense) and Attribute Loss. Timed costs last some trials won (named
-on the card) and end on their own, or when the run ends.
+on the card) and end on their own, or when the run ends. Their status shows 99999 turns, since it is counted in trials won, not turns; the card named how many.
 
 A status a boon keeps is unique to it: no two cards of a run, rewards or costs, use the same one.
 Boon statuses are kept for good and a timed cost for its term: a cure or a dispel does not lift
@@ -103,7 +103,7 @@ Money's extra danger stops at the top of tier 5; its pay does not.
 **Traders.** From the first won trial on, three traders stand in the tavern's upper hall: a smith
 (weapons, armour, shields, tools), a merchant (potions, medicine, scrolls, treatises, jewellery,
 tools, valuables) and a jeweller (rings, amulets and curios, reaching a tier higher like the smith,
-in a larger stock). They are real NPCs: talk to them and pick "Have anything for sale?".
+in a larger stock). They are real NPCs: talk to them and pick "Have anything for sale?" (their own towns' work and lessons are not offered here; repairs and identifying are).
 Nothing is locked; crowns are the only price. Their stock is made for the last won trial's tier (the
 smith's reaches one tier higher) after trials 1, 3, 5... and kept for two trials, never restocked
 by the game's own timers. The merchant also carries a few ready-made potions (healing,

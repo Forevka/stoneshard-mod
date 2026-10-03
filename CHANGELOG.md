@@ -98,7 +98,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
   half again its health plus the prefix's stats, as lasting statuses the game saves. Past tier 5 an
   endless run makes every enemy stronger with each tier-5 win, and a remade dungeon's master gets a
   name fitting its new kind (never as a tier 3 crypt or a
-  tier 3-5 bastion, whose generation fails). A master that falls by another hand pays half. The game autosaves on
+  tier 3-5 bastion, whose generation fails). A master that falls by another hand pays half. Payout crowns that a full bag drops are announced. The game autosaves on
   arriving in a trial and when one is settled in the tavern (setting `autosave`). A trial
   left by the dungeon's stairs is settled when the player walks back into the tavern: a won one is
   paid, any other given up. A ticket that does not fit a full bag comes once there is room, without
