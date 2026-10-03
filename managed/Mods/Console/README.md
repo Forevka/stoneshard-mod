@@ -42,4 +42,4 @@ Up and Down in the input line walk the history, which is kept between sessions.
 
 ## Test host
 
-`console <line>` runs a console line and answers its output (see `managed/README.md#test-host`).
+`console <line>` runs a console line and answers its output (see the [test host reference](https://forevka.github.io/stoneshard-mod/modding/reference/test-host)).

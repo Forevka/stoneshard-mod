@@ -2,9 +2,10 @@
 ; Using aliases here avoids the dllimport/dllexport redefinition conflict that
 ; would occur if we tried to redefine these names directly against <winver.h>.
 ;
-; All 15 exports of the real C:\Windows\System32\version.dll are covered so that
+; These 15 exports of the real C:\Windows\System32\version.dll are covered so that
 ; any other DLL in the process (Steamworks, the Steam emulator, comctl32, ...)
 ; still resolves correctly, not just the 3 that StoneShard.exe itself imports.
+; VerLanguageNameA/W (the real DLL forwards them to kernel32) are not proxied.
 
 EXPORTS
     GetFileVersionInfoA         = Proxy_GetFileVersionInfoA

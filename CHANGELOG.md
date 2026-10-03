@@ -24,8 +24,14 @@ bump may break the mod API or the native CoreApi table; each version says so und
   example, test mod and the `dotnet new coreloader-mod` template declares its games (a template mod
   without `--gameName` declares its interop's game, or `CoreModAnyGame` without an interop). A mod built for an earlier release without
   `CoreModGame` needs the attribute added and a rebuild.
+- The mod-author guide moved from `managed/README.md` to the documentation site, and the analyzers'
+  help links (CL0001-CL0005) now open each rule's own section there.
 
 ### Added
+- **A documentation site** (`docs-site/`, published to GitHub Pages): a mod-author guide, a cookbook
+  of task recipes taken from the shipped mods, walkthroughs of HelloMod, Console and FastTravel, the
+  API, analyzer and test host reference, and a "Loader internals" section on how the loader finds the
+  game's code, hooks it, hosts .NET and how hook points were found.
 - **StoneshardHarness**, a development mod that lets a script or an agent play Stoneshard over the
   test host without screenshots. `hx.state`, `hx.player`, `hx.enemies`, `hx.npcs`, `hx.objects`,
   `hx.inventory`, `hx.log`, `hx.dialogue` and `hx.buttons` describe what the player sees, with

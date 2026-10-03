@@ -6,17 +6,18 @@ namespace CoreLoader.Analyzers;
 public static class Rules
 {
     private const string Category = "CoreLoader.Lifetime";
-    private const string HelpLink = "https://github.com/Forevka/stoneshard-mod/blob/main/managed/README.md#analyzers";
+    // Each rule links to its own section of the documentation site's analyzer page.
+    private const string HelpLink = "https://forevka.github.io/stoneshard-mod/modding/reference/analyzers#";
 
     public static readonly DiagnosticDescriptor StoredRValue = new(
         id: "CL0001",
         title: "A game value is kept in a field",
-        messageFormat: "'{0}' stores a CoreLoader.RValue across frames: strings, arrays and structs from the game are pooled and released at the end of the frame, so this can dangle. Keep C# data instead (AsString, AsReal), or take ownership with Values.Keep and release it with Values.Free.",
+        messageFormat: "'{0}' stores a CoreLoader.RValue across frames: strings, arrays and structs from the game are pooled and released at the end of the frame, so this can dangle. Keep C# data instead (ToString(), AsReal), or take ownership with Values.Keep and release it with Values.Free.",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         description: "A GameMaker string, array or struct handed to a mod is only valid for the current frame. Numbers are safe to hold, but the type cannot tell; suppress with a justification when the value is kept with Values.Keep or is only ever a number.",
-        helpLinkUri: HelpLink);
+        helpLinkUri: HelpLink + "cl0001");
 
     public static readonly DiagnosticDescriptor StoredTransient = new(
         id: "CL0002",
@@ -26,7 +27,7 @@ public static class Rules
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         description: "Instance is a raw CInstance pointer, which dangles once the instance is destroyed; hold an InstanceRef (by id) instead. HookCall points into the hooked call's frame and is valid only inside the handler.",
-        helpLinkUri: HelpLink);
+        helpLinkUri: HelpLink + "cl0002");
 
     public static readonly DiagnosticDescriptor FreedLentValue = new(
         id: "CL0003",
@@ -36,7 +37,7 @@ public static class Rules
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         description: "A hook's arguments and result belong to the caller. Releasing one frees the caller's reference, which then crashes or corrupts the game when it is used again.",
-        helpLinkUri: HelpLink);
+        helpLinkUri: HelpLink + "cl0003");
 
     public static readonly DiagnosticDescriptor NoGameDeclared = new(
         id: "CL0004",
@@ -46,7 +47,7 @@ public static class Rules
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true,
         description: "Every mod declares its games: code written for one game's objects and scripts must not run inside another.",
-        helpLinkUri: HelpLink,
+        helpLinkUri: HelpLink + "cl0004",
         customTags: WellKnownDiagnosticTags.CompilationEnd);
 
     public static readonly DiagnosticDescriptor InteropGameMismatch = new(
@@ -57,7 +58,7 @@ public static class Rules
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         description: "A generated interop names one game's scripts, objects and assets; a mod written against it fails in any other game.",
-        helpLinkUri: HelpLink,
+        helpLinkUri: HelpLink + "cl0005",
         customTags: WellKnownDiagnosticTags.CompilationEnd);
 
     private const string GameCategory = "CoreLoader.Games";

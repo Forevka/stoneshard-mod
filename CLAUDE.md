@@ -9,7 +9,7 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
   release zips). The code, assembly and API stay CoreLoader. Native: `paths::kInstallFolder`.
 - Releases: `tools\package-release.ps1` + `.github/workflows/release.yml` (draft release on a `v*` tag;
   interop mods uploaded locally with `-Mods FastTravel,Reliquary -NoLoader -Upload v<ver>`).
-- User-facing guide: `managed/README.md` (mod authoring and API). `README.md` is the project overview.
+- User-facing guide: the documentation site in `docs-site/` (Docusaurus; mod authoring, cookbook, API, loader internals), published to GitHub Pages by `.github/workflows/docs.yml`. `README.md` is the project overview; `managed/README.md` is a stub pointing at the site.
 - History: `CHANGELOG.md`. **Update it with every user-visible change** (see Versioning).
 
 ## Layout
@@ -21,8 +21,9 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 | `managed/Mods/` | Shipped mods (Console + Inspector/Objects/Globals, ScriptSpy, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost, StoneshardCheats, Reliquary - the interop-only artifacts mod, FastTravel - world-map fast travel drawn with the game's own UI pieces, TavernGames - dice/card minigames against tavern NPCs on a small `MiniGame` framework, StoneshardTrials - roguelike tavern-hub/random-dungeon loop, ModMenu - the Esc-menu MODS window for `ModSettings`, StoneshardHarness - `hx.*` test-host commands to play Stoneshard without screenshots, clients `tools\stoneshard.ps1` / `tools\stoneshard_harness.py`) |
 | `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, FaultyGuiMod, WidgetProbe (every UI widget, and scope unwind under faults) |
 | `managed/Examples/`, `managed/Templates/CoreLoaderMod/` | HelloMod, InteropExample; the `dotnet new coreloader-mod` template |
-| `managed/CoreLoader.Analyzers/` (+ `.Tests`) | Roslyn analyzer every mod compiles with: CL0001-CL0003 lifetime rules, CL0004-CL0005 game declaration (see `managed/README.md#analyzers`) |
+| `managed/CoreLoader.Analyzers/` (+ `.Tests`) | Roslyn analyzer every mod compiles with: CL0001-CL0003 lifetime rules, CL0004-CL0005 game declaration (see `docs-site/docs/modding/reference/analyzers.md`) |
 | `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, `run-game.ps1`, `game-saves.ps1`, `coreloader.ps1` (test-host client), `stoneshard.ps1` / `stoneshard_harness.py` (StoneshardHarness clients), `smoke-*.ps1`, `checkcksum.py`; `re/` = static RE toolkit over any game's exe (`relib.py` and friends, `--exe <game.exe>` or `RE_GAME_EXE`; `ghidra/ExportGml.java`) |
+| `docs-site/` | Docusaurus documentation site: `docs/modding/` (guide, cookbook, walkthroughs, reference) and `docs/internals/` (how the loader works). `npm start` / `npm run build`; a broken link fails the build. Update it with every user-visible API change |
 
 ## Build, deploy, run
 
@@ -78,7 +79,7 @@ Testing notes:
   ok, 1 command failed, 2 game unreachable, 3 no answer in time), or dot-source it for `Invoke-CoreLoader` / `Wait-CoreLoader`.
   `list-commands` lists everything: core (`status`, `log`, `reload`, `call`, `builtin`, `global-*`,
   `instance-*`, `object-count`, `wait-frames`), `console <line>`, and `cheats.*`. Poll for anything that
-  takes time; the host never blocks a frame. Protocol: `managed/README.md#test-host`.
+  takes time; the host never blocks a frame. Protocol: `docs-site/docs/modding/reference/test-host.md`.
 - **Stoneshard mods are tested by agents through the StoneshardHarness mod, not screenshots.**
   Deploy it with the mod under test, and play through `tools\stoneshard.ps1`:
   - observe: `state`, `player`, `enemies`, `objects`, `inventory`, `log`, `dialogue`;
@@ -143,7 +144,7 @@ Rules the runtime enforces, and that mods must respect:
 
 Deploy a repo mod with `tools\deploy-coreloader.ps1 -Mods <Name>`, or copy the dll into a running
 game's `Mods\` for **hot reload**. Add it to `managed/CoreLoader.sln` (`dotnet sln add`) and to
-the mods table in `managed/README.md`.
+the mods table in `docs-site/docs/modding/reference/shipped-mods.md`.
 
 ## Extending CoreLoader
 
