@@ -60,7 +60,7 @@ when this came in sees it once too, the next time it is in the tavern. `tr.intro
 after a Second Look). Take one, or turn them all down, or pay for a new hand (REROLL: 100 crowns
 per tier, doubling with each reroll of the same offer). A card can be **rare** (its reward a tier
 higher) or **legendary** (two tiers higher, and no cost drawn); both grow likelier with the tier,
-but a tier-5 card is never rare (it could go no higher), only common or legendary (free). Second Look, Blood Money and Merchant's
+but a tier-5 card is never rare (it could go no higher), only common or legendary (free). Nor is a card whose numbers do not grow with the tier (the game's own statuses, Adrenaline); such a card is legendary only when that sheds a drawn cost. Second Look, Blood Money and Merchant's
 Favour are not offered on the win that ends a finite run. The offer is part of the run, so a reload
 offers the same cards. A card is a reward, and a strong reward comes with a cost of about its weight,
 shown in red; numbers grow with the won trial's danger tier (1-5). The set is the research
@@ -148,7 +148,7 @@ last trial when they can:
 
 Only dungeons that began with one floor are remade, and they stay one floor. A cell's layout keeps
 its master on the floor it was made with, so a remade two-floor dungeon would have no master on
-floor 1. Crypts are never made tier 5, because the game has no tier-5 crypt layouts. When nothing
+floor 1. Crypts are never made tier 5, because the game has no tier-5 crypt layouts. Nor are crypts made tier 3, or bastions past tier 2: tried on the running game, those remakes stop the game during generation, while crypts at tier 4 and catacombs at tiers 3 to 5 generate fine. When nothing
 can be remade at the wanted tier, the nearest tier that can is used, and then any untouched dungeon.
 A remade dungeon's master gets a name that fits its new kind (the game builds it afresh). An endless
 run never completes. A finished finite run takes the trials up again if *Run* is switched to
@@ -278,7 +278,8 @@ The run lives in the save, so the files under `Mods\StoneshardTrials\characters`
 | `tr.state` | the character's run (id, trial number, trials won, crowns earned), the current trial, tickets carried, hub or dungeon |
 | `tr.pick` | the dungeon the next trial would take (ties are broken per run and trial, so the door agrees) |
 | `tr.assess [trial]` | level, gear score, power and the tier that trial would take |
-| `tr.next <x> <y>` | the next trial takes that dungeon |
+| `tr.next <x> <y> [tier]` | the next trial takes that dungeon; with a tier, a one-floor dungeon is remade at it (for trying remakes, past the safety table) |
+| `tr.watch [frames]` | logs the tavern traders' drawing variables on every frame they change |
 | `tr.dkeys <x> <y>` / `tr.dset <x> <y> <key> <value>` | read / write a dungeon's data |
 | `tr.rooms [filter]` / `tr.roomkeys <x_y>` | the saved locations, and the rooms one holds |
 | `tr.gear` | worn items with their tier and quality |

@@ -97,7 +97,8 @@ bump may break the mod API or the native CoreApi table; each version says so und
   the game's unused boss prefixes (Persistent, Powerful, Resistant, Nimble, Leeching, Watchful):
   half again its health plus the prefix's stats, as lasting statuses the game saves. Past tier 5 an
   endless run makes every enemy stronger with each tier-5 win, and a remade dungeon's master gets a
-  name fitting its new kind. A master that falls by another hand pays half. The game autosaves on
+  name fitting its new kind (never as a tier 3 crypt or a
+  tier 3-5 bastion, whose generation fails). A master that falls by another hand pays half. The game autosaves on
   arriving in a trial and when one is settled in the tavern (setting `autosave`). A trial
   left by the dungeon's stairs is settled when the player walks back into the tavern: a won one is
   paid, any other given up. A ticket that does not fit a full bag comes once there is room, without
@@ -108,8 +109,8 @@ bump may break the mod API or the native CoreApi table; each version says so und
   fourth card, harder trials for double pay, or richer traders), and strong ones come with one of
   17 costs (a tithe, a debuff for some trials, a lost piece of gear, a closed skill tree, an
   attribute); numbers grow with the trial's tier, and the run keeps the boons, re-applying what the
-  game does not save. Cards can be rare or legendary (a reward a tier or two higher), and a hand
-  can be rerolled for crowns. A short animated lore intro (placeholder art, with an art brief in
+  game does not save. Cards can be rare or legendary (a reward a tier or two higher; a card whose numbers do not grow
+  with the tier is never rare), and a hand can be rerolled for crowns. A short animated lore intro (placeholder art, with an art brief in
   `Intro\SLIDES.md`) plays the first time a character stands in the tavern. From the first win, three real
   **traders** (a smith, a merchant with ready-made potions, and a jeweller) stand in the tavern and
   sell, for crowns only, a stock made for the last trial's tier after trials 1, 3, 5... The

@@ -22,7 +22,8 @@ namespace StoneshardTrials;
 ///     still says 2 floors stops the game with an error (array_shuffle on a
 ///     missing room list, o_dungeon_controller). Rewritten dungeons say 1.
 ///     There are no tier 5 crypt layouts either (no
-///     scr_dungeonRoomsArrayCryptTier5*), so a crypt is never made tier 5.
+///     scr_dungeonRoomsArrayCryptTier5*), and some kinds fail to generate
+///     at some tiers as one floor: see Unsafe.
 /// </remarks>
 internal static class Endless
 {
@@ -84,11 +85,25 @@ internal static class Endless
         return Progression.Pick(all.Where(d => d.BossAlive).ToList(), tier, lastKind, rng) is { } any ? (any, false, any.Tier) : null;
     }
 
-    /// <summary>Whether the game has room layouts for that kind of dungeon at that tier.</summary>
-    public static bool CanBe(string kind, int tier) => !(kind == "Crypt" && tier >= 5);
+    /// <summary>
+    /// The kinds and tiers a one-floor dungeon cannot be remade at, tried on
+    /// the running game (0.9.4.25, tr.next x y tier, two cells each). The
+    /// failing ones stop the game during generation with the same error (no
+    /// room of some role: array_shuffle from scr_dungeonGetLesslesRoomStructByRole
+    /// in scr_dungeonWeldingTwoRooms): crypt 3 (with an Armored Husk, both
+    /// cells) and bastion 3, 4 and 5 (several masters). Crypt 4 and catacombs
+    /// 3, 4 and 5 generated fine; there are no tier 5 crypt layouts at all.
+    /// </summary>
+    private static readonly HashSet<(string Kind, int Tier)> Unsafe = new()
+    {
+        ("Crypt", 3), ("Crypt", 5),
+        ("Bastion", 3), ("Bastion", 4), ("Bastion", 5),
+    };
+
+    /// <summary>Whether a one-floor dungeon of that kind can be generated at that tier.</summary>
+    public static bool CanBe(string kind, int tier) => !Unsafe.Contains((kind, tier));
 
     public static bool Rewritable(World.Dungeon d, int tier) => d.Floors == 1 && CanBe(d.Kind, tier);
-
     private static World.Dungeon Prefer(List<World.Dungeon> from, string? lastKind, (int X, int Y)? lastCell, Random rng)
     {
         var other = from.Where(d => d.Kind != lastKind && (d.X, d.Y) != lastCell).ToList();

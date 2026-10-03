@@ -112,7 +112,7 @@ internal static class Catalog
         },
         new()
         {
-            Id = "night-eyes", Title = "Night Eyes", Power = 2, Unique = true,
+            Id = "night-eyes", Title = "Night Eyes", Power = 2, Unique = true, Scales = false,
             Gains = _ => new[] { "You see in the dark, for good" },
             Apply = (ctx, _) => Done(() => Effects.NightVision(ctx.Player)),
             Reapply = (ctx, _) => Effects.NightVision(ctx.Player),
@@ -140,10 +140,10 @@ internal static class Catalog
         Custom("adrenaline", "Adrenaline", "o_b_adrenaline", 2,
             _ => new() { ["Abilities_Energy_Cost"] = -5, ["CRT"] = 3, ["MP_Restoration"] = 10, ["Pain_Resistance"] = 10, ["Damage_Received"] = -3, ["Fatigue_Gain"] = 10 },
             _ => "-5% energy costs, +3 crit chance, +10 energy regeneration, +10 pain resistance, 3% less damage taken",
-            _ => "+10 fatigue gain"),
+            _ => "+10 fatigue gain", scales: false),
         new()
         {
-            Id = "unholy-pact", Title = "Unholy Pact", Power = 2, Unique = true, SelfCosted = true,
+            Id = "unholy-pact", Title = "Unholy Pact", Power = 2, Unique = true, SelfCosted = true, Scales = false,
             Carriers = new[] { "o_b_dark_blessing", "o_db_relic_curse" },
             Gains = _ => new[] { "Unholy Blessing for good:", "lifesteal, energy drain, less damage taken" },
             Costs = _ => new[] { "Vampiric Corruption for good" },
@@ -221,7 +221,7 @@ internal static class Catalog
         },
         new()
         {
-            Id = "tome", Title = "Tome of Experience", Power = 2,
+            Id = "tome", Title = "Tome of Experience", Power = 2, Scales = false,
             Gains = _ => new[] { "Half a level of experience" },
             Apply = (ctx, _) => Done(() => Effects.Xp(ctx.Player, Math.Max(10, World.Num(ctx.Player, "max_xp", 250) * 0.5))),
         },
@@ -265,13 +265,13 @@ internal static class Catalog
         // The run itself.
         new()
         {
-            Id = "merchants-favour", Title = "Merchant's Favour", ForTrialsAhead = true,
+            Id = "merchants-favour", Title = "Merchant's Favour", ForTrialsAhead = true, Scales = false,
             Gains = _ => new[] { "The tavern traders' next two stocks", "come a tier higher, with rarer goods" },
             Apply = (ctx, _) => Done(() => ctx.Run.FavourRefreshes = 2),
         },
         new()
         {
-            Id = "second-look", Title = "Second Look", ForTrialsAhead = true,
+            Id = "second-look", Title = "Second Look", ForTrialsAhead = true, Scales = false,
             Gains = _ => new[] { "One more card to choose from", "after the next trial" },
             Apply = (ctx, _) => Done(() => ctx.Run.ExtraCards++),
         },
@@ -413,7 +413,7 @@ internal static class Catalog
     // A status with the game's own numbers, for good.
     private static CardDef Native(string id, string title, string buff, int power, string gains, string? cost = null) => new()
     {
-        Id = id, Title = title, Power = power, Unique = true, SelfCosted = cost != null,
+        Id = id, Title = title, Power = power, Unique = true, SelfCosted = cost != null, Scales = false,
         Carriers = new[] { buff },
         Gains = _ => new[] { $"{title} for good:", gains },
         Costs = _ => cost != null ? new[] { cost } : Array.Empty<string>(),
@@ -424,9 +424,9 @@ internal static class Catalog
 
     // A status carrying only the mod's numbers, its cost among them.
     private static CardDef Custom(string id, string title, string carrier, int power, Func<int, Dictionary<string, double>> numbers,
-                                  Func<int, string> gains, Func<int, string> cost) => new()
+                                  Func<int, string> gains, Func<int, string> cost, bool scales = true) => new()
     {
-        Id = id, Title = title, Power = power, Unique = true, SelfCosted = true,
+        Id = id, Title = title, Power = power, Unique = true, SelfCosted = true, Scales = scales,
         Carriers = new[] { carrier },
         Gains = l => new[] { $"{gains(l.Tier)}, for good" },
         Costs = l => new[] { cost(l.Tier) },

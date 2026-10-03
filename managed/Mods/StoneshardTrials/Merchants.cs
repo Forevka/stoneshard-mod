@@ -97,6 +97,32 @@ internal sealed class Merchants
         }
     }
 
+    // The traders found on the last tend, kept visible every frame in between:
+    // after a room change something flattens them again for many seconds, and
+    // a once-a-second fix left them undrawn for most of that (play-test 2, B2).
+    private readonly List<InstanceRef> _present = new();
+
+    private int _presentAge;
+
+    /// <summary>Every frame in the tavern: the traders stay drawn.</summary>
+    public void KeepTradersVisible()
+    {
+        // A room change makes them new instances: found again (every few
+        // frames, as a search walks every NPC) until all are there.
+        // Left alone while one of them talks or trades.
+        if (Objects.o_dialogue.Object is { InstanceCount: > 0 } || Objects.o_trade_inventory.Object is { InstanceCount: > 0 }) return;
+        if ((_present.Count < Traders.Length || _present.Any(n => !n.Exists)) && ++_presentAge % 10 == 0)
+        {
+            _present.Clear();
+            foreach (var t in Traders)
+                if (Find(t.Key) is { } npc) _present.Add(npc);
+        }
+        if (_present.Count == 0) return;
+        var floor = HostFloor();
+        foreach (var npc in _present)
+            if (npc.Exists) KeepVisible(npc, floor);
+    }
+
     public static bool IsOurs(Instance npc) =>
         !npc.IsNull && npc.Get("id_name") is { Kind: RValueKind.String } key && key.ToString().StartsWith(Prefix, StringComparison.Ordinal);
 
@@ -112,6 +138,7 @@ internal sealed class Merchants
         _salt = seedSalt;
         _rareBonus = rareBonus;
         bool all = true;
+        _present.Clear();
         foreach (var t in Traders)
         {
             try
@@ -129,6 +156,7 @@ internal sealed class Merchants
                     continue;
                 }
                 Pin(npc, t);
+                _present.Add(npc);
                 if (Entry(npc, t) is not { } entry)
                 {
                     all = false;
@@ -170,7 +198,10 @@ internal sealed class Merchants
         int count = 3 + _stockTier / 2, effects = Math.Clamp(1 + _stockTier / 2, 1, 3);
         for (int i = 0; i < count; i++)
         {
-            var tags = PotionTags.OrderBy(_ => rng.Next()).Take(effects).ToList();
+            // The first two always heal and regenerate; the rest are any mix.
+            string? sure = i switch { 0 => "good_pt_healing", 1 => "good_pt_regeneration", _ => null };
+            var tags = PotionTags.Where(p => p != sure).OrderBy(_ => rng.Next()).Take(sure != null ? effects - 1 : effects).ToList();
+            if (sure != null) tags.Insert(0, sure);
             Cards.Effects.Potion(tags, _log, into: window);
         }
         _log.Info($"trader {Prefix}goods: {count} potion(s) of {effects} effect(s) added to stock {stock.AsReal}");
@@ -252,7 +283,7 @@ internal sealed class Merchants
         if (Math.Abs(World.Num(npc, "x") - t.X) > 13 || Math.Abs(World.Num(npc, "y") - t.Y) > 13)
             Scripts.scr_invisible_teleport.CallAs(npc, t.X, t.Y);
         if (npc.Get("state").ToString() != "idle") npc.Set("state", "idle");
-        KeepVisible(npc);
+        KeepVisible(npc, HostFloor());
     }
 
     // A trader made away from its town is drawn squashed flat (stScaleY 0)
@@ -260,17 +291,22 @@ internal sealed class Merchants
     // people are on (myfloor, "T1" in the Osbrook tavern), and not hidden by
     // a door it never walked through (isHidden). Seen on 0.9.4.25: the arms
     // trader and the jeweller came in with is_life false and myfloor "S1".
-    private static void KeepVisible(InstanceRef npc)
+    // The floor the tavern's own people are on (the innkeeper's), with its counter.
+    private static (RValue Floor, RValue Counter)? HostFloor() =>
+        GmlObject.Find("o_npc_innkeeper_osbrook")?.Instances().FirstOrDefault() is { } host
+        && host.Get("myfloor") is { Kind: RValueKind.String } floor
+            ? (floor, host.Get("myfloor_counter")) : null;
+
+    private static void KeepVisible(InstanceRef npc, (RValue Floor, RValue Counter)? host)
     {
         // Never a trader the player has struck down: only while it has health.
-        if (!World.Truthy(npc.Get("is_life")) && World.Num(npc, "HP", 1) > 0) npc.Set("is_life", true);
+        if (World.Num(npc, "HP", 1) <= 0) return;
+        if (!World.Truthy(npc.Get("is_life"))) npc.Set("is_life", true);
         if (World.Truthy(npc.Get("isHidden"))) npc.Set("isHidden", false);
-        if (GmlObject.Find("o_npc_innkeeper_osbrook")?.Instances().FirstOrDefault() is { } host
-            && host.Get("myfloor") is { Kind: RValueKind.String } floor
-            && npc.Get("myfloor").ToString() != floor.ToString())
+        if (host is { } h && npc.Get("myfloor").ToString() != h.Floor.ToString())
         {
-            npc.Set("myfloor", floor);
-            npc.Set("myfloor_counter", host.Get("myfloor_counter"));
+            npc.Set("myfloor", h.Floor);
+            npc.Set("myfloor_counter", h.Counter);
         }
     }
 

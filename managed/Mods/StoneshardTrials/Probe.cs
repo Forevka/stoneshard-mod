@@ -7,9 +7,42 @@ namespace StoneshardTrials;
 /// <summary>Test-host commands for looking at the live game while the mod is built.</summary>
 internal static class Probe
 {
+    private static readonly string[] WatchVars =
+        { "image_yscale", "stScaleY", "is_life", "isHidden", "visible", "image_alpha", "myfloor", "myfloor_counter", "state", "x", "y" };
+    private static int _watchFrames;
+    private static long _watchFrame;
+    private static Logger? _watchLog;
+    private static readonly Dictionary<long, string> _watchLast = new();
+
+    /// <summary>Every frame: one line per trader whose watched variables changed since the last frame.</summary>
+    public static void Tick()
+    {
+        if (_watchFrames <= 0 || _watchLog is not { } log) return;
+        _watchFrames--;
+        _watchFrame++;
+        if (_watchFrames == 0) log.Info("watch: done");
+        if (Objects.o_NPC.Object is not { } npcs) return;
+        foreach (var n in npcs.Instances())
+        {
+            if (n.Get("id_name") is not { Kind: RValueKind.String } id || !id.ToString().StartsWith("lodestone_", StringComparison.Ordinal)) continue;
+            long key = World.IdKey(n.Id);
+            string now = string.Join(" ", WatchVars.Select(v => $"{v}={n.Get(v)}"));
+            if (_watchLast.TryGetValue(key, out var was) && was == now) continue;
+            _watchLast[key] = now;
+            log.Info($"watch: f{_watchFrame} {n.Get("id_name")} #{key} {now}");
+        }
+    }
     public static void Register(Logger log)
     {
         TestHost.Register("tr.dungeons", _ => Dungeons(), "tr.dungeons: every crypt, catacombs and bastion on the world map");
+        TestHost.Register("tr.watch", args =>
+        {
+            // The tavern traders' drawing state, logged on every frame it changes.
+            _watchFrames = args.Count > 0 ? Math.Clamp(args[0].GetInt32(), 1, 3600) : 600;
+            _watchLast.Clear();
+            _watchLog = log;
+            return $"watching the traders for {_watchFrames} frames (lines 'watch:' in the log)";
+        }, "tr.watch [frames=600]: logs each tavern trader's drawing variables (scale, is_life, isHidden, myfloor...) on every frame they change");
         TestHost.Register("tr.vars", args =>
         {
             // Every variable of one instance, with its kind and value.

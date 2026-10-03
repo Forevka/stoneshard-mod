@@ -47,6 +47,8 @@ internal sealed class CardDef
     public bool Unique { get; init; }
     /// <summary>Acts on the trials ahead (Second Look, Blood Money, Merchant's Favour): not offered when none follow.</summary>
     public bool ForTrialsAhead { get; init; }
+    /// <summary>Its numbers grow with the tier. A card whose do not is never rare (it would give nothing more).</summary>
+    public bool Scales { get; init; } = true;
     /// <summary>
     /// The status objects it keeps on the player. No two boons of a run share
     /// one: after a load the game makes them anew without the mod's tag, and
@@ -131,6 +133,8 @@ internal static class Deck
             int rarity = RollRarity(ctx.Tier, ctx.Rng);
             // At tier 5 a rare card would give nothing more; a legendary still comes free.
             if (rarity == 1 && ctx.Tier >= 5) rarity = 0;
+            // Nor for a card with fixed numbers; a legendary one is still worth it when it sheds a drawn cost.
+            if (!card.Scales && (rarity == 1 || card.SelfCosted || card.Cost != null || card.Power < 2)) rarity = 0;
             var cardCtx = ctx with { Tier = Math.Clamp(ctx.Tier + rarity, 1, 5) };
             if (!Prepared(card.Id, card.Prepare, cardCtx, out var detail)) continue;
             string? costId = null, costDetail = null;

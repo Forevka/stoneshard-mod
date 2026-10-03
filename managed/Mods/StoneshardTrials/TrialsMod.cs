@@ -35,6 +35,8 @@ public sealed class TrialsMod : CoreMod
     private ModSettings.Setting _enabledSetting = null!, _xpScale = null!, _goldScale = null!, _runMode = null!, _difficulty = null!, _autosave = null!;
     // Test host: the dungeon the next trial must take.
     private (int X, int Y)? _forcedNext;
+    // tr.next's tier, for trying remakes on the running game: taken as asked, past the Unsafe table.
+    private int? _forcedTier;
 
     /// <summary>The next trial: its dungeon, whether it must be rewritten (endless), and the danger wanted.</summary>
     private readonly record struct Choice(World.Dungeon Dungeon, bool Rewrite, int Tier, double Target);
@@ -175,6 +177,8 @@ public sealed class TrialsMod : CoreMod
                 _autosaveDue = Due.None;
                 _returnPlaced = true;
                 _scaledFloor = null;
+                _forcedNext = null;
+                _forcedTier = null;
             }
             // What the character carries changed under us (a load): the copy
             // follows, and boons the game does not save are put back.
@@ -209,6 +213,9 @@ public sealed class TrialsMod : CoreMod
             _returnQueued = false;
             ReturnToHub();
         }
+        Guard("watch", Probe.Tick);
+        // The tavern traders stay drawn (they exist only in the tavern; elsewhere this finds none).
+        if (_enabled && _run is { TrialsWon: > 0 } && World.Cell == World.HubCell) Guard("trader looks", _merchants.KeepTradersVisible);
         // About once a second: work out the banner and keep tickets looking like tickets
         // (a load puts the map's own text back).
         if (++_frames % 60 != 0) return;
@@ -393,8 +400,15 @@ public sealed class TrialsMod : CoreMod
         if (consume && _forcedNext is { } f)
         {
             _forcedNext = null;
+            int? tierAsked = _forcedTier;
+            _forcedTier = null;
             if (all.FirstOrDefault(d => (d.X, d.Y) == f) is { Name: not null } forced)
             {
+                if (tierAsked is int ta && forced.Floors == 1)
+                {
+                    Log.Warning($"tr.next: {forced.Name} ({forced.Kind}) remade at tier {ta} as asked, whatever the Unsafe table says");
+                    return new Choice(forced, true, ta, a.Target);
+                }
                 bool rewrite = EndlessRuns && (!forced.BossAlive || forced.Tier != a.Tier);
                 // The same rules as a real pick: a finite run takes only an untouched
                 // dungeon, an endless one remakes only what can be remade.
@@ -1045,6 +1059,8 @@ public sealed class TrialsMod : CoreMod
             return;
         }
         if (_bannerText is not { } text || World.Player is null) return;
+        // Not over the black of a room change (the loading screen).
+        if (Objects.o_smoothRoomChanger.Object is { InstanceCount: > 0 }) return;
         // A status icon's tooltip (o_hoverBuff, while the mouse is on one) opens
         // just below the icons, where the banner sits: the banner steps aside.
         if (Objects.o_hoverBuff.Object is { InstanceCount: > 0 }) return;
@@ -1137,15 +1153,22 @@ public sealed class TrialsMod : CoreMod
         }, "tr.assess [trial]: the character's level, gear score and power, and the tier that trial would take");
         TestHost.Register("tr.next", args =>
         {
-            if (args.Count < 2) throw new ArgumentException("usage: tr.next <x> <y>");
+            if (args.Count < 2) throw new ArgumentException("usage: tr.next <x> <y> [tier]");
             var cell = (args[0].GetInt32(), args[1].GetInt32());
             if (World.Dungeons().FirstOrDefault(d => (d.X, d.Y) == cell) is not { Name: not null } d) return "not a dungeon";
+            if (args.Count >= 3 && d.Floors != 1) return "two floors: only a one-floor dungeon can be remade";
             _forcedNext = cell;
+            _forcedTier = null;
+            if (args.Count >= 3)
+            {
+                _forcedTier = Math.Clamp(args[2].GetInt32(), 1, 5);
+                return $"ok: {d.Name} ({d.Kind}) will be remade at tier {_forcedTier}{(Endless.CanBe(d.Kind, _forcedTier.Value) ? "" : " (listed unsafe: it may stop the game)")}";
+            }
             // The door makes the last check (the tier is known only then); these are the ones it will surely refuse.
             if (!EndlessRuns && !d.BossAlive) return "won: a finite run will refuse it";
             if (EndlessRuns && !d.BossAlive && d.Floors != 1) return "won with two floors: it cannot be remade, so it will be refused";
             return "ok";
-        }, "tr.next <x> <y>: the next trial takes that dungeon (an untouched one; in an endless run, one that can be remade)");
+        }, "tr.next <x> <y> [tier]: the next trial takes that dungeon (an untouched one; in an endless run, one that can be remade); with a tier, a one-floor dungeon is remade at it whatever the run (for trying remakes)");
         TestHost.Register("tr.dset", args =>
         {
             RValue v = args[3].ValueKind == System.Text.Json.JsonValueKind.Number ? args[3].GetDouble()
