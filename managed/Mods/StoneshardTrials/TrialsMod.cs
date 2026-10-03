@@ -470,7 +470,6 @@ public sealed class TrialsMod : CoreMod
         _plan = Challenge.Plan.None;
         // The elite first, so the scaling (which leaves buffed enemies alone) does not stack on it.
         TryElite();
-        _scaledFloor = null;
         ScaleFloor();
         // A death from here costs this trial only.
         _autosaveDue = Due.InTrial;
@@ -479,20 +478,26 @@ public sealed class TrialsMod : CoreMod
     // Past tier 5 in an endless run, every enemy of each floor of the trial is
     // made stronger once (a natural two-floor dungeon keeps its master below).
     // A master still waiting to be made the elite is left for TryElite.
-    private string? _scaledFloor, _scalingFloor;
+    private string? _scaledFloor, _scalingFloor, _stakesFloor;
     private int _scaleTries;
 
     private void ScaleFloor()
     {
         if (!EndlessRuns || !InTrial || CurrentRun() is not { Trial.Tier: >= 5, Tier5Wins: > 0 } run) return;
-        string floor = $"{World.Cell.X}_{World.Cell.Y}_{Globals.Get("floor_counter")}";
+        // Per trial too: a remade dungeon may be the same cell as an earlier trial.
+        string floor = $"{run.Level}:{World.Cell.X}_{World.Cell.Y}_{Globals.Get("floor_counter")}";
         if (floor == _scaledFloor) return;
         if (floor != _scalingFloor) { _scalingFloor = floor; _scaleTries = 0; }
         bool spareMasters = run is { Elite: true, Won: false };
         int scaled = Challenge.ScaleForEndless(run.Tier5Wins, spareMasters, Log);
-        // A floor's enemies may not all be made on its first tick: tried for a
-        // few seconds unless some were scaled (after a load, none need it).
-        if (scaled > 0 || ++_scaleTries >= 5) _scaledFloor = floor;
+        // A floor's enemies may not all be made on its first tick (the extras
+        // come on arrival): tried for a few seconds; enemies already scaled
+        // are left alone, so a try again costs no stacking.
+        if (++_scaleTries >= 5) _scaledFloor = floor;
+        // Said once per floor, however many tries scaled some.
+        if (scaled > 0 && _stakesFloor != floor)
+            _stakesFloor = floor;
+        else scaled = 0;
         if (scaled > 0)
             World.Say($"~r~The gods raise the stakes~/~: every foe here is stronger ({run.Tier5Wins} {(run.Tier5Wins == 1 ? "trial" : "trials")} past the highest danger).");
     }
@@ -1213,8 +1218,35 @@ public sealed class TrialsMod : CoreMod
             // The door makes the last check (the tier is known only then); these are the ones it will surely refuse.
             if (!EndlessRuns && !d.BossAlive) return "won: a finite run will refuse it";
             if (EndlessRuns && !d.BossAlive && d.Floors != 1) return "won with two floors: it cannot be remade, so it will be refused";
+            if (EndlessRuns && d.Floors != 1) return $"two floors: it cannot be remade, so the door takes it only while the wanted tier is its own ({d.Tier})";
             return "ok";
         }, "tr.next <x> <y> [tier]: the next trial takes that dungeon (an untouched one; in an endless run, one that can be remade); with a tier, a one-floor dungeon is remade at it whatever the run (for trying remakes)");
+        TestHost.Register("tr.otherkill", _ =>
+        {
+            // The trial's master dies by no one's hand (as to a trap or another
+            // enemy): its Destroy event runs as a death with a killer that is not the player.
+            if (!InTrial || Objects.o_enemy.Object is not { } enemies) return "not in a trial";
+            foreach (var e in enemies.Instances().ToList())
+            {
+                if (!World.Truthy(e.Get("isBoss")) && !World.Truthy(e.Get("isMiniboss"))) continue;
+                string name = e.Get("name").ToString();
+                e.Set("last_attacker", -4);
+                e.Set("HP", 0);
+                Builtins.instance_destroy(e.Id);
+                return $"{name} falls by another hand";
+            }
+            return "no master on this floor";
+        }, "tr.otherkill: the trial's master on this floor dies by another hand (for the half pay)");
+        TestHost.Register("tr.tier5wins", args =>
+        {
+            if (CurrentRun() is not { } run) return "no run";
+            if (args.Count > 0)
+            {
+                run.Tier5Wins = Math.Clamp(args[0].GetInt32(), 0, 100);
+                SaveRun(run);
+            }
+            return $"{run.Tier5Wins} tier-5 trial(s) won (each makes an endless run's next tier-5 enemies stronger)";
+        }, "tr.tier5wins [n]: reads or sets the endless run's tier-5 wins (for the scaling past tier 5)");
         TestHost.Register("tr.dset", args =>
         {
             RValue v = args[3].ValueKind == System.Text.Json.JsonValueKind.Number ? args[3].GetDouble()

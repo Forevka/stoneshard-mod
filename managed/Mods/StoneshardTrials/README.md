@@ -279,6 +279,8 @@ The run lives in the save, so the files under `Mods\StoneshardTrials\characters`
 | `tr.pick` | the dungeon the next trial would take (ties are broken per run and trial, so the door agrees) |
 | `tr.assess [trial]` | level, gear score, power and the tier that trial would take |
 | `tr.next <x> <y> [tier]` | the next trial takes that dungeon; with a tier, a one-floor dungeon is remade at it (for trying remakes, past the safety table) |
+| `tr.otherkill` | the trial's master on this floor dies by another hand (half pay) |
+| `tr.tier5wins [n]` | reads or sets the endless run's tier-5 wins (scaling past tier 5) |
 | `tr.watch [frames]` | logs the tavern traders' drawing variables on every frame they change |
 | `tr.dkeys <x> <y>` / `tr.dset <x> <y> <key> <value>` | read / write a dungeon's data |
 | `tr.rooms [filter]` / `tr.roomkeys <x_y>` | the saved locations, and the rooms one holds |
