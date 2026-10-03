@@ -352,7 +352,7 @@ public sealed class TrialsMod : CoreMod
     private Choice? Pick(IReadOnlyList<World.Dungeon> all, bool consume)
     {
         if (World.Player is not { } player || CurrentRun() is not { } run) return null;
-        var a = Progression.Assess(player, run.Level, DifficultyShift[DifficultyIndex]);
+        var a = Progression.Assess(player, run.Level, DifficultyShift[DifficultyIndex] + run.BloodShift);
         var open = all.Where(d => d.BossAlive).ToList();
         if (consume && _forcedNext is { } f)
         {
@@ -627,7 +627,7 @@ public sealed class TrialsMod : CoreMod
         bool givenUp = run is { Won: false, Trial: not null };
         if (run is { Won: true, Trial: { } won })
         {
-            gold = Reward(won, run.Level);
+            gold = (int)Math.Round(Reward(won, run.Level) * Math.Max(1, run.BloodPay));
             run.GoldEarned += gold;
             run.TrialsWon++;
             run.Level++;
@@ -635,6 +635,12 @@ public sealed class TrialsMod : CoreMod
             ExpireCosts(player, run);
             // The cards for this win, dealt now and kept on the run, shown in the tavern.
             run.Offer = Deal(player, run, run.LastWonTier, finished);
+        }
+        // Blood Money is for one trial, won or not.
+        if (run.Trial != null)
+        {
+            run.BloodShift = 0;
+            run.BloodPay = 1;
         }
         run.Trial = null;
         run.Won = false;
@@ -658,28 +664,35 @@ public sealed class TrialsMod : CoreMod
 
     // From the first win on. Their stock is made after wins 1, 3, 5... and
     // held for two trials; it lives in the world save, so it rolls back with
-    // the run.
+    // the run. Merchant's Favour makes the next refreshes a tier higher and rarer.
     private void TendMerchants(Run run)
     {
         bool due = run.StockedAt == 0 || run.TrialsWon - run.StockedAt >= 2;
-        int tier = due ? run.LastWonTier : run.StockTier;
+        bool favour = due && run.FavourRefreshes > 0;
+        int tier = due ? Math.Clamp(run.LastWonTier + (favour ? 1 : 0), 1, 5) : run.StockTier;
         int serial = due ? run.StockSerial + 1 : run.StockSerial;
         // A refresh that did not reach every trader is tried again next time;
         // the ones it did reach know this stock by its serial and are left alone.
-        if (!_merchants.Tend(tier, due, serial) || !due) return;
+        int rare = due ? (favour ? 20 : 0) : run.StockRareBonus;
+        if (!_merchants.Tend(tier, due, serial, rareBonus: rare) || !due) return;
         run.StockedAt = run.TrialsWon;
         run.StockTier = tier;
+        run.StockRareBonus = rare;
         run.StockSerial = serial;
+        if (favour) run.FavourRefreshes--;
         SaveRun(run);
     }
 
     // ------------------------------------------------------------ the cards
 
-    // Seeded by the run and the trial, like the dungeon pick, so the same win deals the same hand.
-    private Offer Deal(InstanceRef player, Run run, int tier, int trial)
+    // Seeded by the run and the trial, like the dungeon pick, so the same win
+    // deals the same hand. Second Look adds its cards to this one offer.
+    private Offer Deal(InstanceRef player, Run run, int tier, int trial, IReadOnlyList<CardDef>? force = null)
     {
-        var offer = Deck.Deal(Catalog.All, new CardContext(player, run, tier, PickRng(run, $"cards{trial}"), Log), trial);
-        Log.Info($"trial {trial}: cards {string.Join(", ", offer.Cards)} (tier {tier})");
+        int size = Deck.Size + run.ExtraCards;
+        run.ExtraCards = 0;
+        var offer = Deck.Deal(Catalog.All, Catalog.Costs, new CardContext(player, run, tier, PickRng(run, $"cards{trial}"), Log), trial, size, force);
+        Log.Info($"trial {trial}: cards {string.Join(", ", offer.Cards.Select((c, i) => offer.Costs[i] is { } cost ? $"{c} ({cost})" : c))} (tier {tier})");
         return offer;
     }
 
@@ -692,34 +705,50 @@ public sealed class TrialsMod : CoreMod
             return;
         }
         if (index < 0 || index >= offer.Cards.Count || Catalog.Find(offer.Cards[index]) is not { } card) return;
-        string? chosen = index < offer.Details.Count ? offer.Details[index] : null;
+        string? chosen = At(offer.Details, index), costId = At(offer.Costs, index), costChosen = At(offer.CostDetails, index);
+        var cost = Catalog.FindCost(costId);
         // Recorded and saved before it is done: a card that fails halfway must
         // not stay on the table to be taken (and its first half given) again.
-        int costTrials = card.CostTrials(offer.Tier);
+        int costTrials = cost?.Trials(offer.Tier) ?? 0;
         var boon = new Boon
         {
-            Id = card.Id, Tier = offer.Tier, Trial = offer.Trial, Detail = chosen,
+            Id = card.Id, Tier = offer.Tier, Trial = offer.Trial, Detail = chosen, Cost = cost?.Id, CostDetail = costChosen,
             CostUntil = costTrials > 0 ? run.TrialsWon + costTrials : 0,
         };
         run.Boons.Add(boon);
         run.Offer = null;
         _cards.Close();
         SaveRun(run);
-        try
-        {
-            boon.Detail = card.Apply(new CardContext(player, run, offer.Tier, PickRng(run, $"take{offer.Trial}"), Log), chosen) ?? chosen;
-            if (card.CostBuff != null) Effects.LongBuff(player, card.CostBuff, card.Id);
-            SaveRun(run);
-        }
+        var ctx = new CardContext(player, run, offer.Tier, PickRng(run, $"take{offer.Trial}"), Log);
+        try { boon.Detail = card.Apply(ctx, chosen) ?? chosen; }
         catch (Exception ex) when (ex is GmlException or InvalidOperationException)
         {
-            Log.Warning($"card {card.Id} was taken but not fully given: {ex.Message}");
+            // Its cost is not asked for a reward that did not come (and nothing of it is undone later).
+            boon.CostUntil = 0;
+            SaveRun(run);
+            Log.Warning($"card {card.Id} was taken but its reward not fully given: {ex.Message}");
             World.Say($"~r~{card.Title}~/~ fizzles: not all of it took hold.");
             return;
         }
-        Log.Info($"took {card.Id} (tier {offer.Tier}){(boon.Detail != null ? $": {boon.Detail}" : "")}");
+        if (cost != null)
+        {
+            try
+            {
+                if (cost.Apply != null) boon.CostDetail = cost.Apply(ctx, costChosen) ?? costChosen;
+                if (cost.Buff != null) Effects.LongBuff(player, cost.Buff, cost.Tag);
+                boon.CostPaid = true;
+            }
+            catch (Exception ex) when (ex is GmlException or InvalidOperationException)
+            {
+                Log.Warning($"card {card.Id}: its cost {cost.Id} could not be paid: {ex.Message}");
+            }
+        }
+        SaveRun(run);
+        Log.Info($"took {card.Id} (tier {offer.Tier}){(boon.Detail != null ? $": {boon.Detail}" : "")}{(cost != null ? $", paying {cost.Id}{(boon.CostDetail != null ? $" ({boon.CostDetail})" : "")}" : "")}");
         World.Say($"~lg~{card.Title}~/~ is yours.");
     }
+
+    private static string? At(List<string?> list, int i) => i < list.Count ? list[i] : null;
 
     private void DiscardCards()
     {
@@ -737,18 +766,18 @@ public sealed class TrialsMod : CoreMod
     {
         foreach (var boon in run.Boons.Where(b => b.CostUntil > 0 && (all || run.TrialsWon >= b.CostUntil)))
         {
-            if (Catalog.Find(boon.Id) is not { } card || (card.Expire == null && card.CostBuff == null))
+            if (Catalog.FindCost(boon.Cost) is not { } cost)
             {
                 boon.CostUntil = 0;
                 continue;
             }
             try
             {
-                if (card.CostBuff != null) Effects.EndBuff(player, card.CostBuff, card.Id);
-                card.Expire?.Invoke(new CardContext(player, run, boon.Tier, PickRng(run, $"ex{boon.Trial}"), Log), boon);
+                if (cost.KeptBuff(boon) is { } debuff) Effects.EndBuff(player, debuff, cost.Tag);
+                if (boon.CostPaid) cost.Expire?.Invoke(new CardContext(player, run, boon.Tier, PickRng(run, $"ex{boon.Trial}"), Log), boon);
                 // Only once ended: a cost that failed to end is tried again.
                 boon.CostUntil = 0;
-                World.Say($"The cost of ~y~{card.Title}~/~ is paid in full.");
+                World.Say($"The cost of ~y~{Catalog.Find(boon.Id)?.Title ?? boon.Id}~/~ is paid in full.");
             }
             catch (Exception ex) when (ex is GmlException or InvalidOperationException)
             {
@@ -757,26 +786,31 @@ public sealed class TrialsMod : CoreMod
         }
     }
 
+    private readonly HashSet<string> _boonWarnings = new();
+
     // What the game does not keep of the boons taken (night vision, custom
     // buff numbers) is put back: after a load, and with every new player
     // instance (each room). Every boon's Reapply does nothing when it is there.
+    // A cost's debuff stays on, and lasting, while the cost lasts (some
+    // shorten their own turns).
     private void ReapplyBoons(InstanceRef player, Run run)
     {
         foreach (var boon in run.Boons)
         {
-            if (Catalog.Find(boon.Id) is not { } card) continue;
             try
             {
-                // A timed cost stays on, and lasting, until it is paid.
-                if (boon.CostUntil > 0 && card.CostBuff != null) Effects.KeepBuff(player, card.CostBuff, card.Id);
-                card.Reapply?.Invoke(new CardContext(player, run, boon.Tier, PickRng(run, $"re{boon.Trial}"), Log), boon);
+                if (boon is { CostUntil: > 0, CostPaid: true } && Catalog.FindCost(boon.Cost) is { } cost && cost.KeptBuff(boon) is { } debuff)
+                    Effects.KeepBuff(player, debuff, cost.Tag);
+                Catalog.Find(boon.Id)?.Reapply?.Invoke(new CardContext(player, run, boon.Tier, PickRng(run, $"re{boon.Trial}"), Log), boon);
             }
             catch (Exception ex) when (ex is GmlException or InvalidOperationException)
             {
-                Log.Warning($"boon {boon.Id}: {ex.Message}");
+                // Every second otherwise: said once per boon and message.
+                if (_boonWarnings.Add($"{boon.Id}:{boon.Trial}:{ex.Message}")) Log.Warning($"boon {boon.Id}: {ex.Message}");
             }
         }
     }
+
     /// <summary>
     /// Crowns for a trial won: 150 for a tier 1 dungeon, 100 more per tier above,
     /// a tenth more for every trial already behind, times the reward setting.
@@ -789,11 +823,11 @@ public sealed class TrialsMod : CoreMod
     // Every source of experience goes through scr_get_XP(amount); a kill is the
     // call made from o_enemy's Destroy, with the dying enemy as self. During the
     // trials only kills count (no XP for finding places, quests, books or
-    // crafting), scaled by the setting.
+    // crafting), scaled by the setting. A card's gift of experience is let through.
     private void OnExperience(HookCall c)
     {
         // A finished run gives experience back to the whole world.
-        if (!_enabled || c.ArgCount < 1 || CurrentRun() is { } done && RunOver(done)) return;
+        if (!_enabled || c.ArgCount < 1 || Effects.GrantingXp || CurrentRun() is { } done && RunOver(done)) return;
         bool kill = !c.Self.IsNull && Objects.o_enemy.Object is { } enemy &&
                     (c.Self.Get("object_index").AsReal == enemy.Index ||
                      Builtins.object_is_ancestor(c.Self.Get("object_index"), enemy.Index).AsBool);
@@ -807,7 +841,6 @@ public sealed class TrialsMod : CoreMod
         var amount = c.GetArg(0);
         if (amount.IsNumber) c.SetArg(0, Math.Round(amount.AsReal * _xpScale.GetNumber()));
     }
-
     // ------------------------------------------------------------ the banner
 
     private string? BannerText(bool carryingTicket)
@@ -877,14 +910,8 @@ public sealed class TrialsMod : CoreMod
         {
             if (World.Player is not { } p || CurrentRun() is not { } run) return "no player";
             int tier = Math.Clamp(args.Count > 0 ? args[0].GetInt32() : 1, 1, 5);
-            run.Offer = Deal(p, run, tier, run.Level);
-            if (args.Count > 1)
-            {
-                var ctx = new CardContext(p, run, tier, PickRng(run, "tr.deal"), Log);
-                var cards = args.Skip(1).Select(a => Catalog.Find(a.GetString()!)).OfType<CardDef>().Take(Deck.Size).ToList();
-                run.Offer.Cards = cards.Select(c => c.Id).ToList();
-                run.Offer.Details = cards.Select(c => c.Prepare?.Invoke(ctx)).ToList();
-            }
+            var force = args.Count > 1 ? args.Skip(1).Select(a => Catalog.Find(a.GetString()!)).OfType<CardDef>().ToList() : null;
+            run.Offer = Deal(p, run, tier, run.Level, force);
             SaveRun(run);
             return run.Offer;
         }, "tr.deal [tier] [card ids...]: puts cards on the table now (shown in the tavern); ids choose them");

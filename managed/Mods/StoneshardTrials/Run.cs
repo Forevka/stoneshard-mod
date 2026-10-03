@@ -30,8 +30,17 @@ internal sealed class Run
     public int StockedAt { get; set; }
     /// <summary>The tier the traders' current stock was made for.</summary>
     public int StockTier { get; set; } = 1;
+    /// <summary>The rare chance added to the current stock (Merchant's Favour).</summary>
+    public int StockRareBonus { get; set; }
     /// <summary>Counts the traders' stocks; each trader notes which one it has rolled.</summary>
     public int StockSerial { get; set; }
+    /// <summary>Extra cards in the next offer (Second Look).</summary>
+    public int ExtraCards { get; set; }
+    /// <summary>Blood Money: the next trial's added danger, and what its reward is multiplied by (1: none).</summary>
+    public double BloodShift { get; set; }
+    public double BloodPay { get; set; } = 1;
+    /// <summary>Merchant's Favour: how many more trader refreshes come a tier higher and rarer.</summary>
+    public int FavourRefreshes { get; set; }
     /// <summary>The cards taken so far, oldest first.</summary>
     public List<Boon> Boons { get; set; } = new();
     /// <summary>
@@ -48,8 +57,13 @@ internal sealed class Boon
     public int Tier { get; set; } = 1;
     public int Trial { get; set; }
     public string? Detail { get; set; }
+    /// <summary>The cost it came with (a CostDef id), and what that cost chose.</summary>
+    public string? Cost { get; set; }
+    public string? CostDetail { get; set; }
     /// <summary>Its cost ends once this many trials are won (0: it has none, or it lasts).</summary>
     public int CostUntil { get; set; }
+    /// <summary>The cost was really paid (a card that failed first never paid it, and nothing is undone).</summary>
+    public bool CostPaid { get; set; }
 }
 
 /// <summary>Cards on the table after a won trial.</summary>
@@ -60,6 +74,9 @@ internal sealed class Offer
     public List<string> Cards { get; set; } = new();
     /// <summary>What each card chose when dealt (same order as <see cref="Cards"/>).</summary>
     public List<string?> Details { get; set; } = new();
+    /// <summary>Each card's cost (a CostDef id, or null) and what it chose.</summary>
+    public List<string?> Costs { get; set; } = new();
+    public List<string?> CostDetails { get; set; } = new();
 }
 
 /// <summary>

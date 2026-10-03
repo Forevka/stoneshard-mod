@@ -88,14 +88,18 @@ internal sealed class CardWindow
         c.Text($"~y~Trial {offer.Trial} is won~/~", Window.CenterX, Window.Y + 16, align: 0);
         c.Text("~gr~Choose one boon, or turn them all down.~/~", Window.CenterX, Window.Y + 36, align: 0);
         int n = offer.Cards.Count;
-        double total = n * CardW + (n - 1) * CardGap, x = Window.CenterX - total / 2;
-        for (int i = 0; i < n; i++, x += CardW + CardGap)
-            DrawCard(i, Catalog.Find(offer.Cards[i]), new Area(x, CardTop, CardW, CardH),
-                _look with { Detail = i < offer.Details.Count ? offer.Details[i] : null });
+        // Three fit at full width; a fourth (Second Look) narrows them.
+        double w = Math.Min(CardW, (Window.W - 40 - (n - 1) * CardGap) / Math.Max(1, n));
+        double total = n * w + (n - 1) * CardGap, x = Window.CenterX - total / 2;
+        for (int i = 0; i < n; i++, x += w + CardGap)
+            DrawCard(i, Catalog.Find(offer.Cards[i]), new Area(x, CardTop, w, CardH),
+                _look with { Detail = At(offer.Details, i) }, Catalog.FindCost(At(offer.Costs, i)), _look with { Detail = At(offer.CostDetails, i) });
         c.Button("discard", "DISCARD ALL", new Area(Window.CenterX - 70, Window.Y + Window.H - 40, 140, 26));
     }
 
-    private void DrawCard(int index, CardDef? card, Area a, CardLook look)
+    private static string? At(List<string?> list, int i) => i < list.Count ? list[i] : null;
+
+    private void DrawCard(int index, CardDef? card, Area a, CardLook look, CostDef? cost, CardLook costLook)
     {
         var c = _canvas;
         c.Board(a);
@@ -112,13 +116,15 @@ internal sealed class CardWindow
         c.Rule(a.X + 16, y, a.W - 32);
         y += 8;
         foreach (var line in card.Gains(look)) y += c.Text($"~lg~{line}~/~", a.X + 14, y, wrap: a.W - 28).H + 4;
-        var costs = card.Costs(look);
+        // The cost dealt with it, or its own.
+        var costs = cost != null ? cost.Text(costLook) : card.Costs(look);
         if (costs.Count > 0)
         {
             y += 6;
             foreach (var line in costs) y += c.Text($"~r~{line}~/~", a.X + 14, y, wrap: a.W - 28).H + 4;
         }
-        c.Button($"take:{index}", "TAKE", new Area(a.CenterX - 60, a.Y + a.H - 38, 120, 26));
+        double bw = Math.Min(120, a.W - 30);
+        c.Button($"take:{index}", "TAKE", new Area(a.CenterX - bw / 2, a.Y + a.H - 38, bw, 26));
     }
 
     private void Sfx(string name)

@@ -44,29 +44,45 @@ tavern door leads into the trials too. Turn it off (`enabled`) to play a normal 
 
 ## Boons and traders
 
-**Cards.** When you come back to the tavern after a won trial, a window lays out three cards. Take
-one, or turn them all down. The offer is part of the run, so a reload offers the same three. A
-card's numbers grow with the won trial's danger tier (1-5), and the stronger cards carry a cost,
-shown in red. The current set is provisional, taken from the research catalogue's starter set
-(`.omc/research/trials-rewards-catalogue.md`):
+**Cards.** When you come back to the tavern after a won trial, a window lays out three cards (four
+after a Second Look). Take one, or turn them all down. The offer is part of the run, so a reload
+offers the same cards. A card is a reward, and a strong reward comes with a cost of about its weight,
+shown in red; numbers grow with the won trial's danger tier (1-5). The set is the research
+catalogue's (`.omc/research/trials-rewards-catalogue.md`) as approved: 51 of 53 entries (raw wound
+statuses as a reward rejected; Stone Skin dropped because it roots the player).
 
-| Card | Gives | Costs |
-|---|---|---|
-| Heavy Purse | 500 crowns per level, x1.0 to x1.8 by tier | - |
-| Hard Bargain | +1 / 1 / 2 / 2 / 3 ability points | the worn armour or jewellery piece named on the card |
-| Vampirism | lifesteal +10 / 10 / 15 / 20 / 20%, for good | evasion -3 / -3 / -5 / -5 / -5 |
-| Night Eyes | night vision, for good | - |
-| Alchemist's Gift | a potion of healing and regeneration (life drain from tier 3, fortitude at 5; two from tier 4) | - |
-| Forbidden Library | treatises of two trees named on the card (tier I, I, II, II, III) | a third tree is closed for the run |
-| Trained Body | +1 / 1 / 2 / 2 / 3 attribute points | Curse of Decay for 3 + tier trials |
-| Light Feet | evasion +3 / 4 / 5 / 6 / 8, for good | - |
-| Deep Reserves | maximum energy +8 / 12 / 16 / 20 / 25, for good | Eternal hangover for 2 trials |
-| Stone Skin (tier 3+) | Stone Skin for good | Mark of the Feast for 3 trials |
-| Unholy Pact | Unholy Blessing for good | Vampiric Corruption for good |
+Rewards:
+- **Crowns and points:** Heavy Purse (500 crowns per level, x1.0-1.8 by tier), Hard-Won Skill
+  (ability points), Tempered Body (attribute points), Trained Body (+1-3 to one attribute), Light
+  Feet (evasion), Deep Reserves (energy), Hawk Eyes (vision), Streetwise (savvy and trap avoidance),
+  Quick Study (+10-20% experience).
+- **Lasting statuses:** Vampirism, Night Eyes, Clear Vision, Sturdiness, Blessing, the four
+  Training regimens, Elusiveness, Exceptional Precision, Battle Rage, Energy Drain, Adrenaline,
+  Unholy Pact; and swaps that trade one stat for another: Glass Cannon, Bulwark, Troll Blood, Quick
+  Hands. Several carry their own cost in their numbers (Elusiveness costs health, Battle Rage
+  raises damage taken).
+- **Another Hero's Way** (tier 3+): a perk of another origin.
+- **Things:** Alchemist's Gift (a potion of healing and regeneration, more at higher tiers, given
+  identified), Forbidden Library (treatises of two trees; always closes a third), Tome of
+  Experience (half a level), Armoury Drop (an enchanted, rare or legendary piece of the trial's
+  tier, one higher from tier 4), Cursed Heirloom (a piece a tier higher, cursed), Field Kit
+  (supplies).
+- **The run:** Merchant's Favour (the traders' next two stocks a tier higher and rarer), Second
+  Look (a fourth card next time), Blood Money (the next trial is half a tier or a tier harder and
+  pays x2 or x2.5).
 
-Permanent effects that do not stack (Vampirism, Night Eyes, Stone Skin, Unholy Pact) are offered
-once per run. A closed tree is greyed in the Abilities window, its skills cannot be learned and its
-treatises make no sense. A cost "for N trials" ends when that many more trials are won.
+Costs: Tithe (25-50% of your crowns), Curse of Decay, Vampiric Corruption (for good), Enervation,
+Weakness, Gluttony, Heart of Darkness, Eternal hangover, Mark of the Feast, Blood Hex, Pestilence,
+Coughing, Weariness (fatigue gain), an Old Wound, Shattered Gear (a worn piece named on the card),
+Forbidden Art (a skill tree closed for the run: greyed in the Abilities window, its skills cannot be
+learned, its treatises make no sense) and Attribute Loss. Timed costs last some trials won (named
+on the card) and end on their own, or when the run ends.
+
+A status a boon keeps is unique to it: no two cards of a run, rewards or costs, use the same one.
+Boon statuses are kept for good and a timed cost for its term: a cure or a dispel does not lift
+them (they are back within a second). A custom status (Elusiveness, the swaps...) sits on one of the
+game's own statuses, so if the game gives that status too, the boon's numbers replace it. Blood
+Money's extra danger stops at the top of tier 5; its pay does not.
 
 **Traders.** From the first won trial on, two traders stand by the innkeeper's counter: a smith
 (weapons, armour, shields, tools) and a merchant (potions, medicine, scrolls, treatises, jewellery,

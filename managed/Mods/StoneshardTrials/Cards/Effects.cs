@@ -24,6 +24,36 @@ internal static class Effects
 {
     public static void Gold(InstanceRef player, int amount) => Scripts.scr_gold_add.CallAs(player, amount);
 
+    public static int GoldCount(InstanceRef player) => (int)Scripts.scr_gold_count.CallAs(player).AsReal;
+
+    /// <summary>Takes crowns, exactly (scr_gold_add with a negative amount adds).</summary>
+    public static void TakeGold(InstanceRef player, int amount)
+    {
+        if (amount > 0) Scripts.scr_gold_write_off.CallAs(player, amount);
+    }
+
+    /// <summary>A perk of the character data's perksList; the game wants its name as a string.</summary>
+    public static bool HasPerk(InstanceRef player, string perk) => World.Truthy(Scripts.scr_playerPerkExists.CallAs(player, perk));
+
+    public static void GivePerk(InstanceRef player, string perk)
+    {
+        if (!HasPerk(player, perk)) Scripts.scr_playerPerkCreate.CallAs(player, perk);
+    }
+
+    /// <summary>
+    /// Experience through the game's own level-up path. Trials lets only kills
+    /// give experience; this call is let through (see <see cref="GrantingXp"/>).
+    /// </summary>
+    public static void Xp(InstanceRef player, double amount)
+    {
+        GrantingXp = true;
+        try { Scripts.scr_get_XP.CallAs(player, Math.Round(amount)); }
+        finally { GrantingXp = false; }
+    }
+
+    /// <summary>Set while a card gives experience, for the kill-only gate.</summary>
+    public static bool GrantingXp { get; private set; }
+
     /// <summary>
     /// Adds to one of the character's saved numbers (global.characterDataMap):
     /// base attributes, "AP" (shown as SP, attribute points), "SP" (shown as AP,
@@ -48,7 +78,7 @@ internal static class Effects
     /// (the card's id), so the mod finds its own buff and never one the game
     /// gave the player of the same kind.
     /// </summary>
-    public static void LongBuff(InstanceRef player, string objectName, string tag, IReadOnlyDictionary<string, double>? numbers = null, double turns = Forever)
+    public static void LongBuff(InstanceRef player, string objectName, string tag, IReadOnlyDictionary<string, double>? numbers = null, bool exact = false, double turns = Forever)
     {
         // Everything that can be missing is looked up before anything is made.
         var obj = GmlObject.Find(objectName) ?? throw new InvalidOperationException($"no {objectName}");
@@ -67,7 +97,7 @@ internal static class Effects
         if (buff.Resolve() is { } inst) Game.CallEvent(alarm, inst);
         // Some buffs set their own duration in that alarm (Curse of Decay: 36 turns); ours wins.
         buff.Set("duration", turns);
-        if (numbers != null) SetNumbers(player, buff, numbers);
+        if (numbers != null) SetNumbers(player, buff, numbers, exact);
     }
 
     public const double Forever = 99999;
@@ -75,9 +105,10 @@ internal static class Effects
 
     /// <summary>
     /// The player's buff of that object made for <paramref name="tag"/>. A load
-    /// makes buffs anew without the tag: the longest-lasting of the kind is
-    /// then ours (the mod's last 99999 turns, against the game's few), and it
-    /// is tagged again.
+    /// makes buffs anew without the tag (and merges two of a kind into one,
+    /// and some reset their own turns: Elusiveness to 7, Adrenaline to 30), so
+    /// an untagged one of the kind is then ours, the longest-lasting first, and
+    /// is tagged again. A run never deals two boons on one status (CardDef.Carriers).
     /// </summary>
     public static InstanceRef? FindBuff(InstanceRef player, string objectName, string tag)
     {
@@ -95,21 +126,20 @@ internal static class Effects
             double d = World.Num(b, "duration");
             if (d > most) (longest, most) = (b, d);
         }
-        if (longest is { } found && most >= Forever / 2) found.Set(TagVar, tag);
-        else longest = null;
+        if (longest is { } found) found.Set(TagVar, tag);
         return longest;
     }
 
     /// <summary>Writes custom numbers onto the player's buff again (after the game refilled them).</summary>
-    public static void Retune(InstanceRef player, string objectName, string tag, IReadOnlyDictionary<string, double> numbers)
+    public static void Retune(InstanceRef player, string objectName, string tag, IReadOnlyDictionary<string, double> numbers, bool exact = false)
     {
-        if (FindBuff(player, objectName, tag) is { } buff) SetNumbers(player, buff, numbers);
+        if (FindBuff(player, objectName, tag) is { } buff) SetNumbers(player, buff, numbers, exact);
     }
 
     /// <summary>Puts the buff back if the player lost it, and its turns back to lasting if they ran down.</summary>
-    public static void KeepBuff(InstanceRef player, string objectName, string tag)
+    public static void KeepBuff(InstanceRef player, string objectName, string tag, IReadOnlyDictionary<string, double>? numbers = null, bool exact = false)
     {
-        if (FindBuff(player, objectName, tag) is not { } buff) LongBuff(player, objectName, tag);
+        if (FindBuff(player, objectName, tag) is not { } buff) LongBuff(player, objectName, tag, numbers, exact);
         else if (World.Num(buff, "duration") < Forever / 2) buff.Set("duration", Forever);
     }
 
@@ -120,11 +150,19 @@ internal static class Effects
     }
 
     // The player's stats take a buff's numbers when its list is marked changed.
-    private static void SetNumbers(InstanceRef player, InstanceRef buff, IReadOnlyDictionary<string, double> numbers)
+    // Exact: a status used as a carrier for the mod's own numbers keeps none of its kind's.
+    private static void SetNumbers(InstanceRef player, InstanceRef buff, IReadOnlyDictionary<string, double> numbers, bool exact = false)
     {
         var data = new DsMap(buff.Get("data"));
         if (!data.Exists) throw new InvalidOperationException("the buff has no data map");
         bool changed = false;
+        // Only numbers go: a key the status itself reads (a flag, a name) stays.
+        if (exact)
+            foreach (var key in data.Keys().Where(k => !numbers.ContainsKey(k) && data.Get(k).IsNumber).ToList())
+            {
+                data.Remove(key);
+                changed = true;
+            }
         foreach (var (key, value) in numbers)
         {
             if (data.Get(key) is { IsNumber: true } v && v.AsReal == value) continue;
@@ -208,6 +246,8 @@ internal static class Effects
         list.Clear();
         foreach (var tag in tags) list.Add(tag);
         Game.CallScriptAs(bottle, bottle, "scr_potion_set_param");
+        // A new potion shows "?" until identified (its data's identified); a gift comes known.
+        data.Set("identified", 1);
         return $"made {data.Get("Name")}";
     }
 

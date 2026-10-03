@@ -93,10 +93,12 @@ bump may break the mod API or the native CoreApi table; each version says so und
   paid, any other given up. A ticket that does not fit a full bag comes once there is room, without
   the game dropping spare maps. The banner sits below the character's status effects.
   After each won trial the tavern offers three **cards** (a window in the game's style): take one
-  or turn them down. Rewards such as crowns, ability or attribute points, lasting lifesteal,
-  evasion, energy, night vision, statuses, potions and treatises, many with a cost (a lost piece
-  of gear, a closed skill tree, a curse for some trials); numbers grow with the trial's tier, and
-  the run keeps the boons, re-applying what the game does not save. From the first win, two real
+  or turn them down. 36 rewards (crowns, points, attributes, lasting statuses and stat swaps, a
+  foreign perk, potions given identified, treatises, gear, experience, and run effects such as a
+  fourth card, harder trials for double pay, or richer traders), and strong ones come with one of
+  17 costs (a tithe, a debuff for some trials, a lost piece of gear, a closed skill tree, an
+  attribute); numbers grow with the trial's tier, and the run keeps the boons, re-applying what the
+  game does not save. From the first win, two real
   **traders** (a smith and a merchant) stand in the tavern and sell, for crowns only, a stock made
   for the last trial's tier after trials 1, 3, 5... Test-host commands `tr.offer`, `tr.deal`,
   `tr.take`, `tr.discard`, `tr.traders`.

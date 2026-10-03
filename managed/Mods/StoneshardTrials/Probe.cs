@@ -10,6 +10,21 @@ internal static class Probe
     public static void Register(Logger log)
     {
         TestHost.Register("tr.dungeons", _ => Dungeons(), "tr.dungeons: every crypt, catacombs and bastion on the world map");
+        TestHost.Register("tr.globals", args =>
+        {
+            // global is instance -5; the names come back as a GML array.
+            string filter = args.Count > 0 ? args[0].GetString()! : "";
+            var names = Game.CallBuiltin("variable_instance_get_names", -5);
+            var found = new List<object>();
+            for (int i = 0, n = Gml.ArrayLength(names); i < n; i++)
+            {
+                string name = Gml.ArrayGet(names, i).ToString();
+                if (filter.Length > 0 && name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                var v = Globals.Get(name);
+                found.Add(new { name, kind = v.Kind.ToString(), value = v.ToString() });
+            }
+            return found;
+        }, "tr.globals [filter]: global variables whose name contains the filter, with their kind and value");
         TestHost.Register("tr.where", _ => new
         {
             cell = new[] { Globals.Get("playerGridX").AsReal, Globals.Get("playerGridY").AsReal },

@@ -61,7 +61,7 @@ internal sealed class Merchants
 
     // The stock the traders are set for (their tier vars reset with a load,
     // so they are written again on every tavern tick) and this stock's salt.
-    private int _stockTier = 1, _salt;
+    private int _stockTier = 1, _salt, _rareBonus;
     private readonly HashSet<string> _unfound = new();
 
     public Merchants(Logger log) => _log = log;
@@ -101,10 +101,11 @@ internal sealed class Merchants
     /// <paramref name="refresh"/>. Answers whether every trader was there and
     /// (when asked) restocked.
     /// </summary>
-    public bool Tend(int stockTier, bool refresh, int seedSalt)
+    public bool Tend(int stockTier, bool refresh, int seedSalt, int rareBonus = 0)
     {
         _stockTier = Math.Clamp(stockTier, 1, 5);
         _salt = seedSalt;
+        _rareBonus = rareBonus;
         bool all = true;
         foreach (var t in Traders)
         {
@@ -245,7 +246,7 @@ internal sealed class Merchants
         SetIfNot(npc, "Equipment_Tier_Max", max);
         SetIfNot(npc, "Equipment_Tier_Max_Base", max);
         SetIfNot(npc, "Equipment_Uncommon_Chance", Math.Min(80, t.Uncommon + 5 * tier));
-        SetIfNot(npc, "Equipment_Rare_Chance", Math.Min(50, t.Rare + 3 * tier));
+        SetIfNot(npc, "Equipment_Rare_Chance", Math.Min(70, t.Rare + 3 * tier + _rareBonus));
         SetIfNot(npc, "Stock_Size", t.StockSize + 0.1 * (_salt % 4));
         if (t.Sells == null) return;
         var want = t.Sells.SelectMany(s => new RValue[] { s.Category, s.Count + (tier - 1) / 2 }).ToList();
