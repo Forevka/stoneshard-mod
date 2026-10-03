@@ -302,6 +302,23 @@ internal sealed class Merchants
         // Never a trader the player has struck down: only while it has health.
         if (World.Num(npc, "HP", 1) <= 0) return;
         if (!World.Truthy(npc.Get("is_life"))) npc.Set("is_life", true);
+        // A return to the tavern can start the town's schedule walk (towards
+        // the Osbrook inn, x 10000): the teleport back puts x right, but the
+        // walk's draw interpolation goes on and draws the sprite far away
+        // (draw_x 9641 for x 455; play-test 2, final check). Stopped here.
+        double x = World.Num(npc, "x"), y = World.Num(npc, "y");
+        if (World.Truthy(npc.Get("is_moving")) || Math.Abs(World.Num(npc, "draw_x", x) - x) > 1 || Math.Abs(World.Num(npc, "draw_y", y) - y) > 1)
+        {
+            npc.Set("is_moving", false);
+            npc.Set("intway", 0);
+            npc.Set("diff_x", 0);
+            npc.Set("diff_y", 0);
+            npc.Set("draw_x", x);
+            npc.Set("draw_y", y);
+            npc.Set("temp_x", x);
+            npc.Set("temp_y", y);
+            npc.Set("force_stop", false);
+        }
         if (World.Truthy(npc.Get("isHidden"))) npc.Set("isHidden", false);
         if (host is { } h && npc.Get("myfloor").ToString() != h.Floor.ToString())
         {
