@@ -250,6 +250,9 @@ public sealed class TrialsMod : CoreMod
                 _intro.Start();
                 Log.Info("intro: starting");
             }
+            // What the trials give every character at the start, once the story is told.
+            if (run.IntroSeen && !run.StartPoints && run.TrialsWon == 0 && !_intro.IsOpen && World.Player is { } fresh)
+                GiveStartPoints(run, fresh);
             // The cards of the last won trial, once the player stands in the tavern.
             if (_cards.IsOpen && World.Player is { } owner0)
             {
@@ -308,6 +311,13 @@ public sealed class TrialsMod : CoreMod
     // here, before it reads that, and only redirected in OnRoomChange.
     private void OnDoorLeaving(HookCall c)
     {
+        // Out of a trial's dungeon onto the surface: refused (see OnTrialExit).
+        if (_enabled && InTrial && LeadsToSurface(c.Self))
+        {
+            c.SkipOriginal();
+            OnTrialExit();
+            return;
+        }
         if (!_enabled || !World.IsHubDoor(c.Self)) return;
         _next = null;
         c.Self.Set("dungeon_level_incr", 0);
@@ -338,6 +348,18 @@ public sealed class TrialsMod : CoreMod
     // world cell set to a dungeon's, is what entering that dungeon's own door does.
     private void OnRoomChange(HookCall c)
     {
+        // The same refusal for a way out that does not leave through a door's
+        // alarm 7: the call is already under way, so the floor it set is put back.
+        // (A ticket's return runs as the player, and a save stays on its floor.)
+        if (_enabled && InTrial && Globals.Get("floor_counter") is { IsNumber: true } next && next.AsReal <= 0
+            && World.Player is { } self && !c.Self.IsNull && World.IdKey(c.Self.Get("id")) != World.IdKey(self.Id))
+        {
+            c.SkipOriginal();
+            Globals.Set("floor_counter", Globals.Get("locationFloor"));
+            Globals.Set("position_tag", World.DungeonArrivalTag);
+            OnTrialExit();
+            return;
+        }
         if (!_enabled || !World.IsHubDoor(c.Self) || _next is not { } choice || CurrentRun() is not { } run || World.Player is not { } player) return;
         _next = null;
         var d = choice.Dungeon;
@@ -553,6 +575,42 @@ public sealed class TrialsMod : CoreMod
     // which drops the cached run, and arrival comes before the next refresh.
     private bool InTrial => CurrentRun()?.Trial is { } t && World.InDungeon && World.Cell == (t.X, t.Y);
 
+    // A door's alarm 7 sets the next floor to the current one plus its own
+    // dungeon_level_incr: at 0 or below it leaves the dungeon for the surface.
+    private static bool LeadsToSurface(Instance door) =>
+        Globals.Get("locationFloor") is { IsNumber: true } here
+        && here.AsReal + World.Num(new InstanceRef(door.Get("id")), "dungeon_level_incr") <= 0;
+
+    // The trial's dungeon keeps the player until the trial is done. Its way
+    // out is refused, with a word; taken again soon after, it gives the trial
+    // up and goes back to the tavern (no pay, no cards), so a trial too hard
+    // to win never traps anyone. Once the master is dead the way out simply
+    // leads back to the tavern, where the trial is paid.
+    private const double GiveUpWindow = 30;
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private double _exitAsked = double.NegativeInfinity;
+
+    private void OnTrialExit()
+    {
+        if (CurrentRun() is not { } run) return;
+        double now = _clock.Elapsed.TotalSeconds;
+        if (run.Won)
+        {
+            World.Say("The way out leads you back to the tavern.");
+            _returnQueued = true;
+        }
+        else if (now - _exitAsked <= GiveUpWindow)
+        {
+            _exitAsked = double.NegativeInfinity;
+            Log.Info($"trial {run.Level} given up at the dungeon's way out");
+            _returnQueued = true;
+        }
+        else
+        {
+            _exitAsked = now;
+            World.Say("~r~The old gods bar the way~/~: this trial is not done. Take the way out again to ~y~give it up~/~ and return to the tavern.");
+        }
+    }
     // ------------------------------------------------------------ the world map
 
     // The world map opens through scr_globalmapCreate. The trials go only where
@@ -826,6 +884,20 @@ public sealed class TrialsMod : CoreMod
 
     // ------------------------------------------------------------ the intro
 
+    // The run's start: 3 ability points and 3 attribute points, once. The run
+    // is saved first, so a failure never gives them twice. ("SP" is what the
+    // Abilities window shows as AP, "AP" what the character sheet shows as SP.)
+    private const int StartAbilityPoints = 3, StartAttributePoints = 3;
+
+    private void GiveStartPoints(Run run, InstanceRef player)
+    {
+        run.StartPoints = true;
+        SaveRun(run);
+        Effects.AddAtr(player, "SP", StartAbilityPoints);
+        Effects.AddAtr(player, "AP", StartAttributePoints);
+        Log.Info($"start of the run: +{StartAbilityPoints} ability, +{StartAttributePoints} attribute points");
+        World.Say($"The old gods grant you ~y~{StartAbilityPoints} ability points~/~ and ~y~{StartAttributePoints} attribute points~/~ for the trials ahead.");
+    }
     // Seen once it is over, however it ended (BEGIN, SKIP or Esc): the run keeps that.
     private void OnIntroDone()
     {
