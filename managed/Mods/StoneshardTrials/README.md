@@ -40,8 +40,8 @@ Rules during the trials:
   written to `Mods\StoneshardTrials\characters\<id>.json`.
 
 The ticket only works inside a dungeon. **A trial's dungeon keeps you until the trial is done**: its
-way out to the surface is refused ("the old gods bar the way"). Take it again within half a minute
-to **give the trial up**: you go straight back to the tavern, unpaid and without cards. Once the
+way out to the surface is refused ("the old gods bar the way"). Take it again a few seconds later,
+within half a minute, to **give the trial up**: you go straight back to the tavern, unpaid and without cards. Once the
 master is dead the way out takes you back to the tavern too, and the trial is paid there, as with
 the ticket (handy when a full bag holds the ticket back). A ticket used in a trial not won brings
 you back too, and gives that trial up. Should you reach the open world anyway (a save from before

@@ -207,6 +207,11 @@ public sealed class TrialsMod : CoreMod
     private void Update()
     {
         _arrival.Tick();
+        if (_liftFadeFrames > 0)
+        {
+            _liftFadeFrames--;
+            Guard("lift fade", DestroyFades);
+        }
         _intro.Update();
         _cards.Update();
         if (_returnQueued)
@@ -314,8 +319,8 @@ public sealed class TrialsMod : CoreMod
         if (_enabled && InTrial && LeadsToSurface(c.Self))
         {
             c.SkipOriginal();
-            Log.Info($"way out refused at its door (alarm 7): {Builtins.object_get_name(c.Self.Get("object_index"))}");
-            OnTrialExit();
+            Log.Info($"way out caught at its door (alarm 7): {Builtins.object_get_name(c.Self.Get("object_index"))}");
+            if (OnTrialExit()) LiftFade();
             return;
         }
         if (!_enabled || !World.IsHubDoor(c.Self)) return;
@@ -352,14 +357,21 @@ public sealed class TrialsMod : CoreMod
         // The same refusal for a way out that does not leave through a door's
         // alarm 7: the call is already under way, so the floor it set is put back.
         // (A ticket's return runs as the player, and a save stays on its floor.)
-        if (_enabled && InTrial && Globals.Get("floor_counter") is { IsNumber: true } next && next.AsReal <= 0
+        // InTrial asks the game (scr_is_in_dungeon), which already answers for
+        // the floor the way out has set; locationFloor still holds the floor
+        // the player stands on (a Bastion's stairs up set floor_counter 0
+        // themselves, with no dungeon_level_incr: play-test, 2026-10-04).
+        if (_enabled && CurrentRun()?.Trial is not null && OnDungeonFloor()
+            && Globals.Get("floor_counter") is { IsNumber: true } next && next.AsReal <= 0
             && !c.Self.IsNull && IsWayOut(c.Self))
         {
             c.SkipOriginal();
             Globals.Set("floor_counter", Globals.Get("locationFloor"));
             Globals.Set("position_tag", World.DungeonArrivalTag);
-            Log.Info($"way out refused at the room change: {Builtins.object_get_name(c.Self.Get("object_index"))}");
-            OnTrialExit();
+            Log.Info($"way out caught at the room change: {Builtins.object_get_name(c.Self.Get("object_index"))}");
+            // The way out has already begun its fade to black (an o_black_overlay):
+            // left alive it covers the screen and holds the game's input.
+            if (OnTrialExit()) LiftFade();
             return;
         }
         if (!_enabled || !World.IsHubDoor(c.Self) || _next is not { } choice || CurrentRun() is not { } run || World.Player is not { } player) return;
@@ -579,6 +591,8 @@ public sealed class TrialsMod : CoreMod
 
     // Only a door or stairs is a way out: never the player (a ticket's
     // return), a save (o_autosave_trigger) or anything else changing rooms.
+    private static bool OnDungeonFloor() => Globals.Get("locationFloor") is { IsNumber: true } here && here.AsReal > 0;
+
     private static bool IsWayOut(Instance self)
     {
         if (Objects.o_transitions_door.Object is not { } doors) return false;
@@ -601,14 +615,19 @@ public sealed class TrialsMod : CoreMod
     // to win never traps anyone. Once the master is dead the way out simply
     // leads back to the tavern, where the trial is paid.
     private const double GiveUpWindow = 30;
+    // A try this soon after a refusal does not count: stepping back onto the
+    // stairs' tile uses them again (play-test: a move 4 s after a refusal gave
+    // a trial up unasked). Giving up takes a deliberate second try.
+    private const double GiveUpDelay = 5;
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     private double _exitAsked = double.NegativeInfinity;
     // Which trial was refused: a load or another character starts afresh.
     private string? _exitAskedFor;
 
-    private void OnTrialExit()
+    // Answers whether the player was kept in (refused), not sent to the tavern.
+    private bool OnTrialExit()
     {
-        if (CurrentRun() is not { } run) return;
+        if (CurrentRun() is not { } run) return false;
         double now = _clock.Elapsed.TotalSeconds;
         string trial = $"{run.Id}:{run.Level}:{_runPlayer}";
         if (_exitAskedFor != trial) _exitAsked = double.NegativeInfinity;
@@ -617,18 +636,44 @@ public sealed class TrialsMod : CoreMod
         {
             World.Say("The way out leads you back to the tavern.");
             _returnQueued = true;
+            return false;
+        }
+        else if (now - _exitAsked < GiveUpDelay)
+        {
+            // Too soon to be a decision: refused again, the first refusal's window kept.
+            World.Say("~r~The old gods bar the way~/~. Take the way out again in a moment to ~y~give the trial up~/~.");
+            return true;
         }
         else if (now - _exitAsked <= GiveUpWindow)
         {
             _exitAsked = double.NegativeInfinity;
             Log.Info($"trial {run.Level} given up at the dungeon's way out");
             _returnQueued = true;
+            return false;
         }
         else
         {
             _exitAsked = now;
             World.Say("~r~The old gods bar the way~/~: this trial is not done. Take the way out again to ~y~give it up~/~ and return to the tavern.");
+            return true;
         }
+    }
+
+    // A refused way out's fade: destroyed now and on the next frames (it may
+    // be made after the room change is called), so the player is not left in
+    // the dark with no control (play-test, 2026-10-05: Crypt and Church stairs).
+    private int _liftFadeFrames;
+
+    private void LiftFade()
+    {
+        _liftFadeFrames = 10;
+        DestroyFades();
+    }
+
+    private static void DestroyFades()
+    {
+        if (Objects.o_black_overlay.Object is not { InstanceCount: > 0 } fades) return;
+        foreach (var f in fades.Instances().ToList()) Builtins.instance_destroy(f.Id);
     }
     // ------------------------------------------------------------ the world map
 
