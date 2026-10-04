@@ -1,6 +1,8 @@
 # Changelog
 
-All notable changes to CoreLoader are documented here. The format follows
+All notable changes to CoreLoader (the loader: the native `version.dll`, the mod API, tools and test
+mods) are documented here. The mods that ship with it have their own changelog,
+[`managed/Mods/CHANGELOG.md`](managed/Mods/CHANGELOG.md). The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the version is 0.x, a minor
 bump may break the mod API or the native CoreApi table; each version says so under **Changed**.
@@ -8,6 +10,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
 ## [Unreleased]
 
 ### Changed
+
 - **Breaking:** **the loader is now called Lodestone for players.** It installs to `<game>\Lodestone\` (was
   `CoreLoader\`), logs to `Lodestone\Logs\lodestone.log`, and its overlay window, log lines and the
   shipped mods' author read "Lodestone". The assembly, namespace, API, template and `CORELOADER_*`
@@ -28,18 +31,11 @@ bump may break the mod API or the native CoreApi table; each version says so und
   help links (CL0001-CL0005) now open each rule's own section there.
 
 ### Added
+
 - **A documentation site** (`docs-site/`, published to GitHub Pages): a mod-author guide, a cookbook
   of task recipes taken from the shipped mods, walkthroughs of HelloMod, Console and FastTravel, the
   API, analyzer and test host reference, and a "Loader internals" section on how the loader finds the
   game's code, hooks it, hosts .NET and how hook points were found.
-- **StoneshardHarness**, a development mod that lets a script or an agent play Stoneshard over the
-  test host without screenshots. `hx.state`, `hx.player`, `hx.enemies`, `hx.npcs`, `hx.objects`,
-  `hx.inventory`, `hx.log`, `hx.dialogue` and `hx.buttons` describe what the player sees, with
-  desktop-pixel positions; `hx.move`, `hx.goto`, `hx.attack`, `hx.interact`, `hx.use`, `hx.wait`,
-  `hx.say`, `hx.press` and `hx.key` act through the game's own scripts and events, and `hx.result`
-  reports what each did (turns, HP before and after, the target's fate, new log lines). `hx.click` is
-  the mouse fallback, refused unless the game is in the foreground. Clients: `tools\stoneshard.ps1`
-  (compact tables) and `tools\stoneshard_harness.py`. See `managed/Mods/StoneshardHarness/README.md`.
 - `[assembly: CoreModAnyGame]`, the explicit declaration for a mod that works in any game.
 - `CoreModGame` also accepts the game's interop namespace (`Dwarf_Eats_Mountain`) as its name.
 - Analyzer rules **CL0004** (error: a mod with `[CoreModInfo]` but no game declaration) and
@@ -53,104 +49,14 @@ bump may break the mod API or the native CoreApi table; each version says so und
   creates a draft release; interop-based mods are added from a machine with the game.
 - `INSTALL.md`: a player's guide to installing Lodestone and mods from a release, updating,
   uninstalling and troubleshooting.
-- **Reliquary** (Stoneshard): six artifacts that ask for something back, one per family of the
-  Stoneshard Reliquary design - Stavebound Ember, Gorgoneion, Wolf's Heart, Copper Ring of Faith,
-  Grafted Hand of the Hanged Man, Pilgrim's Millstone. Written only against the generated interop.
-  Relics are vanilla carrier items tagged in their saved `data` map, with placeholder icons; they work
-  from the bag (the ring when worn), show a live status line in the game's own tooltip, report in the
-  game's action log, and activate by hovering one and pressing a key (`activateKey`, default U).
-  Test-host commands `reliq.*`.
-  - The other seventeen: Faceless Mirror, Split Quiver, Cinder Rosary, Echoing Bell, Debtor's Knot,
-    Weeping Candle, Pallbearer's Coin, Vessel of Borrowed Years, Reliquary of Saint Mardun, Usurer's
-    Scale, Sundered Gate, Censer of the Drowned Choir, Lodestone Idol, Surveyor's Chain, Iron Lung,
-    Oath-Stone of the Deep Road, Sated Worm. Relics can install their own hooks (`Relic.Install`),
-    on scripts or object events.
-  - Pallbearer's Coin and the Vessel of Borrowed Years save you from bleeding out too, not only from
-    killing hits (`Relic.OnPlayerDying`, run as `scr_pure_damage` returns).
-  - The Censer of the Drowned Choir is not registered for now: neither of the game's statuses it used
-    stops abilities, and one of them crashed the game when it expired.
-- **FastTravel** (Stoneshard): fast travel from the world map. The map's own controls bar gains a
-  "[F] - Fast Travel" entry (click it, or press `toggleKey`); while the mode is on a banner in the
-  game's style says what a click on the hovered cell would do, and clicking land you have visited, or
-  a cell next to one, travels there the way a border crossing does. A blocked arrival is moved to the
-  nearest free cell joined to the room's edges; travel starts only from the open world (not inside a building or dungeon) and is refused with enemies nearby. Test-host commands `ft.*`.
-- **StoneshardTrials** (Stoneshard, proof of concept): a roguelike loop in the spirit of BG3's
-  *Trials of Tav*. A new Adventure's Osbrook tavern is the hub, with a banner saying to leave it. Its
-  street door opens onto a crypt, catacombs or bastion whose boss still lives, entered the way the
-  dungeon's own entrance enters it. Its danger tier comes from the character: power is half its
-  level tier and half the average tier (plus rarity) of its five best worn items, pressure grows a
-  quarter tier per trial up to one, and the result is rounded up past a 0.4 fraction; the nearest
-  untouched dungeon is taken. A run is finite: once every dungeon's master is dead the run is
-  complete and the world map opens again. Killing the
-  trial dungeon's boss or named miniboss puts one Trial Ticket in the bag; using it returns you to
-  the tavern for the next trial, and the innkeeper pays crowns for it (150 for tier 1, 100 more per
-  tier, a tenth more per trial behind you). During the trials the world map stays shut (key, HUD
-  button and paper maps), so travel mods cannot skip them, and experience comes only from kills,
-  scaled by a setting. Progress is per character and part of its save (a player attribute), so
-  loading an older save brings back that save's trial; a readable copy goes to
-  `Mods\StoneshardTrials\characters\`. While enabled it applies to every save, not only new ones.
-  Endless runs (setting `runMode`) remake a won single-floor dungeon at the wanted tier when no
-  untouched one fits: its saved floors are forgotten and its tier, recommended levels and master
-  (from the game's own tables) rewritten. A `difficulty` setting (Easy/Normal/Hard/Brutal) shifts
-  the wanted tier (what it and Blood Money add stops 1.5 past the character's level tier), and a trial whose danger runs past its dungeon's tier (beyond the 0.4 the rounding
-  allows) adds copies of the dungeon's toughest enemies and, a tier past, an elite master with one of
-  the game's unused boss prefixes (Persistent, Powerful, Resistant, Nimble, Leeching, Watchful):
-  half again its health plus the prefix's stats, as lasting statuses the game saves. Past tier 5 an
-  endless run makes every enemy stronger with each tier-5 win, and a remade dungeon's master gets a
-  name fitting its new kind (never as a tier 3 crypt or a
-  tier 3-5 bastion, whose generation fails). A master that falls by another hand pays half. Payout crowns that a full bag drops are announced. The game autosaves on
-  arriving in a trial and when one is settled in the tavern (setting `autosave`). A trial
-  left by the dungeon's stairs is settled when the player walks back into the tavern: a won one is
-  paid, any other given up. A ticket that does not fit a full bag comes once there is room, without
-  the game dropping spare maps. The banner sits below the character's status effects.
-  After each won trial the tavern offers three **cards** (a window in the game's style): take one
-  or turn them down. 36 rewards (crowns, points, attributes, lasting statuses and stat swaps, a
-  foreign perk, potions given identified, treatises, gear, experience, and run effects such as a
-  fourth card, harder trials for double pay, or richer traders), and strong ones come with one of
-  17 costs (a tithe, a debuff for some trials, a lost piece of gear, a closed skill tree, an
-  attribute); numbers grow with the trial's tier, and the run keeps the boons, re-applying what the
-  game does not save. Cards can be rare or legendary (a reward a tier or two higher; a card whose numbers do not grow
-  with the tier is never rare), and a hand can be rerolled for crowns. A short animated lore intro (placeholder art, with an art brief in
-  `Intro\SLIDES.md`) plays the first time a character stands in the tavern. From the first win, three real
-  **traders** (a smith, a merchant with ready-made potions, and a jeweller) stand in the tavern and
-  sell, for crowns only, a stock made for the last trial's tier after trials 1, 3, 5... The
-  innkeeper heals and treats wounds for crowns, and a chest serves as a stash. Cards that act on the trials ahead (Second Look,
-  Blood Money, Merchant's Favour) are not offered on the win that ends a finite run. Test-host
-  commands `tr.offer`, `tr.deal`, `tr.take`, `tr.discard`, `tr.reroll`, `tr.traders`, `tr.intro`.
-  Settings `enabled`, `xpScale`, `goldScale`, `difficulty`, `runMode`, `autosave` (also in the MODS window);
-  test-host commands `tr.*`.
 - `ModSettings`: mods declare settings for the player (`Toggle`, `Slider`, `Choice`) bound to keys of
   their `Config`. The loader keeps the list and a front end draws it; registrations go with the mod.
-- **ModMenu** (Stoneshard): a **MODS** entry in the pause menu that opens a window, drawn with the
-  game's own board, buttons and text, for every setting registered through `ModSettings`. Test-host
-  commands `mm.*`.
-- **TavernGames** (Stoneshard): dice and card games against tavern NPCs, for crowns. Talk to an
-  innkeeper, a drunk, a sellsword or anyone friendly inside a tavern and their conversation offers a
-  line asking for a game ("Fancy a game? Dice, or cards?") just above the goodbye; it opens a table drawn with the game's own
-  board, buttons, colour text and sounds (a play key, `playKey`, can be set as well; off by default).
-  Pick **Poker Dice** (five dice, a round of betting, one reroll) or **Twenty-One** (the NPC deals from
-  a deck on the table - cards slide out and turn over - and draws to a total set by its temperament)
-  or **Thimblerig** (find the ball under the shuffled cups: a five-level ladder, each won level offering
-  the next with more cups - three up to six - more and faster swaps, two pairs at once near the top,
-  and a stake of x1, x2, x3, x5 then x8), **Arm Wrestling** (a tug-of-war won with a timing check: press
-  Space while the cursor is in a zone as wide as your STR against theirs; it costs real Fatigue) or a
-  **Drinking Contest** (mug for mug until someone falls: you down each by stopping a marker that sways
-  more the drunker your character really is; every mug is the game's own Drunkenness, with its
-  confusion, vomiting and sleep, and deep in it you may pass out on the spot) and a stake. Opponents are cautious, steady or reckless by trade, and their
-  purses run dry and refill over turns. The stake is held by the table from the moment it is committed,
-  so walking away folds and a loss is never dodged; a round dropped by a room change or hot reload
-  hands it back. Games plug into a small framework (`Table`, `MiniGame`, `Session`); a game can offer ways to carry on
-  after a round at a stake of its own (`MiniGame.Continuations`). Test-host commands
-  `tg.*`.
 - **Interop:** an `InstanceVars` class with GameMaker's built-in instance variables (`x`, `y`, `id`,
   `object_index`, `sprite_index`, ...), which the variable harvest never sees; every object's `Vars`
   class repeats them (objects never seen live have no `Vars`; use `InstanceVars`). The interop stamp now carries a format number, so installed interops
   regenerate when the generated code changes shape.
 - **Analyzers:** instance fields of a `ref struct` no longer raise CL0001/CL0002 - it cannot outlive the call that made it. Static fields of one still do.
 - `ScriptRef.CallAs(InstanceRef self, args)`: run a stub script as an instance held by id.
-- **ScriptSpy** over the test host: `spy.watch <function> [variable]`, `spy.read`, `spy.clear`,
-  `spy.unwatch`. Rows name the object the call ran as, and can track a variable of self before and
-  after the call (which script actually changes HP, say).
 - `deploy-coreloader.ps1` also installs a mod's project dependencies from its `deps.json`, such as a
   generated `<Game>.Interop.dll`.
 - **UI round 3:** `UI.BeginCombo`/`EndCombo`, `UI.Combo`, `UI.Selectable` (optionally overlap-friendly),
@@ -186,14 +92,6 @@ bump may break the mod API or the native CoreApi table; each version says so und
   found by pattern and proven on the live game (the current instance's own id must resolve to it, and
   bogus ids to nothing); until then, or if the proof fails, `Resolve` returns null. CoreApi
   `instance_from_id`.
-- **`StoneshardCheats` mod:** the native Stoneshard cheat tabs, ported to C#. Tabs: Stats, Items, Potions,
-  Character, Body, Enemies and Saves.
-  - Character scripts run as the player. The player instance comes from a hook on `o_player`'s Step event,
-    and is dropped half a second after that event stops running.
-  - Potions are rewritten inside `o_inv_bottle`'s Alarm 0, the only place the potion scripts work. A build
-    that sees no bottle within 2 s gives up, rather than rewriting the next bottle the game makes.
-  - The item catalogue is read from the live object table and from the game exe's own CSV rows.
-  - The save folder is backed up once per session, to `<game>\Lodestone\save-backups`, before the first cheat.
 - **Mod analyzer (`CoreLoader.Analyzers`):** compile-time warnings for value-lifetime mistakes. CL0001 is
   an `RValue` kept in a field or auto-property. CL0002 is an `Instance` or `HookCall` kept in one.
   A lambda that is stored, queued or registered as a callback (`Hooks.Before`/`After`/`NextBefore`/
@@ -241,12 +139,10 @@ bump may break the mod API or the native CoreApi table; each version says so und
   how to test another game.
 
 ### Changed
+
 - **Breaking:** CoreApi version 10 (UI round 3, `last_gml_error`, `instance_from_id`). The managed
   runtime requires this exact version.
 - The overlay's top-level tabs are Mods, Symbols and Status. Symbols and Status used to sit under Debug.
-- `StoneshardCheats` uses `DsMap`/`DsList`, `Hooks.NextAfter` and `ObjectTable` instead of its own copies.
-  The potion hook is only installed while a build is armed.
-- StoneshardCheats: an action's result lines now appear under its echo in the panel.
 - Native GML calls with no explicit self use the current self only. The self captured by the remote
   command file is gone.
 - The data-dir environment variable is `CORELOADER_DATA_DIR`. `SSMOD_DATA_DIR` is still read as a
@@ -257,29 +153,19 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - `tools/re` takes the game exe from `--exe` or `RE_GAME_EXE` (then `STONESHARD_DIR`) instead of
   assuming Stoneshard. Its caches go to `tools/re/cache/<exe name>/` (or `RELIB_CACHE`), so one game's
   tables are never read for another.
-- **Console:** freezes live in one shared list (globals and any number of instances) and survive a
-  change of the Inspector's selection. New Objects tab (object browser with live counts, instance
-  paging, and a search of every live instance for a variable name) and Globals tab (edit and freeze),
-  and the `where`, `frozen` and `unfreeze all` commands.
 - The interop generator and the variable harvest share the cached `ObjectTable`: one object scan per
   session, spread over frames. The table starts as soon as the runtime asks for it once the game's
   assets are loaded, even before mods start, and interop waits for it without spending its wait while
   the table cannot progress. The scan is only finished in one frame as a fallback (the table still not
   done after ~10 s of work, or a minute overall), or when a mod calls `GmlObject.All`/`Children` or
   `ObjectTable.Complete` before it is ready.
-- **Console:** `where` answers "object table not ready" until the table is built, instead of scanning
-  in one frame. The Objects tab drops its selection when a pick or `inspect` selects another instance.
-  Selecting an instance resets the variable filter unless a search set it. A frozen global the game
-  removed is listed as inactive. A variable search skips instances and variables the game refuses to
-  read.
-- StoneshardCheats resolves the player by id where the runtime's lookup is proven, so cheats keep
-  working while the game is paused; the o_player Step hook remains the fallback.
 - `deploy-coreloader.ps1 -Live` installs into a running game: locked files are renamed to `*.old` (a
   timestamped `*.old` while an earlier one is still locked), and the new build is used from the next
   launch. Mods it copies are hot-reloaded at once, as before. The runtime is installed before
   `version.dll`, and without `-Live` a running game stops the deploy before anything is copied.
 
 ### Removed
+
 - **The native Stoneshard tools.** `version.dll` no longer contains any game-specific code.
   - The Cheats, Enemies, Loot, Speed, Saves and Console tabs are replaced by the `StoneshardCheats`,
     `StoneshardBoost` and `SpeedControl` mods, and by the C# Console mod and its Inspector.
@@ -288,7 +174,6 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - The remote command file (`CORELOADER_REMOTE`, `debug-cmd.txt`) is removed.
   - The player tracker, the weapon recorder, and self-test phase B (which needed the player) are removed.
   - zlib is no longer a build dependency.
-- The `InstanceInspector` and `GlobalsEditor` mods: their features are in the Console mod.
 - The `ReflectionProbe`, `VarProbeMod` and `CoexistProbe` test mods.
 - The CMake `deploy` and `deploy-live` targets, the `STONESHARD_DIR` option and `tools/deploy.ps1`
   (replaced by `deploy-coreloader.ps1 -Live`).
@@ -297,6 +182,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - `tools/savepeek.py` and 20 one-off or duplicate reverse-engineering scripts in `tools/re`.
 
 ### Fixed
+
 - **The overlay window keeps its place when the game resizes its window.** A game that opens a small
   window and only then goes fullscreen (Stoneshard starts at 970x540) pulled the overlay to that
   small window's edge, where it stayed for the session. The loader now remembers the saved or dragged
@@ -325,19 +211,13 @@ bump may break the mod API or the native CoreApi table; each version says so und
   loader says the game is not YYC, instead of suggesting that the table shape changed. Mods start at
   once instead of after the 30 s asset wait. Interop generation and game drawing stay off instead of
   logging failures. The game itself runs as before.
-- **StoneshardCheats, Items → "To inventory"** works. It never did, natively either: `scr_inventory_add_weapon`
-  takes the inventory as its self, not the player (the game calls it inside `with (o_inventory)`). It now
-  runs as the `o_inventory` instance itself (not a child object's instance), with the player as other,
-  as `with (o_inventory)` does. The recovered GML error ("invalid with reference" in
-  `scr_inventory_get_containers`) is what pointed at it.
 - A GML call that failed with a thrown error no longer leaks the thrown value: the guard that catches it
   skips its destructor, so the loader releases it once after reading the message.
-- The test host's `cheats.potion` answered the wrong build number when the bottle's alarm ran during the
-  give itself, so a client waiting for the result timed out.
 
 ## [0.4.0] - 2026-09-29
 
 ### Added
+
 - **Runtime content:** `Content.AddSprite` / `ReplaceSprite` (PNG, JPEG or GIF) and `Content.AddSound` (OGG).
   Everything is owned by the mod that added it and released on unload.
   - A replaced sprite gets its original image back.
@@ -345,17 +225,11 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - **`GameDraw.OnGui`:** draws into the game's own GUI layer each frame.
   - It uses the game's Draw GUI event on a live object, and moves to another object when the room changes.
   - Draw state is restored after mod handlers run.
-- **Console Inspector tab:** click any instance in the game to inspect it.
-  - It shows the object, its parents and every variable.
-  - Variables can be edited with GML expressions, frozen, and expanded as trees.
-  - A selection can be dumped to a file or the clipboard.
-  - A read-only code view lists each event's calls (scripts, events and builtins) and strings, with a callers search.
-- New console commands: `inspect`, `dump`, `code` and `callers`.
 - `CoreLoader.Input`: pick mode. The next click outside the overlay is taken, and the game never sees it.
 - `CoreLoader.Code`: `Describe` and `FindCallers`. Builtins are named even where compiled code calls
   them through the runner's helper by registry index.
 - `UI.TreeNode` / `TreePop`, `UI.SetClipboard`, `UI.InputTextEnter`, `UI.Guarded`.
-- `ContentDemo` mod and `StructProbe` test mod.
+- `StructProbe` test mod.
 - Visual Studio support for interop-based projects:
   - `<InteropGame>` finds a game's generated interop automatically, using the per-machine
     `CoreLoader.user.props` or `CORELOADER_GAME_DIRS`.
@@ -364,6 +238,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - Logs rotate to `coreloader.prev.log`; identical repeated lines are rate-limited.
 
 ### Changed
+
 - **Breaking:** CoreApi version 9. It adds pick mode, tree nodes, the clipboard, `builtin_address` and
   `builtin_name_at`. The managed runtime requires this exact version.
 - **Breaking:** `Code.FindCallers` takes a millisecond budget instead of a function count.
@@ -379,6 +254,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
   so the game no longer freezes.
 
 ### Fixed
+
 - **Leaks:**
   - Each native variable access leaked one string.
   - Legacy tools handed the game buffers that were later freed.
@@ -397,8 +273,6 @@ bump may break the mod API or the native CoreApi table; each version says so und
   - The value self-test proves copy and free on plain values too.
   - The self-test no longer frees its own characters.
   - `COPY_RValue__Post` runtimes (Dwarf Eats Mountain) are supported.
-- **Console and Inspector cannot disable themselves:** bad hex literals, nesting over 64 levels,
-  `obj[expr]` evaluated twice, and handler errors are all caught.
 - **Input:** pick mode swallows only its own button release; the Insert key ignores auto-repeat;
   key and button releases always reach the game.
 - **Rendering:**
@@ -414,34 +288,35 @@ bump may break the mod API or the native CoreApi table; each version says so und
 ## [0.3.0] - 2026-09-29
 
 ### Added
+
 - Hot reload: mods load from memory into collectible contexts, and a rebuilt dll is swapped in between frames.
 - Shared hooks: native and managed users share one detour per function, and `HookCall.CallOriginal` is available.
 - Value ownership: a per-frame autorelease pool, `Values.Keep` / `Free` / `Copy`, and a value-lifetime self-test.
-- Universal in-game **Console** mod: GML-style expressions, `find`, `objects`, `vars`, `globals`, `hook`.
 - Typed interop: script argument counts read from compiled code (`ScriptRef1..8`), and
   `Objects.<obj>.Vars.<name>` harvested from live instances.
 
 ### Changed
+
 - **Breaking:** CoreApi version 8 (UI round 2, `memory_read`, value free/copy, hook enable).
 
 ## [0.2.0] - 2026-09-28
 
 ### Added
+
 - Support for 2024 GameMaker runtimes: static string initialisers, 24-byte builtin rows,
   hook-observed self, and typed asset references.
 - The shared thunk hook engine, and `[HookBefore]` / `[HookAfter]` attributes.
 - Interop generation: `<Game>.Interop` with scripts, objects and events, builtins, assets, and `codemap.json`.
-- Mods:
-  - tools: ScriptSpy, GlobalsEditor, InstanceInspector, SpeedControl;
-  - game-specific: DwarfBoost, StoneshardBoost.
 - The `coreloader-mod` project template, and `tools\deploy-coreloader.ps1`.
 
 ### Changed
+
 - **Breaking:** the loader is branded generically (CoreLoader); logs and data live under `<game>\CoreLoader\`.
 
 ## [0.1.0] - 2026-09-28
 
 ### Added
+
 - .NET 10 hosted inside the game through `version.dll`. C# mods are loaded from `Mods\`, with
   isolated UI faults and a versioned C ABI (`CoreApi`).
 - The health check accepts any YYC game, not only Stoneshard.

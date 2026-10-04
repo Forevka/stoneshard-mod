@@ -18,7 +18,8 @@ Run the commands on this page from the repository root, in PowerShell.
 | `managed/CoreLoader.Analyzers/` (and `.Tests`) | The Roslyn analyzer every mod compiles with. See [Analyzers](../modding/reference/analyzers.md). |
 | `tools/` | Deploy, run, test-host and save-backup scripts; `tools/re/`, the offline reverse-engineering toolkit (see [How we found what to hook](./re-toolkit.md)). |
 | `docs-site/` | This documentation site. |
-| `CHANGELOG.md` | Every user-visible change. |
+| `CHANGELOG.md` | Every user-visible change to the loader (native, API, tools, test mods). |
+| `managed/Mods/CHANGELOG.md` | Every user-visible change to the shipped mods. |
 
 ## Building {#building}
 
@@ -231,15 +232,16 @@ shown in the log and on the overlay's Loader tab.
 
 - While on 0.x, a breaking API or ABI change bumps the **minor** version; a fix bumps the patch.
 - Bumping `kCoreApiVersion` is breaking for anything built against the old table.
-- Every change users or mod authors can see goes under `## [Unreleased]` in `CHANGELOG.md`. A release moves that
-  section under a version heading and bumps the csproj `<Version>`.
+- Every change users or mod authors can see goes under `## [Unreleased]`: in `CHANGELOG.md` for the loader, in
+  `managed/Mods/CHANGELOG.md` for a shipped mod. A release moves both sections under its version heading and
+  bumps the csproj `<Version>`.
 
 ## Releasing {#releasing}
 
 Pushing a tag `v<Version>` that matches the csproj runs `.github/workflows/release.yml`. It builds the native
 loader, the managed runtime and the mods, runs the analyzer tests, packs the zips with
-`tools\package-release.ps1 -BundleRuntime`, and creates a **draft** release with the matching `CHANGELOG.md`
-section as its notes. A tag that does not match `<Version>` fails the workflow.
+`tools\package-release.ps1 -BundleRuntime`, and creates a **draft** release whose notes are the matching section
+of `CHANGELOG.md`, followed by the same version's section of `managed/Mods/CHANGELOG.md` under **Mods**. A tag that does not match `<Version>` fails the workflow.
 
 Mods built against a generated interop cannot be built on the CI runner, which has no game. Add them from a
 machine with Stoneshard installed, then publish the draft:

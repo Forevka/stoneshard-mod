@@ -74,7 +74,8 @@ const config: Config = {
           items: [
             {label: 'GitHub', href: repo},
             {label: 'Installing (players)', href: `${repo}/blob/main/INSTALL.md`},
-            {label: 'Changelog', href: `${repo}/blob/main/CHANGELOG.md`},
+            {label: 'Changelog (loader)', href: `${repo}/blob/main/CHANGELOG.md`},
+            {label: 'Changelog (mods)', href: `${repo}/blob/main/managed/Mods/CHANGELOG.md`},
           ],
         },
       ],
