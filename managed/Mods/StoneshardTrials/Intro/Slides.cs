@@ -1,7 +1,7 @@
 namespace StoneshardTrials.Intro;
 
 /// <summary>One picture of the intro and what is said over it.</summary>
-/// <param name="File">The picture, relative to the intro's slides folder (16:9, 1920x1080).</param>
+/// <param name="File">The picture, relative to the intro's slides folder (16:9; scaled to cover the screen).</param>
 /// <param name="Title">Shown in place of the picture when it is missing.</param>
 /// <param name="Lines">Narration in the game's colour text, revealed one line after the other.</param>
 /// <param name="Top">Fallback gradient colour at the top, 0xRRGGBB.</param>
@@ -12,14 +12,15 @@ namespace StoneshardTrials.Intro;
 internal sealed record Slide(string File, string Title, string[] Lines, int Top, int Bottom, double PanX, double PanY, bool ZoomIn);
 
 /// <summary>
-/// The intro's story, in order. The wording here and in SLIDES.md (the art
-/// brief) is the same: change both together.
+/// The intro's story, in order. The pictures (intro_1.jpg ... intro_6.jpg) are
+/// not in git: they are put in Intro\slides before a build, and a missing one
+/// is drawn as a gradient with its title.
 /// </summary>
 internal static class Slides
 {
     public static readonly Slide[] All =
     {
-        new("01_the_road.png", "The Road North",
+        new("intro_1.jpg", "The Road North",
             new[]
             {
                 "Aldor is bleeding. Plague in the south, war in the north, and on every road a sellsword selling his blade.",
@@ -27,7 +28,7 @@ internal static class Slides
             },
             0x222A3A, 0x0A0C12, PanX: 0.8, PanY: 0.1, ZoomIn: true),
 
-        new("02_the_taking.png", "The Green Fire",
+        new("intro_2.jpg", "The Green Fire",
             new[]
             {
                 "On the third night your campfire burned green, and the stars went out one by one.",
@@ -35,7 +36,7 @@ internal static class Slides
             },
             0x0C1A10, 0x030604, PanX: -0.4, PanY: -0.5, ZoomIn: true),
 
-        new("03_the_old_gods.png", "The Old Gods",
+        new("intro_3.jpg", "The Old Gods",
             new[]
             {
                 "Aldor has forgotten their names. They have not forgotten Aldor. They are hungry, and they are bored.",
@@ -43,7 +44,7 @@ internal static class Slides
             },
             0x1A0E24, 0x06040A, PanX: 0, PanY: -0.7, ZoomIn: false),
 
-        new("04_the_tavern.png", "Osbrook Tavern",
+        new("intro_4.jpg", "Osbrook Tavern",
             new[]
             {
                 "You woke in Osbrook, in a tavern that stands between worlds. The fire is warm and the ale is real.",
@@ -51,7 +52,7 @@ internal static class Slides
             },
             0x1E140E, 0x0A0604, PanX: 0.5, PanY: 0, ZoomIn: true),
 
-        new("05_the_doors.png", "Every Door a Trial",
+        new("intro_5.jpg", "Every Door a Trial",
             new[]
             {
                 "Every door out of the tavern leads to a trial: a crypt, a camp, a ruin no map remembers.",
@@ -59,7 +60,7 @@ internal static class Slides
             },
             0x12181C, 0x06080A, PanX: -0.7, PanY: 0.2, ZoomIn: false),
 
-        new("06_the_price.png", "Blood and Coin",
+        new("intro_6.jpg", "Blood and Coin",
             new[]
             {
                 "Their gifts are never free. Every boon is paid for in ~r~blood~/~ or in ~y~coin~/~.",

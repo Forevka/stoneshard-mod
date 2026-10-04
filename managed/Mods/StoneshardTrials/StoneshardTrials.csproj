@@ -6,9 +6,10 @@
     <InteropGame>StoneShard</InteropGame>
   </PropertyGroup>
 
-  <!-- The intro's pictures ship in Mods/StoneshardTrials/Intro/slides (Intro\make_placeholders.py makes the stand-ins). -->
+  <!-- The intro's pictures ship in Mods/StoneshardTrials/Intro/slides. They are not in git (see .gitignore):
+       put intro_1.jpg ... intro_6.jpg in Intro\slides before building; without them the intro draws gradients. -->
   <ItemGroup>
-    <None Include="Intro\slides\*.png" Link="StoneshardTrials\Intro\slides\%(Filename)%(Extension)"
+    <None Include="Intro\slides\*.jpg;Intro\slides\*.png" Link="StoneshardTrials\Intro\slides\%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

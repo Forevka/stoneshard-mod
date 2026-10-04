@@ -51,9 +51,10 @@ tavern door leads into the trials too. Turn it off (`enabled`) to play a normal 
 
 **The intro.** The first time a character stands in the tavern with the trials on, a short
 slideshow tells how the old gods took them for their trials (six slides; click or Space to go on,
-SKIP or Esc to skip). The pictures are placeholders for now: `Intro\SLIDES.md` is the art brief,
-with each slide's narration, a description and an image-generation prompt; dropping real 1920x1080
-PNGs with the same names into `Intro\slides\` replaces them. A character already on its trials
+SKIP or Esc to skip). Its pictures, `intro_1.jpg` to `intro_6.jpg` in `Intro\slides\`, are not
+kept in git: put them there before building or packaging the mod (the folder is ignored), and they
+ship in the mod's folder. A missing picture is drawn as a gradient with the slide's title, and any
+16:9 size works (each is scaled to cover the screen). A character already on its trials
 when this came in sees it once too, the next time it is in the tavern. `tr.intro` plays it again.
 
 **Cards.** When you come back to the tavern after a won trial, a window lays out three cards (four

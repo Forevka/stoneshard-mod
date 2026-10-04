@@ -42,3 +42,6 @@ managed/CoreLoader.Dev.slnx
 # Documentation site (docs-site/build is covered by build/ above)
 node_modules/
 docs-site/.docusaurus/
+
+# The Trials intro's pictures are not kept in git: put intro_1.jpg ... intro_6.jpg here before building.
+managed/Mods/StoneshardTrials/Intro/slides/

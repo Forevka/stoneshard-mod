@@ -75,8 +75,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   17 costs (a tithe, a debuff for some trials, a lost piece of gear, a closed skill tree, an
   attribute); numbers grow with the trial's tier, and the run keeps the boons, re-applying what the
   game does not save. Cards can be rare or legendary (a reward a tier or two higher; a card whose numbers do not grow
-  with the tier is never rare), and a hand can be rerolled for crowns. A short animated lore intro (placeholder art, with an art brief in
-  `Intro\SLIDES.md`) plays the first time a character stands in the tavern. From the first win, three real
+  with the tier is never rare), and a hand can be rerolled for crowns. A short animated lore intro (six illustrated slides) plays the first
+  time a character stands in the tavern. From the first win, three real
   **traders** (a smith, a merchant with ready-made potions, and a jeweller) stand in the tavern and
   sell, for crowns only, a stock made for the last trial's tier after trials 1, 3, 5... The
   innkeeper heals and treats wounds for crowns, and a chest serves as a stash. Cards that act on the trials ahead (Second Look,
