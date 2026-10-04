@@ -62,6 +62,7 @@ add_library(coreloader SHARED
     src/gml.cpp
     src/builtins.cpp
     src/hookengine.cpp
+    src/objtypes.cpp
     src/host/core_api.cpp
     src/host/dotnet_host.cpp
     ${IMGUI_SOURCES}

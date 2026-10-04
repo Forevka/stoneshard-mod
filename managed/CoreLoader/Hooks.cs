@@ -22,6 +22,8 @@ public readonly unsafe struct HookCall
     /// <summary>The hooked function, e.g. "gml_Script_scr_loot".</summary>
     public string Symbol => _symbol;
 
+    internal CoreHookCall* Raw => _p;
+
     /// <summary>The instance the call runs as.</summary>
     public Instance Self => new(_p->Self);
 
@@ -314,6 +316,21 @@ public static unsafe class Hooks
 
     private static HookHandle Add(string symbol, HookHandler handler, bool after) =>
         Add(symbol, handler, after, ModManager.OwnerOf(handler));
+
+    /// <summary>
+    /// Subscribes to a hook id the loader made for a defined object's event
+    /// (<see cref="ObjectTypes"/>): there is no symbol to resolve and no detour
+    /// to attach, only the managed routing.
+    /// </summary>
+    internal static HookHandle AddDefined(int id, string name, HookHandler handler, LoadedMod? owner)
+    {
+        var sub = new Subscription { Handler = handler, After = false, Owner = owner, Order = _order++ };
+        var list = ById.TryGetValue(id, out var existing) ? existing : Array.Empty<Subscription>();
+        Names[id] = name;
+        ById[id] = [.. list, sub];
+        if (list.Length == 0) Loader.Api->HookSetManaged(id, 1);
+        return new HookHandle(id, sub);
+    }
 
     private static HookHandle Add(string symbol, HookHandler handler, bool after, LoadedMod? owner)
     {

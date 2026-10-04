@@ -4,6 +4,7 @@
 #include "gml.h"
 #include "hookengine.h"
 #include "log.h"
+#include "objtypes.h"
 #include "overlay.h"
 #include "paths.h"
 #include "symbols.h"
@@ -253,6 +254,33 @@ std::int32_t ApiHookCallOriginal(const CoreHookCall* call, CoreRValue* result) {
     gml::ClearLastError();
     if (!call || !result || !GameThreadOnly("hook_call_original")) return 0;
     return hk::CallOriginal(reinterpret_cast<const hk::Call*>(call), Gml(result)) ? 1 : 0;
+}
+
+// ------------------------------------------------------------ object types
+
+const char* ApiObjtypeStatus() { return objtypes::Status(); }
+
+std::int32_t ApiObjtypeDefine(const char* name, std::int32_t parent) {
+    if (!name || !GameThreadOnly("objtype_define")) return -1;
+    return objtypes::Define(name, parent);
+}
+
+std::int32_t ApiObjtypeEvent(std::int32_t object, std::int32_t type, std::int32_t subtype) {
+    if (!GameThreadOnly("objtype_event")) return -1;
+    return objtypes::DefineEvent(object, type, subtype);
+}
+
+std::int32_t ApiObjtypeCallInherited(const CoreHookCall* call) {
+    gml::ClearLastError();
+    if (!call || !GameThreadOnly("objtype_call_inherited")) return 0;
+    // Only the call record being dispatched right now: a kept pointer would
+    // name a self that may be long gone.
+    const auto* c = reinterpret_cast<const hk::Call*>(call);
+    if (!hk::IsDispatching(c)) {
+        Logf("[!] core api: objtype_call_inherited with a call that is not being dispatched; refused");
+        return 0;
+    }
+    return objtypes::CallInherited(c->hookId, c->self, c->other) ? 1 : 0;
 }
 
 std::int32_t ApiMemoryRead(const void* src, void* dst, std::int32_t bytes) {
@@ -565,6 +593,10 @@ CoreApi Build() {
     a.ui_is_item_deactivated_after_edit = &UiIsItemDeactivatedAfterEdit;
     a.last_gml_error                    = &ApiLastGmlError;
     a.instance_from_id                  = &ApiInstanceFromId;
+    a.objtype_status                    = &ApiObjtypeStatus;
+    a.objtype_define                    = &ApiObjtypeDefine;
+    a.objtype_event                     = &ApiObjtypeEvent;
+    a.objtype_call_inherited            = &ApiObjtypeCallInherited;
     return a;
 }
 

@@ -40,7 +40,7 @@ enum CoreLogLevel : std::int32_t {
     kCoreLogError = 2,
 };
 
-constexpr std::int32_t kCoreApiVersion = 10;  // 10: ui round 3 (combo, selectable, disabled, clipper, is_item_deactivated_after_edit, ...), last_gml_error, instance_from_id   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
+constexpr std::int32_t kCoreApiVersion = 11;  // 11: object types (objtype_*)   // 10: ui round 3 (combo, selectable, disabled, clipper, is_item_deactivated_after_edit, ...), last_gml_error, instance_from_id   // 9: pick mode, tree nodes, clipboard; GML calls refused off the game thread   // 7: ui round 2, 8: memory_read   // 2: hooks, 3: builtin_arity, 4: hook_call_original, 5: builtin_name, 6: value_free/copy
 
 struct CoreApi {
     std::int32_t size;      // sizeof(CoreApi) as the loader was built
@@ -227,6 +227,23 @@ struct CoreApi {
     // proven. With id null it is a probe, not a lookup: non-null (and not an
     // instance) once the lookup is proven, null otherwise. Game thread only.
     void*        (*instance_from_id)(const CoreRValue* id);
+
+    // Object types (version 11): new GameMaker objects defined at runtime.
+    // "available", or why not ("unavailable: ...", "not proven yet"). Never null.
+    const char*  (*objtype_status)();
+    // A new object named `name` (parent -1 for none), or the one already
+    // defined under that name this session, re-parented if `parent` differs.
+    // Its object index, or -1 (refused; the reason is logged). Game thread.
+    std::int32_t (*objtype_define)(const char* name, std::int32_t parent);
+    // Gives a defined object its own event (type, subtype). Returns the hook id
+    // the event's calls dispatch under (hook_dispatch: phase 0, then 1; nothing
+    // runs in between), the same id again for the same event, or -1. While no
+    // managed handler is attached the parent's event runs instead.
+    std::int32_t (*objtype_event)(std::int32_t object, std::int32_t type, std::int32_t subtype);
+    // From inside a defined event's dispatch: runs the parent's event for the
+    // same (type, subtype) as the call's self/other - event_inherited(). 1 if
+    // one ran, 0 if there is none or it failed.
+    std::int32_t (*objtype_call_inherited)(const CoreHookCall* call);
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

@@ -273,6 +273,9 @@ internal static class ModManager
     private static void RemoveRegistrations(LoadedMod m)
     {
         Hooks.RemoveOwner(m);
+        // After the hooks: with its handlers gone, the instances' Clean Up
+        // events fall back to the parent's code rather than the leaving mod's.
+        ObjectTypes.RemoveOwner(m);
         GameDraw.RemoveOwner(m);
         Input.RemoveOwner(m);
         // After OnShutdown, which is where a mod points instances away from

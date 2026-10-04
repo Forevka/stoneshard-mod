@@ -29,6 +29,7 @@ struct Hook {
     std::atomic<bool>  managed{false};
     bool               enabled  = false;
     int                nativeUsers = 0;   // loader-internal users (self observers)
+    DefinedFallback    fallback = nullptr;   // Kind::Defined: runs while nothing managed listens
 };
 
 // ---- thunk arena -------------------------------------------------------------
@@ -267,10 +268,19 @@ void EventDispatch(void* self, void* other, Hook* h) {
 
     auto* managed = h->managed.load(std::memory_order_acquire)
                         ? g_managed.load(std::memory_order_acquire) : nullptr;
+
+    // A defined event has no original. With nobody listening (the defining mod
+    // unloaded, or its handler not attached yet) the fallback stands in for it.
+    if (h->kind == Kind::Defined && !managed) {
+        if (h->fallback) h->fallback(self, other, h->id);
+        return;
+    }
+
     Call c{self, other, nullptr, nullptr, 0, kBefore, 0, h->id};
+    ActiveScope active(&c);
     Phase(&c, managed);
 
-    RunEventOriginal(h, &c, managed);
+    if (h->kind != Kind::Defined) RunEventOriginal(h, &c, managed);
 
     c.phase = kAfter;
     Phase(&c, managed);
@@ -389,7 +399,7 @@ bool SetManaged(int id, bool managed) {
 bool Disable(int id) {
     std::lock_guard<std::mutex> lock(g_lock);
     Hook* h = ById(id);
-    if (!h || !h->enabled) return h != nullptr;
+    if (!h || !h->enabled || h->kind == Kind::Defined) return h != nullptr;
     // Still needed by the loader itself (it supplies CurrentSelf): stay attached,
     // only managed dispatch was switched off by the caller.
     if (h->nativeUsers > 0) return true;
@@ -401,7 +411,7 @@ bool Disable(int id) {
 bool Enable(int id) {
     std::lock_guard<std::mutex> lock(g_lock);
     Hook* h = ById(id);
-    if (!h || h->enabled) return h != nullptr;
+    if (!h || h->enabled || h->kind == Kind::Defined) return h != nullptr;
     if (MH_EnableHook(h->target) != MH_OK) return false;
     h->enabled = true;
     return true;
@@ -413,6 +423,29 @@ int Count() {
 }
 
 int DispatchDepth() { return t_depth; }
+
+int InstallDefined(DefinedFallback fallback) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (!EnsureArena()) return -1;
+
+    Hook& h = g_hooks.emplace_back();
+    h.id       = static_cast<int>(g_hooks.size() - 1);
+    h.kind     = Kind::Defined;
+    h.fallback = fallback;
+    h.thunk    = EmitThunk(&h);
+    if (!h.thunk) { g_hooks.pop_back(); return -1; }
+    // Never detoured: the runtime calls the thunk directly, as the event's code.
+    h.enabled  = false;
+    return h.id;
+}
+
+void* DefinedFunction(int id) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    Hook* h = ById(id);
+    return h && h->kind == Kind::Defined ? h->thunk : nullptr;
+}
+
+bool IsDispatching(const Call* call) { return call && IsActive(call); }
 
 bool CallOriginal(const Call* call, gml::RValue* result) {
     if (!call || !result) return false;

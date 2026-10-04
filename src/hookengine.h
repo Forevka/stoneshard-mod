@@ -21,7 +21,10 @@ namespace mod::hk {
 //   events:  void f(self, other)                            -> thunk loads the
 //            record into r8 (the unused 3rd argument) and tail-jumps.
 
-enum class Kind : std::int32_t { Script = 0, Event = 1 };
+// Defined: an object event that has no compiled original - the event function
+// of an object type defined at runtime (objtypes.cpp). Its thunk IS the event
+// function the runtime calls; there is no detour to enable or disable.
+enum class Kind : std::int32_t { Script = 0, Event = 1, Defined = 2 };
 
 enum Phase : std::int32_t { kBefore = 0, kAfter = 1 };
 
@@ -61,6 +64,19 @@ int  Count();
 // self/other/arguments, writing into `result`. Nothing hooked runs again, so a
 // handler can repeat a call without re-entering itself. Scripts only.
 bool CallOriginal(const Call* call, gml::RValue* result);
+
+// An event function for a runtime-defined object type: a thunk with the event
+// signature void(self, other) that dispatches like a hooked event, except that
+// nothing runs "originally". Calls reach the managed dispatcher once the id is
+// set managed; while it is not, `fallback` runs instead (objtypes uses it to
+// fall through to the parent's event). -1 on failure.
+using DefinedFallback = void (*)(void* self, void* other, int hookId);
+int   InstallDefined(DefinedFallback fallback);
+// The function the runtime is to call for a Defined hook; null for any other id.
+void* DefinedFunction(int id);
+// Whether `call` is being dispatched on this thread right now (a handler may
+// only act on its own call record, never one it kept).
+bool  IsDispatching(const Call* call);
 
 // The loader's own use: when the runtime has no current-self global (2024+),
 // watch a spread of Step events so a live instance is always known.

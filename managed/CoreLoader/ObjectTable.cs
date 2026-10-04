@@ -81,6 +81,32 @@ public static class ObjectTable
         }
     }
 
+    /// <summary>
+    /// An object a mod defined (<see cref="ObjectTypes"/>), or re-parented: put
+    /// into the table, if the table has got that far. Before then, the scan
+    /// finds it like any other object.
+    /// </summary>
+    internal static void Added(int index, string name, int parent)
+    {
+        GmlObject.Forget(name);
+        if (_names == null || _objects == null || _parents == null) return;
+        if (index >= _names.Length)
+        {
+            Array.Resize(ref _names, index + 1);
+            int old = _parents.Length;
+            Array.Resize(ref _parents, index + 1);
+            Array.Fill(_parents, -1, old, _parents.Length - old);
+        }
+        _names[index] = name;
+        _objects = [.. _objects.Where(o => o.Index != index).Append(new GmlObject(index, name)).OrderBy(o => o.Index)];
+        _parents[index] = parent;
+        if (_children == null) return;
+        foreach (var list in _children.Values) list.RemoveAll(o => o.Index == index);
+        if (parent < 0) return;
+        if (!_children.TryGetValue(parent, out var siblings)) _children[parent] = siblings = new List<GmlObject>();
+        siblings.Add(new GmlObject(index, name));
+    }
+
     // ------------------------------------------------------------ internals
 
     /// <summary>Every object in index order, scanning now if the table has not got that far.</summary>

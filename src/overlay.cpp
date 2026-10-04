@@ -10,6 +10,7 @@
 #include "gml.h"
 #include "builtins.h"
 #include "log.h"
+#include "objtypes.h"
 #include "paths.h"
 #include "symbols.h"
 #include "host/dotnet_host.h"
@@ -439,6 +440,8 @@ void OverlayRender(IDXGISwapChain* swapChain) {
         builtins::SelfTest();
         // Proves the id -> instance lookup once an instance is at hand.
         gml::VerifyInstanceLookup();
+        // Locates and proves what defining object types needs (once).
+        objtypes::Verify();
     }
 
     // Before any mod runs: prove the value free/copy helpers on a probe string
@@ -447,6 +450,10 @@ void OverlayRender(IDXGISwapChain* swapChain) {
 
     // C# mods: initialised on their first frame, then ticked every frame.
     host::Frame();
+
+    // Objects or events the mods defined this frame join the runner's
+    // per-event lists before the next frame's Step.
+    objtypes::Flush();
 
     if (overlay) {
         // The game hides the OS cursor, so ImGui has to draw its own while visible.

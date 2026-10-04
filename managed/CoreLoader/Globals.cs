@@ -124,6 +124,13 @@ public readonly record struct GmlObject(int Index, string Name)
         return found;
     }
 
+    /// <summary>A name that now exists (a defined object): drops a remembered miss or stale entry.</summary>
+    internal static void Forget(string name)
+    {
+        Cache.Remove(name);
+        Misses.Remove(name);
+    }
+
     private static GmlObject? Resolve(string name)
     {
         var idx = Game.CallBuiltin("asset_get_index", name);
