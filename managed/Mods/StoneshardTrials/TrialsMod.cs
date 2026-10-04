@@ -314,6 +314,7 @@ public sealed class TrialsMod : CoreMod
         if (_enabled && InTrial && LeadsToSurface(c.Self))
         {
             c.SkipOriginal();
+            Log.Info($"way out refused at its door (alarm 7): {Builtins.object_get_name(c.Self.Get("object_index"))}");
             OnTrialExit();
             return;
         }
@@ -357,6 +358,7 @@ public sealed class TrialsMod : CoreMod
             c.SkipOriginal();
             Globals.Set("floor_counter", Globals.Get("locationFloor"));
             Globals.Set("position_tag", World.DungeonArrivalTag);
+            Log.Info($"way out refused at the room change: {Builtins.object_get_name(c.Self.Get("object_index"))}");
             OnTrialExit();
             return;
         }
