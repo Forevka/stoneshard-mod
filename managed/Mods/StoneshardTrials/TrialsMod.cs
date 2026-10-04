@@ -251,8 +251,7 @@ public sealed class TrialsMod : CoreMod
                 Log.Info("intro: starting");
             }
             // What the trials give every character at the start, once the story is told.
-            if (run.IntroSeen && !run.StartPoints && run.TrialsWon == 0 && !_intro.IsOpen && World.Player is { } fresh)
-                GiveStartPoints(run, fresh);
+            if (!_intro.IsOpen) TryStartPoints(run);
             // The cards of the last won trial, once the player stands in the tavern.
             if (_cards.IsOpen && World.Player is { } owner0)
             {
@@ -327,6 +326,7 @@ public sealed class TrialsMod : CoreMod
         if (run.Trial != null) Settle(run);
         // Still in the tavern: paid now, before the door takes the player to the next trial.
         PayPending(run);
+        TryStartPoints(run);
         // No tavern tick follows to weigh the bag: the game's own message tells of a spill.
         _spillCheck = null;
         // A finished run is over for good: the door is a plain door again.
@@ -352,7 +352,7 @@ public sealed class TrialsMod : CoreMod
         // alarm 7: the call is already under way, so the floor it set is put back.
         // (A ticket's return runs as the player, and a save stays on its floor.)
         if (_enabled && InTrial && Globals.Get("floor_counter") is { IsNumber: true } next && next.AsReal <= 0
-            && World.Player is { } self && !c.Self.IsNull && World.IdKey(c.Self.Get("id")) != World.IdKey(self.Id))
+            && !c.Self.IsNull && IsWayOut(c.Self))
         {
             c.SkipOriginal();
             Globals.Set("floor_counter", Globals.Get("locationFloor"));
@@ -575,6 +575,18 @@ public sealed class TrialsMod : CoreMod
     // which drops the cached run, and arrival comes before the next refresh.
     private bool InTrial => CurrentRun()?.Trial is { } t && World.InDungeon && World.Cell == (t.X, t.Y);
 
+    // Only a door or stairs is a way out: never the player (a ticket's
+    // return), a save (o_autosave_trigger) or anything else changing rooms.
+    private static bool IsWayOut(Instance self)
+    {
+        if (Objects.o_transitions_door.Object is not { } doors) return false;
+        var obj = self.Get("object_index");
+        if (!obj.IsNumber) return false;
+        string name = Builtins.object_get_name(obj).ToString();
+        return (int)obj.AsReal == doors.Index || Builtins.object_is_ancestor(obj, doors.Index).AsBool
+            || name.Contains("stairs", StringComparison.Ordinal) || name.Contains("exit", StringComparison.Ordinal);
+    }
+
     // A door's alarm 7 sets the next floor to the current one plus its own
     // dungeon_level_incr: at 0 or below it leaves the dungeon for the surface.
     private static bool LeadsToSurface(Instance door) =>
@@ -589,11 +601,16 @@ public sealed class TrialsMod : CoreMod
     private const double GiveUpWindow = 30;
     private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     private double _exitAsked = double.NegativeInfinity;
+    // Which trial was refused: a load or another character starts afresh.
+    private string? _exitAskedFor;
 
     private void OnTrialExit()
     {
         if (CurrentRun() is not { } run) return;
         double now = _clock.Elapsed.TotalSeconds;
+        string trial = $"{run.Id}:{run.Level}:{_runPlayer}";
+        if (_exitAskedFor != trial) _exitAsked = double.NegativeInfinity;
+        _exitAskedFor = trial;
         if (run.Won)
         {
             World.Say("The way out leads you back to the tavern.");
@@ -735,7 +752,7 @@ public sealed class TrialsMod : CoreMod
             World.SetCell(cell);
             Globals.Set("floor_counter", floor);
             Globals.Set("position_tag", tag);
-            World.Say("~r~The ticket stays cold~/~: the way back is barred for now.");
+            World.Say("~r~The way back is barred~/~ for now.");
             throw;
         }
         // On its way: the used ticket goes along with any other (Settle).
@@ -889,12 +906,19 @@ public sealed class TrialsMod : CoreMod
     // Abilities window shows as AP, "AP" what the character sheet shows as SP.)
     private const int StartAbilityPoints = 3, StartAttributePoints = 3;
 
-    private void GiveStartPoints(Run run, InstanceRef player)
+    // Given once the story is told, before the first trial: on the tavern's
+    // tick, when the intro closes, and at the door (should the player leave
+    // before the tick), never to a run already under way or over.
+    private void TryStartPoints(Run run)
     {
+        if (!run.IntroSeen || run.StartPoints || run.TrialsWon > 0 || run.Trial != null || RunOver(run) || World.Player is not { } player) return;
         run.StartPoints = true;
         SaveRun(run);
-        Effects.AddAtr(player, "SP", StartAbilityPoints);
-        Effects.AddAtr(player, "AP", StartAttributePoints);
+        foreach (var (key, amount) in new[] { ("SP", StartAbilityPoints), ("AP", StartAttributePoints) })
+        {
+            try { Effects.AddAtr(player, key, amount); }
+            catch (GmlException ex) { Log.Warning($"start of the run: the {amount} {(key == "SP" ? "ability" : "attribute")} points were not given ({ex.Message})"); }
+        }
         Log.Info($"start of the run: +{StartAbilityPoints} ability, +{StartAttributePoints} attribute points");
         World.Say($"The old gods grant you ~y~{StartAbilityPoints} ability points~/~ and ~y~{StartAttributePoints} attribute points~/~ for the trials ahead.");
     }
@@ -904,6 +928,7 @@ public sealed class TrialsMod : CoreMod
         if (CurrentRun() is not { } run || run.IntroSeen) return;
         run.IntroSeen = true;
         SaveRun(run);
+        TryStartPoints(run);
         Log.Info("intro: seen");
     }
 
