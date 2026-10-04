@@ -232,7 +232,7 @@ struct CoreApi {
     // "available", or why not ("unavailable: ...", "not proven yet"). Never null.
     const char*  (*objtype_status)();
     // A new object named `name` (parent -1 for none), or the one already
-    // defined under that name this session, re-parented if `parent` differs.
+    // defined under that name this session (refused if `parent` differs).
     // Its object index, or -1 (refused; the reason is logged). Game thread.
     std::int32_t (*objtype_define)(const char* name, std::int32_t parent);
     // Gives a defined object its own event (type, subtype). Returns the hook id
@@ -244,6 +244,13 @@ struct CoreApi {
     // same (type, subtype) as the call's self/other - event_inherited(). 1 if
     // one ran, 0 if there is none or it failed.
     std::int32_t (*objtype_call_inherited)(const CoreHookCall* call);
+    // Rebuilds the runner's per-event object lists now if a definition changed
+    // since the last rebuild (otherwise that happens at the end of the frame).
+    // The runner files a new instance for collisions as it creates it, from
+    // those lists: an instance created before the rebuild never collides.
+    // Nothing happens while a hooked event is being dispatched (the runner may
+    // be walking those lists). 1 if a rebuild ran.
+    std::int32_t (*objtype_flush)();
 };
 
 // Mirror of mod::hk::Call - what a hook callback sees.

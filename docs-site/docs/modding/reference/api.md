@@ -20,6 +20,7 @@ If the game has a generated [interop](../interop.md), `Scripts.*`, `Objects.*`, 
 | [`Game`](#game) | Calling scripts, events and builtins; symbols; queueing work onto the game thread | [calling the game](../cookbook/calling-the-game.md) |
 | [`Globals`, `GmlObject`, `InstanceRef`](#variables-and-instances) | Global and instance variables, objects, live instances | [game state](../cookbook/game-state.md) |
 | [`ObjectTable`](#objecttable) | The object table, built over a few frames | [game state](../cookbook/game-state.md) |
+| [`ObjectTypes`](#objecttypes) | New objects defined at runtime, with events in C# | [new object types](../cookbook/object-types.md) |
 | [`DsMap`, `DsList`](#dsmap-and-dslist) | ds_map and ds_list by id | [game state](../cookbook/game-state.md) |
 | [`Gml`](#gml) | `typeof`, arrays and structs | [game state](../cookbook/game-state.md) |
 | [`UI`](#ui) | ImGui widgets for the mod's overlay tab | [drawing and UI](../cookbook/drawing-and-ui.md) |
@@ -173,6 +174,45 @@ public override void OnGUI()
 }
 ```
 
+
+## ObjectTypes {#objecttypes}
+
+New GameMaker objects, defined at runtime, whose events run C#. Recipes: [New object types](../cookbook/object-types.md).
+
+| `ObjectTypes` | |
+|---|---|
+| `Available`, `Status` | Whether objects can be defined in this game: `"available"`, `"not proven yet (...)"` or `"unavailable: ..."` |
+| `Define(name, parent?, sprite?, visible, persistent, solid, mask?)` | A new object, or the one already defined under that name this session (after a hot reload, the same index). Throws when unavailable, when the name is a game asset, or when another loaded mod defined it |
+| `Find(name)` | A type defined this session, or null |
+| `Flush()` | Makes this frame's definitions take effect now; needed before creating instances of a fresh type other than through `ObjectType.Create` |
+
+| `ObjectType` | |
+|---|---|
+| `Name`, `Index`, `Object` | The object's name, index (what builtins take) and `GmlObject` |
+| `On(GameEvent, handler)` | Implements an event (replacing the parent's and an earlier handler); returns the type |
+| `Create(x, y, depth = 0)` | An instance, as an `InstanceRef`; its Create event has run |
+| `InstanceCount`, `Instances()` | Live instances, including those of types inheriting from it |
+| `DestroyAll()` | Destroys them (without their Destroy event where the runtime allows it) |
+
+| `ObjectEventCall` (what a handler gets) | |
+|---|---|
+| `Self`, `Other` | The instance the event runs for, and GML's `other` |
+| `Type`, `Event` | The handler's type and event |
+| `CallInherited()` | Runs the parent's code for this event (`event_inherited()`); false when it has none |
+
+`GameEvent(Type, Subtype)` names an event: `Create`, `Destroy`, `Step`, `BeginStep`, `EndStep`,
+`Alarm(n)`, `Collision(obj)`, `Keyboard(key)`, `KeyPress(key)`, `KeyRelease(key)`, `Mouse(n)`,
+`Other(n)`, `User(n)`, `GameStart`, `GameEnd`, `RoomStart`, `RoomEnd`, `AnimationEnd`, `AsyncHttp`,
+`AsyncNetworking`, `AsyncSaveLoad`, `AsyncSystem`, `Draw`, `DrawGui`, `DrawBegin`, `DrawEnd`,
+`DrawGuiBegin`, `DrawGuiEnd`, `PreDraw`, `PostDraw`, `CleanUp`. Its `ToString()` is the compiled name
+(`Step_0`).
+
+```csharp
+var trap = ObjectTypes.Define("o_mymod_trap", parent: "o_enemy", sprite: "s_trap")
+    .On(GameEvent.Create, e => { e.CallInherited(); e.Self.Set("armed", true); })
+    .On(GameEvent.Collision(GmlObject.Find("o_player")!.Value), e => Spring(e.Self, e.Other));
+trap.Create(x, y);
+```
 
 ## DsMap and DsList {#dsmap-and-dslist}
 

@@ -118,6 +118,7 @@ internal unsafe struct CoreApi
     public delegate* unmanaged<byte*, int, int> ObjtypeDefine;
     public delegate* unmanaged<int, int, int, int> ObjtypeEvent;
     public delegate* unmanaged<CoreHookCall*, int> ObjtypeCallInherited;
+    public delegate* unmanaged<int> ObjtypeFlush;
 }
 
 // Mirror of `struct ManagedExports`.

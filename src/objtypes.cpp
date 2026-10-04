@@ -97,7 +97,7 @@ Pieces g;
 
 enum class State { Pending, Proven, Failed };
 State       g_state  = State::Pending;
-std::string g_status = "not proven yet";
+std::string g_status = "not proven yet (needs the game to run code, for a live instance)";
 bool        g_dirty  = false;
 
 struct DefinedEvent {
@@ -310,7 +310,8 @@ bool DecodeCreation(std::uintptr_t lea, Pieces& out, std::string& why) {
         std::uintptr_t t = 0;
         if (b[0] == 0xB9 && CallAt(p + 5, t)) {
             const std::uint32_t size = static_cast<std::uint32_t>(Disp(p + 1));
-            if (size < 0x80 || size > 0x400) continue;
+            // At least up to the last proven field.
+            if (size < kObjId + 4 || size > 0x400) continue;
             out.objectBytes = size;
             out.alloc = reinterpret_cast<AllocFn>(t);
             newCall = p + 5;
@@ -484,8 +485,12 @@ bool MapLooksSane(const MapHeader* m) {
     MapHeader h{};
     if (!Read(reinterpret_cast<std::uintptr_t>(m), &h, 0x20)) return false;
     const auto size = static_cast<std::uint32_t>(h.size);
+    // `grow` bounds how full a map may get before it doubles (the runner
+    // tests it before counting the new entry, so a map can hold one more):
+    // a map past that, or with no bound below its size, is not one this
+    // code may write to.
     if (!(h.size > 0 && h.size <= (1 << 20) && (size & (size - 1)) == 0 && h.mask == h.size - 1 &&
-          h.used >= 0 && h.used <= h.size && h.elems))
+          h.used >= 0 && h.grow > 0 && h.grow < h.size && h.used <= h.grow + 1 && h.elems))
         return false;
     // The elements are walked directly afterwards: both ends must be there.
     Elem probe{};
@@ -514,12 +519,15 @@ Elem* MapFind(MapHeader* m, std::int64_t key) {
 
 bool HasProbeFields() { return g.mapBytes >= 0x28; }
 
-// Robin-hood placement of an entry known to be absent; no growing.
-void MapPlace(MapHeader* m, std::int64_t key, void* value) {
+// Robin-hood placement of an entry known to be absent; no growing. The
+// caller leaves a free slot (used stays below grow, and grow below size);
+// a table without one is not walked forever.
+bool MapPlace(MapHeader* m, std::int64_t key, void* value) {
     Elem cur{value, key, HashOf(key), 0};
     std::int32_t pos = static_cast<std::int32_t>(cur.hash & m->mask);
     std::int32_t dist = 0, probes = 0;
     for (;;) {
+        if (probes >= m->size) return false;
         Elem& e = m->elems[pos];
         if (e.hash == 0) {
             e = cur;
@@ -536,6 +544,7 @@ void MapPlace(MapHeader* m, std::int64_t key, void* value) {
     }
     ++m->used;
     if (HasProbeFields() && probes > m->maxProbe) m->maxProbe = probes;
+    return true;
 }
 
 // Doubles the table into a block from the runner's own allocator. The old
@@ -554,33 +563,19 @@ bool MapGrow(MapHeader* m) {
     m->grow  = m->grow * 2;
     m->used  = 0;
     if (HasProbeFields()) { m->grow2 = m->grow2 * 2; m->maxProbe = 0; }
+    bool ok = true;
     for (std::int32_t i = 0; i < oldSize; ++i)
-        if (old[i].hash != 0 && static_cast<std::int32_t>(old[i].hash) > 0) MapPlace(m, old[i].key, old[i].value);
-    return true;
+        if (old[i].hash != 0 && static_cast<std::int32_t>(old[i].hash) > 0) ok = MapPlace(m, old[i].key, old[i].value) && ok;
+    return ok;
 }
 
-// Inserts or replaces.
+// Inserts or replaces, in a map that looks as proven.
 bool MapPut(MapHeader* m, std::int64_t key, void* value) {
+    if (!MapLooksSane(m)) return false;
     if (Elem* e = MapFind(m, key)) { e->value = value; return true; }
     while (m->used + 1 > m->grow)
         if (!MapGrow(m)) return false;
-    MapPlace(m, key, value);
-    return true;
-}
-
-// Backward-shift deletion: leaves the table as if the entry was never there.
-void MapErase(MapHeader* m, Elem* e) {
-    std::int32_t pos = static_cast<std::int32_t>(e - m->elems);
-    m->elems[pos].hash = 0;
-    for (;;) {
-        const std::int32_t next = (pos + 1) & m->mask;
-        Elem& n = m->elems[next];
-        if (n.hash == 0 || DistanceAt(m, next) == 0) break;
-        m->elems[pos] = n;
-        n.hash = 0;
-        pos = next;
-    }
-    --m->used;
+    return MapPlace(m, key, value);
 }
 
 template <class F> void ForEachEntry(MapHeader* m, F f) {
@@ -792,17 +787,9 @@ bool InheritEvents(Defined& d, void* parentObject) {
     return ok;
 }
 
-// The object's parent becomes `parent` (-1 for none): its inherited entries
-// are dropped and the new parent's copied in.
+// A new object's parent: its index and pointer, and the parent's events
+// copied in (the runner's own load does the same).
 bool Link(Defined& d, int parent) {
-    MapHeader* m = EventsOf(d.object);
-    std::vector<std::int64_t> drop;
-    ForEachEntry(m, [&](Elem& e) {
-        if (!d.events.count(e.key)) drop.push_back(e.key);
-    });
-    for (std::int64_t key : drop)
-        if (Elem* e = MapFind(m, key)) MapErase(m, e);
-
     auto* base = static_cast<unsigned char*>(d.object);
     void* parentObject = parent >= 0 ? Lookup(parent) : nullptr;
     *reinterpret_cast<std::int32_t*>(base + kObjParentIndex) = parent;
@@ -812,6 +799,73 @@ bool Link(Defined& d, int parent) {
 }
 
 void Fallback(void* self, void* other, int hookId) { CallInherited(hookId, self, other); }
+
+void PropagateDown(int object, std::int64_t key, void* event);
+
+// ---- collisions --------------------------------------------------------------
+//
+// The runner's collision pass asks, for two touching instances, whether one's
+// object has the event (Collision, <the other's exact object index>). An event
+// written against a parent therefore lives in the map once per descendant of
+// that parent, and a new object must be filed into every map that collides with
+// one of its ancestors - or game projectiles would pass through it.
+
+constexpr int kCollision = 4;
+
+std::int64_t Key(int type, int sub) {
+    return (static_cast<std::int64_t>(type) << 32) | static_cast<std::uint32_t>(sub);
+}
+
+// Every object's parent index, by object index (-2 for no object).
+std::vector<int> ParentsSnapshot() {
+    std::vector<int> parents(static_cast<std::size_t>(ObjectCount()), -2);
+    for (int i = 0; i < static_cast<int>(parents.size()); ++i)
+        if (void* o = Lookup(i)) parents[i] = Field<std::int32_t>(o, kObjParentIndex);
+    return parents;
+}
+
+
+// Files `index` into every object that collides with one of its ancestors
+// (the nearest one's event).
+void ExpandCollisionsTo(int index) {
+    const auto parents = ParentsSnapshot();
+    std::vector<int> ancestors;
+    for (int a = parents[index], hops = 0; a >= 0 && hops < 64; a = parents[a], ++hops) ancestors.push_back(a);
+    if (ancestors.empty()) return;
+    const std::int64_t key = Key(kCollision, index);
+    for (int o = 0; o < static_cast<int>(parents.size()); ++o) {
+        if (parents[o] == -2) continue;
+        MapHeader* m = EventsOf(Lookup(o));
+        if (!m || MapFind(m, key)) continue;
+        for (int a : ancestors) {
+            if (Elem* e = MapFind(m, Key(kCollision, a))) {
+                MapPut(m, key, e->value);
+                break;
+            }
+        }
+    }
+}
+
+
+// After a defined object gained a Collision event: its own Collision events
+// filed under every descendant of their targets (the nearest target wins),
+// and handed down to the defined objects below it.
+void FileCollisions(Defined& d) {
+    const auto parents = ParentsSnapshot();
+    MapHeader* m = EventsOf(d.object);
+    for (int target = 0; target < static_cast<int>(parents.size()); ++target) {
+        if (parents[target] == -2) continue;
+        const std::int64_t key = Key(kCollision, target);
+        if (d.events.count(key)) continue;   // its own event for exactly this one
+        void* event = nullptr;
+        for (int a = parents[target], hops = 0; a >= 0 && hops < 64 && !event; a = parents[a], ++hops)
+            if (auto own = d.events.find(Key(kCollision, a)); own != d.events.end()) event = own->second.event;
+        if (!event) continue;
+        if (Elem* e = MapFind(m, key); e && e->value == event) continue;
+        MapPut(m, key, event);
+        PropagateDown(d.index, key, event);
+    }
+}
 
 // Hands `key`'s event of `object` down to the defined objects below it that
 // do not define it themselves.
@@ -840,8 +894,11 @@ void Verify() {
 bool        Ready()  { return g_state == State::Proven; }
 const char* Status() { return g_status.c_str(); }
 
-void Flush() {
-    if (!g_dirty || !Ready()) return;
+bool Flush() {
+    if (!g_dirty || !Ready()) return false;
+    // Inside a hooked event the runner may be walking the very lists the
+    // rebuild resets and reallocates: those calls wait for the frame's end.
+    if (hk::DispatchDepth() > 0) return false;
     g_dirty = false;
     LARGE_INTEGER t0, t1, f;
     QueryPerformanceCounter(&t0);
@@ -852,9 +909,8 @@ void Flush() {
     if (!ok) Logf("[!] objtypes: rebuilding the event lists faulted");
     else if (logged++ < 3)
         Logf("objtypes: event lists rebuilt in %.2f ms", 1000.0 * static_cast<double>(t1.QuadPart - t0.QuadPart) / static_cast<double>(f.QuadPart));
+    return ok;
 }
-
-bool IsDefined(int object) { return g_defined.count(object) != 0; }
 
 int Define(const char* name, int parent) {
     if (!Ready()) { Logf("[!] objtypes: Define refused: %s", g_status.c_str()); return -1; }
@@ -863,21 +919,21 @@ int Define(const char* name, int parent) {
 
     if (auto it = g_byName.find(name); it != g_byName.end()) {
         Defined& d = g_defined[it->second];
+        // Inheritance is copied into maps all over the game (this object's,
+        // its defined children's, collisions filed for it): changing it in a
+        // running game is refused rather than half done.
         if (d.parent != parent) {
-            for (int a = parent, hops = 0; a >= 0 && hops < 64; ++hops) {
-                if (a == d.index) { Logf("[!] objtypes: %s cannot be its own ancestor", name); return -1; }
-                void* ao = Lookup(a);
-                a = ao ? Field<std::int32_t>(ao, kObjParentIndex) : -1;
-            }
-            if (!Link(d, parent)) Logf("[!] objtypes: %s: re-parenting left events behind", name);
-            g_dirty = true;
-            Logf("objtypes: %s (%d) re-parented to %d", name, d.index, parent);
+            Logf("[!] objtypes: %s already has parent %d this session; restart the game to give it %d", name, d.parent, parent);
+            return -1;
         }
         return d.index;
     }
     if (AssetIndex(name) >= 0) { Logf("[!] objtypes: the game already has an asset named %s", name); return -1; }
 
+    // The next index must be free, and follow the last object: anything else
+    // means the count is not what the proof took it for.
     const int index = ObjectCount();
+    if (Lookup(index) || !Lookup(index - 1)) { Logf("[!] objtypes: %s: object index %d is not the next free one; refused", name, index); return -1; }
     void* object = GuardedAlloc(g.objectBytes);
     if (!object || !GuardedCtor(object, index)) { Logf("[!] objtypes: %s: creating the object faulted", name); return -1; }
     const std::size_t len = std::strlen(name);
@@ -903,6 +959,7 @@ int Define(const char* name, int parent) {
     d.index  = index;
     g_byName[d.name] = index;
     if (parent >= 0 && !Link(d, parent)) Logf("[!] objtypes: %s: inheriting the parent's events failed", name);
+    ExpandCollisionsTo(index);
     g_dirty = true;
 
     // The runner's own view of it.
@@ -918,7 +975,7 @@ int Define(const char* name, int parent) {
 int DefineEvent(int object, int type, int subtype) {
     auto it = g_defined.find(object);
     if (!Ready() || it == g_defined.end()) return -1;
-    if (type < 0 || type >= kEventTypes || subtype < 0) {
+    if (type < 0 || type >= kEventTypes || subtype < 0 || (type == kCollision && !Lookup(subtype))) {
         Logf("[!] objtypes: no event type %d / subtype %d", type, subtype);
         return -1;
     }
@@ -926,13 +983,8 @@ int DefineEvent(int object, int type, int subtype) {
     const std::int64_t key = (static_cast<std::int64_t>(type) << 32) | static_cast<std::uint32_t>(subtype);
     if (auto e = d.events.find(key); e != d.events.end()) return e->second.hookId;
 
-    const int hookId = hk::InstallDefined(&Fallback);
-    void* fn = hookId >= 0 ? hk::DefinedFunction(hookId) : nullptr;
-    if (!fn) return -1;
-
-    const std::string symbol = "gml_Object_" + d.name + "_" + kEventNames[type] + "_" + std::to_string(subtype);
-    Row& row = g_rows.emplace_back(Row{gml::Intern(symbol), fn, g.templateRow->extra});
-
+    // Everything that can fail comes before the hook: its thunk slot is
+    // never given back.
     auto* code = static_cast<unsigned char*>(GuardedAlloc(kCodeBytes));
     auto* event = static_cast<EventRec*>(GuardedAlloc(sizeof(EventRec)));
     if (!code || !event) return -1;
@@ -942,6 +994,15 @@ int DefineEvent(int object, int type, int subtype) {
     for (std::size_t n = kCodeBytes; n >= 0x40 && !copied; n -= 0x20)
         if (gml::ReadMemory(g.templateCode, code, static_cast<int>(n))) copied = n;
     if (copied <= g.rowOffset) { Logf("[!] objtypes: could not copy a template CCode"); return -1; }
+    MapHeader* m = EventsOf(d.object);
+    if (!MapLooksSane(m)) return -1;
+
+    const int hookId = hk::InstallDefined(&Fallback);
+    void* fn = hookId >= 0 ? hk::DefinedFunction(hookId) : nullptr;
+    if (!fn) return -1;
+
+    const std::string symbol = "gml_Object_" + d.name + "_" + kEventNames[type] + "_" + std::to_string(subtype);
+    Row& row = g_rows.emplace_back(Row{gml::Intern(symbol), fn, g.templateRow->extra});
     for (std::size_t off = 0; off + 8 <= copied; off += 8) {
         auto* slot = reinterpret_cast<const char**>(code + off);
         if (*slot == g.templateRow->name) *slot = row.name;
@@ -951,10 +1012,11 @@ int DefineEvent(int object, int type, int subtype) {
     event->owner = object;
     event->pad   = 0;
 
-    if (!MapPut(EventsOf(d.object), key, event)) { Logf("[!] objtypes: %s: growing the event map failed", symbol.c_str()); return -1; }
+    if (!MapPut(m, key, event)) { Logf("[!] objtypes: %s: growing the event map failed", symbol.c_str()); return -1; }
     d.events[key] = DefinedEvent{hookId, event};
     g_byHook[hookId] = HookTarget{object, key};
     PropagateDown(object, key, event);
+    if (type == kCollision) FileCollisions(d);
     g_dirty = true;
     Logf("objtypes: %s -> hook #%d", symbol.c_str(), hookId);
     return hookId;

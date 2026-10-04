@@ -18,6 +18,8 @@ public readonly record struct GameEvent(int Type, int Subtype)
     public static GameEvent EndStep => new(3, 2);
     /// <summary>Collision with instances of <paramref name="other"/> (and its children).</summary>
     public static GameEvent Collision(GmlObject other) => new(4, other.Index);
+    /// <summary>Collision with instances of a defined type (and of types inheriting from it).</summary>
+    public static GameEvent Collision(ObjectType other) => new(4, other.Index);
     /// <summary>Key held, by virtual key code.</summary>
     public static GameEvent Keyboard(int key) => new(5, key);
     /// <summary>A mouse event, by GameMaker's mouse event number (0 left button ... 60 wheel up).</summary>
@@ -124,7 +126,13 @@ public sealed class ObjectType
 
     public GmlObject Object => new(Index, Name);
 
-    internal LoadedMod? Owner { get; }
+    // Cleared when the mod goes, so the type no longer keeps its unloaded
+    // assembly alive (the name can then be taken by anyone).
+    internal LoadedMod? Owner { get; set; }
+
+    // A later Define of the same name replaced this one: its On would attach
+    // handlers nothing could detach.
+    internal bool Detached { get; private set; }
 
     /// <summary>The events this type implements itself.</summary>
     public IReadOnlyCollection<GameEvent> Events => _handlers.Keys;
@@ -143,6 +151,7 @@ public sealed class ObjectType
     {
         ArgumentNullException.ThrowIfNull(handler);
         Loader.EnsureGameThread();
+        if (Detached) throw new InvalidOperationException($"{Name} was defined again since this ObjectType was returned; use the new one");
         int id = Loader.Api->ObjtypeEvent(Index, ev.Type, ev.Subtype);
         if (id < 0) throw new GmlException($"could not give {Name} a {ev} event (see the loader log)");
 
@@ -153,8 +162,11 @@ public sealed class ObjectType
     }
 
     /// <summary>Creates an instance at (x, y) on <paramref name="depth"/>; its Create event runs before this returns.</summary>
-    public InstanceRef Create(double x, double y, double depth = 0) =>
-        new(Game.CallBuiltin("instance_create_depth", x, y, depth, Index));
+    public InstanceRef Create(double x, double y, double depth = 0)
+    {
+        ObjectTypes.Flush();
+        return new(Game.CallBuiltin("instance_create_depth", x, y, depth, Index));
+    }
 
     /// <summary>Live instances of this type, including those of types that inherit from it.</summary>
     public int InstanceCount => Object.InstanceCount;
@@ -163,7 +175,8 @@ public sealed class ObjectType
 
     /// <summary>
     /// Destroys every live instance of the type (and of types inheriting from
-    /// it). Destroy events do not run; Clean Up events do.
+    /// it). Destroy events do not run where the runtime's instance_destroy
+    /// takes its "run the event" flag; Clean Up events always do.
     /// </summary>
     public void DestroyAll()
     {
@@ -182,6 +195,7 @@ public sealed class ObjectType
     {
         foreach (var h in _handlers.Values) h.Dispose();
         _handlers.Clear();
+        Detached = true;
     }
 
     public override string ToString() => $"{Name} ({Index})";
@@ -189,14 +203,17 @@ public sealed class ObjectType
 
 /// <summary>
 /// New GameMaker objects, defined at runtime from C#: real objects the game's
-/// builtins, <c>with</c>, collisions and instance counts all see, whose events
+/// builtins, instance counts, collisions and collision functions all see, whose events
 /// are implemented by mod code.
 /// </summary>
 /// <remarks>
-/// An object type belongs to the mod that defined it. When the mod unloads,
-/// faults or hot-reloads, its handlers go and every instance of its types is
-/// destroyed; the object itself stays (GameMaker cannot delete objects), and a
-/// reloaded mod defining the same name gets the same object back.
+/// An object type belongs to the mod that defined it. When the mod unloads or
+/// hot-reloads, its handlers go and every instance of its types is destroyed;
+/// the object itself stays (GameMaker cannot delete objects), and a reloaded
+/// mod defining the same name gets the same object back (with the same
+/// parent: inheritance cannot change in a running game). When the mod faults,
+/// its handlers go and its instances stay, running the parent's code, until
+/// it is reloaded or unloaded.
 ///
 /// Only available where the loader located and proved the runtime's object
 /// machinery (<see cref="Available"/>); everywhere else <see cref="Define"/>
@@ -225,7 +242,8 @@ public static unsafe class ObjectTypes
     /// build, before a hot reload) defined under that name.
     /// </summary>
     /// <param name="name">A name no asset of the game uses, e.g. "o_mymod_ghost".</param>
-    /// <param name="parent">An object to inherit from: its events run for this one wherever it defines none.</param>
+    /// <param name="parent">An object to inherit from: its events run for this one wherever it defines none.
+    /// Fixed for the session: defining the name again with another parent throws.</param>
     /// <param name="sprite">The sprite instances start with (also the collision mask unless <paramref name="mask"/> is given).</param>
     /// <param name="visible">Whether instances start visible.</param>
     /// <param name="persistent">Whether instances survive room changes.</param>
@@ -268,8 +286,29 @@ public static unsafe class ObjectTypes
         return type;
     }
 
+    /// <summary>
+    /// Makes this frame's definitions take effect in the runner now instead
+    /// of at the end of the frame. <see cref="ObjectType.Create"/> does this
+    /// itself; call it before creating instances of a type defined (or given
+    /// an event) in the same frame any other way - <c>instance_create_depth</c>
+    /// through <see cref="Game.CallBuiltin"/>, a game script - or those
+    /// instances will never collide. It rebuilds the runner's per-event
+    /// object lists, which costs a moment in a game with thousands of objects;
+    /// it does nothing when nothing changed, and nothing inside a hook or
+    /// event handler, where the runner may be walking those lists: define a
+    /// type in an earlier frame than the handler that spawns it.
+    /// </summary>
+    public static void Flush()
+    {
+        Loader.EnsureGameThread();
+        Loader.Api->ObjtypeFlush();
+    }
+
     /// <summary>A type defined this session, by name, or null.</summary>
     public static ObjectType? Find(string name) => ByName.GetValueOrDefault(name);
+
+    /// <summary>Whether the object at <paramref name="index"/> was defined by a mod this session.</summary>
+    internal static bool IsDefinedIndex(int index) => ByName.Values.Any(t => t.Index == index);
 
     private static int AssetOrThrow(string name, string param)
     {
@@ -283,6 +322,7 @@ public static unsafe class ObjectTypes
         foreach (var type in ByName.Values.Where(t => t.Owner == owner).ToList())
         {
             type.Detach();
+            type.Owner = null;
             try
             {
                 int before = type.InstanceCount;

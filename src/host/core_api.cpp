@@ -283,6 +283,11 @@ std::int32_t ApiObjtypeCallInherited(const CoreHookCall* call) {
     return objtypes::CallInherited(c->hookId, c->self, c->other) ? 1 : 0;
 }
 
+std::int32_t ApiObjtypeFlush() {
+    if (!GameThreadOnly("objtype_flush")) return 0;
+    return objtypes::Flush() ? 1 : 0;
+}
+
 std::int32_t ApiMemoryRead(const void* src, void* dst, std::int32_t bytes) {
     return src && dst && bytes > 0 && gml::ReadMemory(src, dst, bytes) ? 1 : 0;
 }
@@ -597,6 +602,7 @@ CoreApi Build() {
     a.objtype_define                    = &ApiObjtypeDefine;
     a.objtype_event                     = &ApiObjtypeEvent;
     a.objtype_call_inherited            = &ApiObjtypeCallInherited;
+    a.objtype_flush                     = &ApiObjtypeFlush;
     return a;
 }
 

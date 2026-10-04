@@ -29,8 +29,20 @@ bump may break the mod API or the native CoreApi table; each version says so und
   `CoreModGame` needs the attribute added and a rebuild.
 - The mod-author guide moved from `managed/README.md` to the documentation site, and the analyzers'
   help links (CL0001-CL0005) now open each rule's own section there.
+- **Breaking:** CoreApi version 11 (object types: `objtype_status`, `objtype_define`, `objtype_event`,
+  `objtype_call_inherited`, `objtype_flush`). The managed runtime requires this exact version.
 
 ### Added
+
+- **Object types:** a mod defines new GameMaker objects at runtime (`ObjectTypes.Define`), with a
+  parent, sprite, mask and flags, and implements their events in C# (`ObjectType.On(GameEvent.Step, ...)`,
+  `ObjectEventCall.CallInherited()` for `event_inherited()`). They are real objects in any YYC game where
+  the loader proves the runner's object machinery: builtins, instance counts and lookups, collision
+  events and collision functions treat them as the game's own, events they do not implement run the parent's,
+  and the game's objects that collide with a parent collide with them. Their instances are destroyed
+  when the defining mod unloads or hot-reloads; a reloaded mod gets the same objects back. Tested in
+  Stoneshard, the Dwarf Eats Mountain demo, The King is Watching and Slime Trader. The
+  `ObjectTypeProbe` test mod checks it; the cookbook and the loader internals each have a page on it.
 
 - **A documentation site** (`docs-site/`, published to GitHub Pages): a mod-author guide, a cookbook
   of task recipes taken from the shipped mods, walkthroughs of HelloMod, Console and FastTravel, the

@@ -30,12 +30,17 @@ bool        Ready();
 // "available", or why not ("unavailable: ...", "not proven yet").
 const char* Status();
 
-// Game thread, every frame: rebuilds the runner's per-event object lists if a
-// definition changed since the last frame.
-void Flush();
+// Game thread, every frame (and on demand): rebuilds the runner's per-event
+// object lists if a definition changed since the last rebuild. The runner
+// files a new instance for collisions from them as it creates it, so an
+// instance made before the rebuild never collides. Refused while a hooked
+// event is being dispatched (the runner may be walking those lists): the
+// frame's own call does it then. True if one ran.
+bool Flush();
 
 // A new object named `name` with parent object `parent` (-1 for none), or the
-// one an earlier Define already made under that name (re-parented if asked).
+// one an earlier Define already made under that name (refused if `parent`
+// differs: inheritance cannot be changed in a running game).
 // Returns its object index, -1 on failure (reason logged). A name the game
 // already uses for one of its own assets is refused.
 int  Define(const char* name, int parent);
@@ -49,8 +54,5 @@ int  DefineEvent(int object, int type, int subtype);
 // has for the same (type, subtype) - GameMaker's event_inherited(). False when
 // there is none or it failed. Game thread.
 bool CallInherited(int hookId, void* self, void* other);
-
-// Whether `object` was made by Define.
-bool IsDefined(int object);
 
 } // namespace mod::objtypes

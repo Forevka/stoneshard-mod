@@ -262,7 +262,12 @@ void EventDispatch(void* self, void* other, Hook* h) {
     DepthScope depth;
     if (t_depth > kMaxDepth) {
         WarnTooDeep(h);
-        reinterpret_cast<EventFn>(h->original)(self, other);
+        // A defined event has no original: its fallback is what runs bare.
+        if (h->kind == Kind::Defined) {
+            if (h->fallback) h->fallback(self, other, h->id);
+        } else {
+            reinterpret_cast<EventFn>(h->original)(self, other);
+        }
         return;
     }
 

@@ -98,6 +98,19 @@ Keep things between runs. See [Settings and persistence](settings-and-persistenc
 | survive a hot reload | [Hot reload](settings-and-persistence.md#hot-reload) |
 | clean up when the mod unloads | [OnShutdown](settings-and-persistence.md#on-shutdown) |
 
+## New object types
+
+Add objects of your own to the game, with events in C#. See [New object types](object-types.md).
+
+| I want to... | Recipe |
+|---|---|
+| define a new object and give it events | [Define](object-types.md#define) |
+| create instances of it | [Spawn](object-types.md#spawn) |
+| make it a kind of a game object (an enemy, a UI element) | [Inherit](object-types.md#inherit) |
+| react to it touching other instances | [Collide](object-types.md#collide) |
+| know what happens to it on hot reload, unload and faults | [Lifetime](object-types.md#lifetime) |
+| keep its instances out of the game's saves | [Saving](object-types.md#saving) |
+
 ## Robustness and testing
 
 Fail soft, stay fast, and test without a mouse. See [Robustness and testing](robustness-and-testing.md).

@@ -281,6 +281,10 @@ void Phase(Call* c, ManagedDispatch managed) {
 
 `EventDispatch` follows the same shape without arguments, a result or copies. It also calls `gml::NoteSelf(self)` first. An object event's `self` is always a live instance, which the loader needs on runtimes without a current-self global (see [self observers](#self-observers)). Scripts do not feed it, because a script's `self` can be a struct (a bound method, or `with` over a struct) rather than an instance.
 
+### Defined events {#defined-events}
+
+An object type defined at runtime (see [object types](./object-types.md)) has events with no compiled original. `hk::InstallDefined` makes a hook of a third kind, `Kind::Defined`: an event thunk like any other, but never detoured. Its address goes into the object's code row, so the runtime calls the thunk itself as the event function. `EventDispatch` then runs the before and after phases with nothing in between. While no managed handler is attached it runs the hook's fallback instead, which runs the parent object's event for the same key. `Enable` and `Disable` do nothing for such a hook; `CallOriginal` refuses it.
+
 ## Calling the original again {#call-original}
 
 `HookCall.CallOriginal()` reruns the unhooked script with the same self, other and current arguments:

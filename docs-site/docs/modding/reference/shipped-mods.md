@@ -56,6 +56,7 @@ behaviour. Deploy them after a risky loader change.
 | [ValueProbe](https://github.com/Forevka/stoneshard-mod/tree/main/managed/Tests/ValueProbe) | any | Value lifetime: creates about 2,000 strings a frame; the game's private memory must stay flat |
 | [StructProbe](https://github.com/Forevka/stoneshard-mod/tree/main/managed/Tests/StructProbe) | any | A struct kept from C# survives forced garbage collections, and its root is released afterwards; must log `PASSED` |
 | [FaultyGuiMod](https://github.com/Forevka/stoneshard-mod/tree/main/managed/Tests/FaultyGuiMod) | any | A UI fault: it throws inside a tab bar. The loader must unwind the scope and disable only this mod |
+| [ObjectTypeProbe](https://github.com/Forevka/stoneshard-mod/tree/main/managed/Tests/ObjectTypeProbe) | any | Object types: defines a base, a child and a collider type, spawns them, and checks names, parents, instance counts, collision queries and every event (inherited ones too) through the game's builtins; must log `PASSED`. Copy it in again while the game runs: the reloaded probe checks the old instances were destroyed and the same objects came back |
 | [WidgetProbe](https://github.com/Forevka/stoneshard-mod/tree/main/managed/Tests/WidgetProbe) | any | Every UI widget, and scope unwind under faults |
 | [XpProbe](https://github.com/Forevka/stoneshard-mod/tree/main/managed/Tests/XpProbe) | Stoneshard | Hook argument handling, with StoneshardBoost at `xpMultiplier` 3: +300, then +600 with `CallOriginal` |
 

@@ -17,10 +17,10 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 
 | Path | What |
 |---|---|
-| `src/` | Native loader. `dllmain.cpp` (init thread), `symbols.cpp` (gml_* table), `gml.cpp` (runtime bridge: strings, calls, value free/copy, self-tests), `builtins.cpp` (builtin registry), `hookengine.cpp` (thunk detours for managed hooks and the loader's own self observers), `overlay.cpp` (ImGui, WndProc, pick mode, per-frame tick), `host/` (.NET hosting, `core_api.h/.cpp` = the C ABI), `hooks.cpp` (D3D11 Present hook), `proxy.cpp`, `paths.cpp`, `log.cpp` |
-| `managed/CoreLoader/` | The runtime mods reference: `Game`, `Hooks`, `Values`, `RValue`, `Globals`/`GmlObject`/`InstanceRef`, `ObjectTable`, `DsMap`/`DsList`, `UI`, `Content`, `GameDraw`, `Input`, `Code`, `ModConfig`, `ModSettings`; `Runtime/` = entry points, mod manager (hot reload), interop generator |
+| `src/` | Native loader. `dllmain.cpp` (init thread), `symbols.cpp` (gml_* table), `gml.cpp` (runtime bridge: strings, calls, value free/copy, self-tests), `builtins.cpp` (builtin registry), `hookengine.cpp` (thunk detours for managed hooks and the loader's own self observers), `objtypes.cpp` (objects defined at runtime: located, proven, then built like the runner's own), `overlay.cpp` (ImGui, WndProc, pick mode, per-frame tick), `host/` (.NET hosting, `core_api.h/.cpp` = the C ABI), `hooks.cpp` (D3D11 Present hook), `proxy.cpp`, `paths.cpp`, `log.cpp` |
+| `managed/CoreLoader/` | The runtime mods reference: `Game`, `Hooks`, `Values`, `RValue`, `Globals`/`GmlObject`/`InstanceRef`, `ObjectTable`, `DsMap`/`DsList`, `UI`, `Content`, `GameDraw`, `Input`, `Code`, `ModConfig`, `ModSettings`, `ObjectTypes`; `Runtime/` = entry points, mod manager (hot reload), interop generator |
 | `managed/Mods/` | Shipped mods (Console + Inspector/Objects/Globals, ScriptSpy, SpeedControl, ContentDemo, DwarfBoost, StoneshardBoost, StoneshardCheats, Reliquary - the interop-only artifacts mod, FastTravel - world-map fast travel drawn with the game's own UI pieces, TavernGames - dice/card minigames against tavern NPCs on a small `MiniGame` framework, StoneshardTrials - roguelike tavern-hub/random-dungeon loop, ModMenu - the Esc-menu MODS window for `ModSettings`, StoneshardHarness - `hx.*` test-host commands to play Stoneshard without screenshots, clients `tools\stoneshard.ps1` / `tools\stoneshard_harness.py`) |
-| `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, FaultyGuiMod, WidgetProbe (every UI widget, and scope unwind under faults) |
+| `managed/Tests/` | Regression mods: ValueProbe, StructProbe, XpProbe, FaultyGuiMod, WidgetProbe (every UI widget, and scope unwind under faults), ObjectTypeProbe (objects defined at runtime: events, inheritance, collisions, hot-reload teardown) |
 | `managed/Examples/`, `managed/Templates/CoreLoaderMod/` | HelloMod, InteropExample; the `dotnet new coreloader-mod` template |
 | `managed/CoreLoader.Analyzers/` (+ `.Tests`) | Roslyn analyzer every mod compiles with: CL0001-CL0003 lifetime rules, CL0004-CL0005 game declaration (see `docs-site/docs/modding/reference/analyzers.md`) |
 | `tools/` | `deploy-coreloader.ps1`, `setup-dev.ps1`, `run-game.ps1`, `game-saves.ps1`, `coreloader.ps1` (test-host client), `stoneshard.ps1` / `stoneshard_harness.py` (StoneshardHarness clients), `smoke-*.ps1`, `checkcksum.py`; `re/` = static RE toolkit over any game's exe (`relib.py` and friends, `--exe <game.exe>` or `RE_GAME_EXE`; `ghidra/ExportGml.java`) |
@@ -100,6 +100,7 @@ Testing notes:
   - ValueProbe: private memory must stay flat.
   - StructProbe: must log `PASSED`.
   - XpProbe with StoneshardBoost at `xpMultiplier` 3: +300, then +600 with CallOriginal.
+  - ObjectTypeProbe: must log `PASSED` in both games, and again after copying it in while the game runs.
 
 ## Creating a mod
 

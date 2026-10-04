@@ -236,7 +236,11 @@ internal static unsafe class InteropGenerator
             Log.Warning($"interop: the object table is empty ({ObjectTable.Status}); objects are listed from their events only");
             _degraded = true;
         }
-        foreach (var o in objects) snap.Objects[o.Name] = new ObjectInfo(o.Name, o.Index, new());
+        // Objects mods defined this session are theirs, not the game's: an
+        // interop listing them would hand other mods names that only exist
+        // while that mod is installed.
+        foreach (var o in objects)
+            if (!ObjectTypes.IsDefinedIndex(o.Index)) snap.Objects[o.Name] = new ObjectInfo(o.Name, o.Index, new());
         foreach (var s in Game.Symbols.Where(s => s.IsObjectEvent))
         {
             if (!SplitEvent(s.Name, out var obj, out var member)) continue;
