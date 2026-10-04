@@ -1,5 +1,9 @@
 # Lodestone (CoreLoader)
 
+<p align="center">
+  <img src="presentation.gif" alt="Lodestone in action: the in-game overlay and mods running in Stoneshard" width="900">
+</p>
+
 **Lodestone** is the player-facing name of CoreLoader: releases, the install folder
 (`<game>\Lodestone\`), the log and the overlay carry it. The code, the `CoreLoader.dll` assembly and
 the mod API keep the CoreLoader name.
