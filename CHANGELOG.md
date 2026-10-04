@@ -92,7 +92,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
   Endless runs (setting `runMode`) remake a won single-floor dungeon at the wanted tier when no
   untouched one fits: its saved floors are forgotten and its tier, recommended levels and master
   (from the game's own tables) rewritten. A `difficulty` setting (Easy/Normal/Hard/Brutal) shifts
-  the wanted tier, and a trial whose danger runs past its dungeon's tier (beyond the 0.4 the rounding
+  the wanted tier (what it and Blood Money add stops 1.5 past the character's level tier), and a trial whose danger runs past its dungeon's tier (beyond the 0.4 the rounding
   allows) adds copies of the dungeon's toughest enemies and, a tier past, an elite master with one of
   the game's unused boss prefixes (Persistent, Powerful, Resistant, Nimble, Leeching, Watchful):
   half again its health plus the prefix's stats, as lasting statuses the game saves. Past tier 5 an
@@ -297,6 +297,13 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - `tools/savepeek.py` and 20 one-off or duplicate reverse-engineering scripts in `tools/re`.
 
 ### Fixed
+- **The overlay window keeps its place when the game resizes its window.** A game that opens a small
+  window and only then goes fullscreen (Stoneshard starts at 970x540) pulled the overlay to that
+  small window's edge, where it stayed for the session. The loader now remembers the saved or dragged
+  place and puts the window back there once the display allows; moving or resizing it by hand works
+  as before. Its saved layout starts afresh once (a layout saved before this could hold the stuck
+  position), and a new layout opens in the top-right corner instead of at (40, 40), clear of the HUD
+  most games draw at the top left.
 - **`ModConfig.Get(key, double)` reads any number.** A value set during the session keeps its CLR
   type, and an int set there did not read back as a double. So a `ModSettings` choice, stored as an
   int, never changed when clicked. Choices are now stored as numbers, and any numeric value reads

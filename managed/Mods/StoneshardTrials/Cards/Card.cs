@@ -7,7 +7,7 @@ namespace StoneshardTrials.Cards;
 /// generator; MoreTrials is false on the win that ends a finite run (cards
 /// about the trials ahead have nothing to act on then).
 /// </summary>
-internal readonly record struct CardContext(InstanceRef Player, Run Run, int Tier, Random Rng, Logger Log, bool MoreTrials = true)
+internal readonly record struct CardContext(InstanceRef Player, Run Run, int Tier, Random Rng, Logger Log, bool MoreTrials = true, double DangerRoom = 5)
 {
     public int Level => Math.Max(1, (int)World.Num(Player, "LVL", 1));
 }

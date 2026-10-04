@@ -98,7 +98,8 @@ A status a boon keeps is unique to it: no two cards of a run, rewards or costs, 
 Boon statuses are kept for good and a timed cost for its term: a cure or a dispel does not lift
 them (they are back within a second). A custom status (Elusiveness, the swaps...) sits on one of the
 game's own statuses, so if the game gives that status too, the boon's numbers replace it. Blood
-Money's extra danger stops at the top of tier 5; its pay does not.
+Money's extra danger stops at the top of tier 5 and at the cap above the character's level (see
+*Progression*), where the card is not offered; its pay does not stop.
 
 **Traders.** From the first won trial on, three traders stand in the tavern's upper hall: a smith
 (weapons, armour, shields, tools), a merchant (potions, medicine, scrolls, treatises, jewellery,
@@ -132,6 +133,9 @@ Each trial asks for a tier:
    3 with two tier-1 and two tier-2 items on trial 3 is tier 2.
 
 The **difficulty** setting shifts the wanted danger: Easy -0.5, Normal 0, Hard +0.5, Brutal +1.
+What the difficulty and Blood Money add stops 1.5 past the character's level tier (the trials' own
+pressure is not limited): a level 3 character on Brutal with Blood Money meets tier 3, not tier 4.
+Blood Money is not offered when that leaves it less than a quarter tier to add.
 
 **Finite runs** (the default) take the untouched dungeon nearest that tier (the lower one on a tie),
 and a different kind from the last trial when it can. The tavern banner shows the danger the door will really lead

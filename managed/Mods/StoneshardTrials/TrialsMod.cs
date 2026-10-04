@@ -868,7 +868,11 @@ public sealed class TrialsMod : CoreMod
         int count = size ?? Deck.Size + run.ExtraCards;
         if (size == null) run.ExtraCards = 0;
         bool more = MoreTrials();
-        var ctx = new CardContext(player, run, tier, PickRng(run, reroll == 0 ? $"cards{trial}" : $"cards{trial}r{reroll}"), Log, more);
+        // How much danger the next trial could still take on (Blood Money), the difficulty counted.
+        double room = 5;
+        try { room = Progression.Assess(player, run.Level, DifficultyShift[DifficultyIndex]).Room; }
+        catch (Exception ex) when (ex is GmlException or InvalidOperationException) { }
+        var ctx = new CardContext(player, run, tier, PickRng(run, reroll == 0 ? $"cards{trial}" : $"cards{trial}r{reroll}"), Log, more, room);
         var offer = Deck.Deal(Catalog.All, Catalog.Costs, ctx, trial, Math.Max(1, count), force);
         offer.Rerolls = reroll;
         Log.Info($"trial {trial}: cards {string.Join(", ", offer.Cards.Select((c, i) => offer.Costs[i] is { } cost ? $"{c} ({cost})" : c))} (tier {tier})");
@@ -1199,8 +1203,8 @@ public sealed class TrialsMod : CoreMod
         {
             if (World.Player is not { } p) return "no player";
             int trial = args.Count > 0 ? args[0].GetInt32() : CurrentRun()?.Level ?? 1;
-            var a = Progression.Assess(p, trial, DifficultyShift[DifficultyIndex]);
-            return new { trial, a.Level, a.LevelTier, a.Gear, a.Power, a.Target, a.Tier };
+            var a = Progression.Assess(p, trial, DifficultyShift[DifficultyIndex] + (CurrentRun()?.BloodShift ?? 0));
+            return new { trial, a.Level, a.LevelTier, a.Gear, a.Power, a.Target, a.Tier, a.Room };
         }, "tr.assess [trial]: the character's level, gear score and power, and the tier that trial would take");
         TestHost.Register("tr.next", args =>
         {

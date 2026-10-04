@@ -278,7 +278,8 @@ internal static class Catalog
         new()
         {
             Id = "blood-money", Title = "Blood Money", Power = 2, SelfCosted = true, ForTrialsAhead = true,
-            CanOffer = ctx => ctx.Run.BloodPay <= 1,
+            // Not when the cap above the character's level leaves no danger to add: it would pay for nothing.
+            CanOffer = ctx => ctx.Run.BloodPay <= 1 && ctx.DangerRoom >= 0.25,
             Gains = l => new[] { $"The next trial pays x{BloodPay(l.Tier)}" },
             Costs = l => new[] { $"and is {(l.Tier >= 4 ? "a whole tier" : "half a tier")} more dangerous" },
             Apply = (ctx, _) => Done(() =>
