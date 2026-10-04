@@ -40,7 +40,9 @@ bump may break the mod API or the native CoreApi table; each version says so und
   the loader proves the runner's object machinery: builtins, instance counts and lookups, collision
   events and collision functions treat them as the game's own, events they do not implement run the parent's,
   and the game's objects that collide with a parent collide with them. Their instances are destroyed
-  when the defining mod unloads or hot-reloads; a reloaded mod gets the same objects back. Tested in
+  when the defining mod unloads or hot-reloads; a reloaded mod gets the same objects back (a parent
+  is fixed for the session). `ObjectType.Create` and `ObjectTypes.Flush()` make a frame's definitions
+  take effect at once, so instances created in that frame collide too. Tested in
   Stoneshard, the Dwarf Eats Mountain demo, The King is Watching and Slime Trader. The
   `ObjectTypeProbe` test mod checks it; the cookbook and the loader internals each have a page on it.
 
