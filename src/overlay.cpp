@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 
@@ -303,12 +304,89 @@ void DrawSymbolsTab() {
     ImGui::EndChild();
 }
 
+// The overlay window's name. The part after ### is its identity in imgui.ini:
+// it was "Lodestone", and an ini written before the placement below could
+// hold a position ImGui had pulled to a small startup window's edge (see
+// below), so the window starts afresh under a new identity.
+constexpr const char* kMainWindow = "Lodestone###LodestoneMain";
+
+// Where the overlay window belongs: its saved place, or wherever the user last
+// moved it. ImGui pulls a window back on screen by itself and keeps the pulled
+// position, so a game that opens a small window and only then goes fullscreen
+// (Stoneshard starts at 970x540) left the overlay stuck at that small window's
+// edge. So the place is kept here and the window is put there every frame,
+// pulled in only as far as the current display needs. Whenever the user moves
+// it (a drag, a resize from the left or top, a keyboard move) ImGui is left
+// alone, and the position it ends up at becomes the place.
+ImVec2 g_wantedPos{0.0f, 0.0f};
+bool g_wantedKnown = false;
+// No saved place and never moved: it keeps to the top-right corner, out of the
+// way of the HUD most games draw at the top left and the top centre.
+bool g_anchorRight = false;
+// Where the window was at the end of the last frame, and whether this frame's
+// position was set here (and to what).
+ImVec2 g_lastEndPos{-1.0f, -1.0f};
+bool g_placed = false;
+ImVec2 g_placedPos{0.0f, 0.0f};
+
+void AdoptPosition(ImVec2 pos) {
+    g_wantedPos = pos;
+    g_anchorRight = false;
+}
+
+// Whether the user is acting on the window: moving it (also by a child
+// region's empty space, which moves the root), resizing it, or keyboard-moving it.
+bool UserActsOn(const ImGuiWindow* window) {
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    auto root = [](const ImGuiWindow* w) { return w ? w->RootWindow : nullptr; };
+    return root(g.MovingWindow) == window || root(g.ActiveIdWindow) == window ||
+           root(g.NavWindowingTarget) == window;
+}
+
+void PlaceMainWindow() {
+    constexpr float kMargin = 4.0f;
+    ImGuiIO& io = ImGui::GetIO();
+    g_placed = false;
+    if (!g_wantedKnown) {
+        g_wantedKnown = true;
+        if (const ImGuiWindowSettings* s = ImGui::FindWindowSettingsByID(ImHashStr(kMainWindow)))
+            g_wantedPos = ImVec2(static_cast<float>(s->Pos.x), static_cast<float>(s->Pos.y));
+        else
+            g_anchorRight = true;
+    }
+    ImGuiWindow* window = ImGui::FindWindowByName(kMainWindow);
+    // Moved since the last frame ended (a drag or keyboard move happens before Begin).
+    if (window && g_lastEndPos.x >= 0.0f && (window->Pos.x != g_lastEndPos.x || window->Pos.y != g_lastEndPos.y))
+        AdoptPosition(window->Pos);
+    if (window && UserActsOn(window)) return;
+    const ImVec2 size = window ? window->Size : ImVec2(660.0f, 480.0f);
+    ImVec2 pos = g_anchorRight ? ImVec2(io.DisplaySize.x - size.x - kMargin, kMargin) : g_wantedPos;
+    // As ImGui itself clamps: the window keeps a corner of DisplayWindowPadding on screen.
+    const ImVec2 pad = ImGui::GetStyle().DisplayWindowPadding;
+    pos.x = ImClamp(pos.x, pad.x - size.x, ImMax(pad.x - size.x, io.DisplaySize.x - pad.x));
+    pos.y = ImClamp(pos.y, 0.0f, ImMax(0.0f, io.DisplaySize.y - pad.y));
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    g_placed = true;
+    g_placedPos = pos;
+}
+
+// After Begin: a resize from the left or top edge moves the window inside
+// Begin, after the position set above; that move is the user's too.
+void NoteMainWindow() {
+    const ImVec2 pos = ImGui::GetWindowPos();
+    if (!g_placed && (pos.x != g_lastEndPos.x || pos.y != g_lastEndPos.y))
+        AdoptPosition(pos);
+    else if (g_placed && (pos.x != g_placedPos.x || pos.y != g_placedPos.y))
+        AdoptPosition(pos);
+    g_lastEndPos = pos;
+}
+
 void DrawUI() {
     ImGui::SetNextWindowSize(ImVec2(660.0f, 480.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(40.0f, 40.0f), ImGuiCond_FirstUseEver);
+    PlaceMainWindow();
 
-    ImGui::Begin("Lodestone");
-
+    ImGui::Begin(kMainWindow);
+    NoteMainWindow();
     // Ordered by who wants them: mods first, the tooling that dissects the
     // game and the loader's own health last.
     if (ImGui::BeginTabBar("##tabs")) {
