@@ -7,7 +7,8 @@ matches dungeons to the character work, in finite or endless runs, with a diffic
 ## Use
 
 1. Start a new **Adventure**. It opens in the Osbrook tavern, which is the hub: its innkeeper and
-   the townsfolk trade as usual.
+   the townsfolk trade as usual. After the intro the old gods grant **3 ability points and 3
+   attribute points**, once per run, to spend before the first trial.
 2. A banner at the top of the screen (below your status effects) reads **Trial N - leave the tavern
    to start the next trial level**. It steps aside while you hover a status icon, whose tooltip
    opens where it sits.
@@ -38,11 +39,14 @@ Rules during the trials:
   crowns paid after it are gone along with the trial they paid for. A readable copy of each run is
   written to `Mods\StoneshardTrials\characters\<id>.json`.
 
-The ticket only works inside a dungeon. Leaving a dungeon by its stairs puts you in the open world
-as usual; walk back into the Osbrook tavern to carry on. There the trial is settled as if you had
-used the ticket: a won trial is paid, one not won is given up, and any ticket you carry is taken
-back. (A ticket used in a trial not won brings you back too, and gives that trial up.) Once every
-master is dead, a finite run completes as soon as you are back in the tavern.
+The ticket only works inside a dungeon. **A trial's dungeon keeps you until the trial is done**: its
+way out to the surface is refused ("the old gods bar the way"). Take it again a few seconds later,
+within half a minute, to **give the trial up**: you go straight back to the tavern, unpaid and without cards. Once the
+master is dead the way out takes you back to the tavern too, and the trial is paid there, as with
+the ticket (handy when a full bag holds the ticket back). A ticket used in a trial not won brings
+you back too, and gives that trial up. Should you reach the open world anyway (a save from before
+this rule), walking back into the Osbrook tavern settles the trial the same way. Once every master
+is dead, a finite run completes as soon as you are back in the tavern.
 
 While the mod is on, it changes **every** save, not only a new one: an existing character's Osbrook
 tavern door leads into the trials too. Turn it off (`enabled`) to play a normal campaign.

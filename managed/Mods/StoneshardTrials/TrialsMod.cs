@@ -207,6 +207,11 @@ public sealed class TrialsMod : CoreMod
     private void Update()
     {
         _arrival.Tick();
+        if (_liftFadeFrames > 0)
+        {
+            _liftFadeFrames--;
+            Guard("lift fade", DestroyFades);
+        }
         _intro.Update();
         _cards.Update();
         if (_returnQueued)
@@ -250,6 +255,8 @@ public sealed class TrialsMod : CoreMod
                 _intro.Start();
                 Log.Info("intro: starting");
             }
+            // What the trials give every character at the start, once the story is told.
+            if (!_intro.IsOpen) TryStartPoints(run);
             // The cards of the last won trial, once the player stands in the tavern.
             if (_cards.IsOpen && World.Player is { } owner0)
             {
@@ -308,6 +315,14 @@ public sealed class TrialsMod : CoreMod
     // here, before it reads that, and only redirected in OnRoomChange.
     private void OnDoorLeaving(HookCall c)
     {
+        // Out of a trial's dungeon onto the surface: refused (see OnTrialExit).
+        if (_enabled && InTrial && LeadsToSurface(c.Self))
+        {
+            c.SkipOriginal();
+            Log.Info($"way out caught at its door (alarm 7): {Builtins.object_get_name(c.Self.Get("object_index"))}");
+            if (OnTrialExit()) LiftFade();
+            return;
+        }
         if (!_enabled || !World.IsHubDoor(c.Self)) return;
         _next = null;
         c.Self.Set("dungeon_level_incr", 0);
@@ -317,6 +332,7 @@ public sealed class TrialsMod : CoreMod
         if (run.Trial != null) Settle(run);
         // Still in the tavern: paid now, before the door takes the player to the next trial.
         PayPending(run);
+        TryStartPoints(run);
         // No tavern tick follows to weigh the bag: the game's own message tells of a spill.
         _spillCheck = null;
         // A finished run is over for good: the door is a plain door again.
@@ -338,6 +354,26 @@ public sealed class TrialsMod : CoreMod
     // world cell set to a dungeon's, is what entering that dungeon's own door does.
     private void OnRoomChange(HookCall c)
     {
+        // The same refusal for a way out that does not leave through a door's
+        // alarm 7: the call is already under way, so the floor it set is put back.
+        // (A ticket's return runs as the player, and a save stays on its floor.)
+        // InTrial asks the game (scr_is_in_dungeon), which already answers for
+        // the floor the way out has set; locationFloor still holds the floor
+        // the player stands on (a Bastion's stairs up set floor_counter 0
+        // themselves, with no dungeon_level_incr: play-test, 2026-10-04).
+        if (_enabled && CurrentRun()?.Trial is not null && OnDungeonFloor()
+            && Globals.Get("floor_counter") is { IsNumber: true } next && next.AsReal <= 0
+            && !c.Self.IsNull && IsWayOut(c.Self))
+        {
+            c.SkipOriginal();
+            Globals.Set("floor_counter", Globals.Get("locationFloor"));
+            Globals.Set("position_tag", World.DungeonArrivalTag);
+            Log.Info($"way out caught at the room change: {Builtins.object_get_name(c.Self.Get("object_index"))}");
+            // The way out has already begun its fade to black (an o_black_overlay):
+            // left alive it covers the screen and holds the game's input.
+            if (OnTrialExit()) LiftFade();
+            return;
+        }
         if (!_enabled || !World.IsHubDoor(c.Self) || _next is not { } choice || CurrentRun() is not { } run || World.Player is not { } player) return;
         _next = null;
         var d = choice.Dungeon;
@@ -553,6 +589,92 @@ public sealed class TrialsMod : CoreMod
     // which drops the cached run, and arrival comes before the next refresh.
     private bool InTrial => CurrentRun()?.Trial is { } t && World.InDungeon && World.Cell == (t.X, t.Y);
 
+    // Only a door or stairs is a way out: never the player (a ticket's
+    // return), a save (o_autosave_trigger) or anything else changing rooms.
+    private static bool OnDungeonFloor() => Globals.Get("locationFloor") is { IsNumber: true } here && here.AsReal > 0;
+
+    private static bool IsWayOut(Instance self)
+    {
+        if (Objects.o_transitions_door.Object is not { } doors) return false;
+        var obj = self.Get("object_index");
+        if (!obj.IsNumber) return false;
+        string name = Builtins.object_get_name(obj).ToString();
+        return (int)obj.AsReal == doors.Index || Builtins.object_is_ancestor(obj, doors.Index).AsBool
+            || name.Contains("stairs", StringComparison.Ordinal) || name.Contains("exit", StringComparison.Ordinal);
+    }
+
+    // A door's alarm 7 sets the next floor to the current one plus its own
+    // dungeon_level_incr: at 0 or below it leaves the dungeon for the surface.
+    private static bool LeadsToSurface(Instance door) =>
+        Globals.Get("locationFloor") is { IsNumber: true } here
+        && here.AsReal + World.Num(new InstanceRef(door.Get("id")), "dungeon_level_incr") <= 0;
+
+    // The trial's dungeon keeps the player until the trial is done. Its way
+    // out is refused, with a word; taken again soon after, it gives the trial
+    // up and goes back to the tavern (no pay, no cards), so a trial too hard
+    // to win never traps anyone. Once the master is dead the way out simply
+    // leads back to the tavern, where the trial is paid.
+    private const double GiveUpWindow = 30;
+    // A try this soon after a refusal does not count: stepping back onto the
+    // stairs' tile uses them again (play-test: a move 4 s after a refusal gave
+    // a trial up unasked). Giving up takes a deliberate second try.
+    private const double GiveUpDelay = 5;
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private double _exitAsked = double.NegativeInfinity;
+    // Which trial was refused: a load or another character starts afresh.
+    private string? _exitAskedFor;
+
+    // Answers whether the player was kept in (refused), not sent to the tavern.
+    private bool OnTrialExit()
+    {
+        if (CurrentRun() is not { } run) return false;
+        double now = _clock.Elapsed.TotalSeconds;
+        string trial = $"{run.Id}:{run.Level}:{_runPlayer}";
+        if (_exitAskedFor != trial) _exitAsked = double.NegativeInfinity;
+        _exitAskedFor = trial;
+        if (run.Won)
+        {
+            World.Say("The way out leads you back to the tavern.");
+            _returnQueued = true;
+            return false;
+        }
+        else if (now - _exitAsked < GiveUpDelay)
+        {
+            // Too soon to be a decision: refused again, the first refusal's window kept.
+            World.Say("~r~The old gods bar the way~/~. Take the way out again in a moment to ~y~give the trial up~/~.");
+            return true;
+        }
+        else if (now - _exitAsked <= GiveUpWindow)
+        {
+            _exitAsked = double.NegativeInfinity;
+            Log.Info($"trial {run.Level} given up at the dungeon's way out");
+            _returnQueued = true;
+            return false;
+        }
+        else
+        {
+            _exitAsked = now;
+            World.Say("~r~The old gods bar the way~/~: this trial is not done. Take the way out again to ~y~give it up~/~ and return to the tavern.");
+            return true;
+        }
+    }
+
+    // A refused way out's fade: destroyed now and on the next frames (it may
+    // be made after the room change is called), so the player is not left in
+    // the dark with no control (play-test, 2026-10-05: Crypt and Church stairs).
+    private int _liftFadeFrames;
+
+    private void LiftFade()
+    {
+        _liftFadeFrames = 10;
+        DestroyFades();
+    }
+
+    private static void DestroyFades()
+    {
+        if (Objects.o_black_overlay.Object is not { InstanceCount: > 0 } fades) return;
+        foreach (var f in fades.Instances().ToList()) Builtins.instance_destroy(f.Id);
+    }
     // ------------------------------------------------------------ the world map
 
     // The world map opens through scr_globalmapCreate. The trials go only where
@@ -677,7 +799,7 @@ public sealed class TrialsMod : CoreMod
             World.SetCell(cell);
             Globals.Set("floor_counter", floor);
             Globals.Set("position_tag", tag);
-            World.Say("~r~The ticket stays cold~/~: the way back is barred for now.");
+            World.Say("~r~The way back is barred~/~ for now.");
             throw;
         }
         // On its way: the used ticket goes along with any other (Settle).
@@ -826,12 +948,34 @@ public sealed class TrialsMod : CoreMod
 
     // ------------------------------------------------------------ the intro
 
+    // The run's start: 3 ability points and 3 attribute points, once. The run
+    // is saved first, so a failure never gives them twice. ("SP" is what the
+    // Abilities window shows as AP, "AP" what the character sheet shows as SP.)
+    private const int StartAbilityPoints = 3, StartAttributePoints = 3;
+
+    // Given once the story is told, before the first trial: on the tavern's
+    // tick, when the intro closes, and at the door (should the player leave
+    // before the tick), never to a run already under way or over.
+    private void TryStartPoints(Run run)
+    {
+        if (!run.IntroSeen || run.StartPoints || run.TrialsWon > 0 || run.Trial != null || RunOver(run) || World.Player is not { } player) return;
+        run.StartPoints = true;
+        SaveRun(run);
+        foreach (var (key, amount) in new[] { ("SP", StartAbilityPoints), ("AP", StartAttributePoints) })
+        {
+            try { Effects.AddAtr(player, key, amount); }
+            catch (GmlException ex) { Log.Warning($"start of the run: the {amount} {(key == "SP" ? "ability" : "attribute")} points were not given ({ex.Message})"); }
+        }
+        Log.Info($"start of the run: +{StartAbilityPoints} ability, +{StartAttributePoints} attribute points");
+        World.Say($"The old gods grant you ~y~{StartAbilityPoints} ability points~/~ and ~y~{StartAttributePoints} attribute points~/~ for the trials ahead.");
+    }
     // Seen once it is over, however it ended (BEGIN, SKIP or Esc): the run keeps that.
     private void OnIntroDone()
     {
         if (CurrentRun() is not { } run || run.IntroSeen) return;
         run.IntroSeen = true;
         SaveRun(run);
+        TryStartPoints(run);
         Log.Info("intro: seen");
     }
 

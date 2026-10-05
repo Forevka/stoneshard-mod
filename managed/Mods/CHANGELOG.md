@@ -10,6 +10,10 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **StoneshardTrials: the trial's dungeon keeps the player.** Its way out to the surface is refused while
+  the trial is open; taken again within half a minute it gives the trial up and returns to the tavern
+  (no pay, no cards). Once the master is dead the way out leads back to the tavern, where the trial
+  is paid. Every run also starts with 3 ability points and 3 attribute points, given after the intro.
 - **StoneshardHarness**, a development mod that lets a script or an agent play Stoneshard over the
   test host without screenshots. `hx.state`, `hx.player`, `hx.enemies`, `hx.npcs`, `hx.objects`,
   `hx.inventory`, `hx.log`, `hx.dialogue` and `hx.buttons` describe what the player sees, with

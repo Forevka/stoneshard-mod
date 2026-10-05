@@ -37,7 +37,11 @@ param(
     # Overrides the save folder from $Games (e.g. a copy, for trying the script out).
     [string] $SaveDir,
     # Restores a folder without the backup marker, or with no character folders.
-    [switch] $Force
+    [switch] $Force,
+    # Ignore running copies of the game whose exe is outside this folder: copies
+    # that save elsewhere (a co-op pair started with their own LOCALAPPDATA).
+    # Only for copies known not to use this save folder.
+    [string] $OnlyGameDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -131,7 +135,13 @@ switch ($Action) {
     }
     "restore" {
         Assert-Backup $From
-        if (Get-Process -Name $cfg.Process -ErrorAction SilentlyContinue) {
+        $running = @(Get-Process -Name $cfg.Process -ErrorAction SilentlyContinue)
+        if ($OnlyGameDir) {
+            $dir = [IO.Path]::GetFullPath($OnlyGameDir).TrimEnd('\') + '\'
+            # A copy whose path cannot be read is not provably elsewhere: it still blocks.
+            $running = @($running | Where-Object { try { $_.Path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) } catch { $true } })
+        }
+        if ($running.Count -gt 0) {
             throw "$($cfg.Process) is running: close it first (it writes its saves on exit)"
         }
         $liveSlots = @(Get-SlotFolders $SaveDir)

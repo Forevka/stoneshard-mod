@@ -3,7 +3,7 @@
   Restarts a test game with Lodestone and waits until its mods are loaded.
 
 .DESCRIPTION
-  Stops a running instance of the game, optionally deploys Lodestone and mods
+  Stops a running instance of the game (only one started from -GameDir's exe), optionally deploys Lodestone and mods
   (tools\deploy-coreloader.ps1), launches the game, and waits for this run's
   loader log (<game>\Lodestone\Logs\lodestone.log) to report "mod(s)
   loaded" - and, with -WaitFor, a line matching that regex too. Then prints
@@ -63,8 +63,19 @@ $exePath  = Join-Path $GameDir $Exe
 $procName = [IO.Path]::GetFileNameWithoutExtension($Exe)
 $log      = Join-Path $GameDir "Lodestone\Logs\lodestone.log"
 
+# Only this folder's game: other copies of the same exe (another agent's test
+# install, a co-op pair in another folder) are not ours to stop. Matching by
+# name alone once killed two co-op instances from D:\games\coop.
+$fullExe = [IO.Path]::GetFullPath($exePath)
+function Get-GameProcess {
+    @(Get-Process -Name $procName -ErrorAction SilentlyContinue | Where-Object {
+        try { [string]::Equals([IO.Path]::GetFullPath($_.Path), $fullExe, [StringComparison]::OrdinalIgnoreCase) }
+        catch { $false }   # no access to its path: not provably ours
+    })
+}
+
 function Stop-Game {
-    $running = @(Get-Process -Name $procName -ErrorAction SilentlyContinue)
+    $running = Get-GameProcess
     if ($running.Count -eq 0) { return }
     Write-Host "stopping $procName (pid $($running.Id -join ', '))"
     $running | Stop-Process -Force
@@ -119,7 +130,7 @@ function Read-FreshLog {
     if (-not $pidLine) { return $null }
     $null = $pidLine -match 'loaded into pid (\d+)'
     $p = Get-Process -Id ([int]$Matches[1]) -ErrorAction SilentlyContinue
-    if (-not $p -or $p.ProcessName -ne $procName) { return $null }
+    if (-not $p -or -not (Get-GameProcess | Where-Object Id -eq $p.Id)) { return $null }
     return , $lines
 }
 
@@ -135,7 +146,7 @@ while ((Get-Date) -lt $deadline) {
         if ($WaitFor) { $matched = [bool]($lines | Where-Object { $_ -match $WaitFor }) }
         if ($loaded -and $matched) { break }
     }
-    if (-not (Get-Process -Name $procName -ErrorAction SilentlyContinue) -and ((Get-Date) - $started).TotalSeconds -gt 20) {
+    if ((Get-GameProcess).Count -eq 0 -and ((Get-Date) - $started).TotalSeconds -gt 20) {
         Write-Host "$procName is not running any more"
         break
     }

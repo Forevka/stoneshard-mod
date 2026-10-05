@@ -44,6 +44,8 @@ internal sealed class Run
     public int StockSerial { get; set; }
     /// <summary>The character has seen (or skipped) the lore intro.</summary>
     public bool IntroSeen { get; set; }
+    /// <summary>The run's starting points (3 ability, 3 attribute) have been given.</summary>
+    public bool StartPoints { get; set; }
     /// <summary>Extra cards in the next offer (Second Look).</summary>
     public int ExtraCards { get; set; }
     /// <summary>Blood Money: the next trial's added danger, and what its reward is multiplied by (1: none).</summary>
