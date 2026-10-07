@@ -9,28 +9,7 @@ bump may break the mod API or the native CoreApi table; each version says so und
 
 ## [Unreleased]
 
-### Changed
-
-- **Breaking:** **the loader is now called Lodestone for players.** It installs to `<game>\Lodestone\` (was
-  `CoreLoader\`), logs to `Lodestone\Logs\lodestone.log`, and its overlay window, log lines and the
-  shipped mods' author read "Lodestone". The assembly, namespace, API, template and `CORELOADER_*`
-  variables keep the CoreLoader name. `tools\deploy-coreloader.ps1` moves an existing `CoreLoader\`
-  folder to `Lodestone\`, and interop-based projects now look for `<game>\Lodestone\Interop\`.
-  A mod made from the template before this has `<CoreLoaderDir>$(GameDir)\CoreLoader</CoreLoaderDir>`
-  in its csproj: change it to `$(GameDir)\Lodestone`, or it no longer finds CoreLoader.dll.
-- **Breaking:** **every mod says which games it is for.** A mod declares exactly one of
-  `[assembly: CoreModGame("<exe name>", ...)]` or the new `[assembly: CoreModAnyGame]`. A mod that
-  declares neither (or both, or a `CoreModGame` naming no game) is no longer loaded: the log and the
-  Loader tab say what to add. Before, such a mod loaded silently into every game, so a mod written
-  for one game's objects and scripts ran inside another and failed there in confusing ways. A warning
-  would be easy to miss, and the fix is one line, so the loader refuses instead. Every shipped mod,
-  example, test mod and the `dotnet new coreloader-mod` template declares its games (a template mod
-  without `--gameName` declares its interop's game, or `CoreModAnyGame` without an interop). A mod built for an earlier release without
-  `CoreModGame` needs the attribute added and a rebuild.
-- The mod-author guide moved from `managed/README.md` to the documentation site, and the analyzers'
-  help links (CL0001-CL0005) now open each rule's own section there.
-- **Breaking:** CoreApi version 11 (object types: `objtype_status`, `objtype_define`, `objtype_event`,
-  `objtype_call_inherited`, `objtype_flush`). The managed runtime requires this exact version.
+## [0.5.0] - 2026-10-07
 
 ### Added
 
@@ -45,7 +24,6 @@ bump may break the mod API or the native CoreApi table; each version says so und
   take effect at once, so instances created in that frame collide too. Tested in
   Stoneshard, the Dwarf Eats Mountain demo, The King is Watching and Slime Trader. The
   `ObjectTypeProbe` test mod checks it; the cookbook and the loader internals each have a page on it.
-
 - **A documentation site** (`docs-site/`, published to GitHub Pages): a mod-author guide, a cookbook
   of task recipes taken from the shipped mods, walkthroughs of HelloMod, Console and FastTravel, the
   API, analyzer and test host reference, and a "Loader internals" section on how the loader finds the
@@ -56,15 +34,62 @@ bump may break the mod API or the native CoreApi table; each version says so und
   **CL0005** (warning: a mod compiled against `<Game>.Interop` whose `[CoreModGame]` does not name
   that game, or that declares `[CoreModAnyGame]`).
 - The Loader tab lists mods that were not loaded: skipped as being for another game (grey), or refused
-  for not declaring one (red, with the reason). The test host's `status` lists them under `notLoaded`.
-- Release packaging: `tools\package-release.ps1` packs the loader (optionally with a private .NET
-  runtime) and one zip per mod, each extracting straight into a game folder, and can upload them to a
-  GitHub release. `.github/workflows/release.yml` builds and tests everything on a `v*` tag and
-  creates a draft release; interop-based mods are added from a machine with the game.
+  for not declaring one (red, with the reason). The test host's `status` lists them under `notLoaded`. A mod rebuilt for another game is unloaded on hot reload.
 - `INSTALL.md`: a player's guide to installing Lodestone and mods from a release, updating,
   uninstalling and troubleshooting.
 - `ModSettings`: mods declare settings for the player (`Toggle`, `Slider`, `Choice`) bound to keys of
   their `Config`. The loader keeps the list and a front end draws it; registrations go with the mod.
+
+### Changed
+
+- `tools\game-saves.ps1 restore -OnlyGameDir <dir>`: restores while copies of the game started from other
+  folders are running; a copy whose path cannot be read still blocks the restore.
+- **Breaking:** **every mod says which games it is for.** A mod declares exactly one of
+  `[assembly: CoreModGame("<exe name>", ...)]` or the new `[assembly: CoreModAnyGame]`. A mod that
+  declares neither (or both, or a `CoreModGame` naming no game) is no longer loaded: the log and the
+  Loader tab say what to add. Before, such a mod loaded silently into every game, so a mod written
+  for one game's objects and scripts ran inside another and failed there in confusing ways. A warning
+  would be easy to miss, and the fix is one line, so the loader refuses instead. Every shipped mod,
+  example, test mod and the `dotnet new coreloader-mod` template declares its games (a template mod
+  without `--gameName` declares its interop's game, or `CoreModAnyGame` without an interop). A mod built for an earlier release without
+  `CoreModGame` needs the attribute added and a rebuild.
+- The mod-author guide moved from `managed/README.md` to the documentation site, and the analyzers'
+  help links (CL0001-CL0005) now open each rule's own section there.
+- **Breaking:** CoreApi version 11 (object types: `objtype_status`, `objtype_define`, `objtype_event`,
+  `objtype_call_inherited`, `objtype_flush`). The managed runtime requires this exact version.
+
+### Fixed
+
+- **The overlay window keeps its place when the game resizes its window.** A game that opens a small
+  window and only then goes fullscreen (Stoneshard starts at 970x540) pulled the overlay to that
+  small window's edge, where it stayed for the session. The loader now remembers the saved or dragged
+  place and puts the window back there once the display allows; moving or resizing it by hand works
+  as before. Its saved layout starts afresh once (a layout saved before this could hold the stuck
+  position), and a new layout opens in the top-right corner instead of at (40, 40), clear of the HUD
+  most games draw at the top left.
+- **`ModConfig.Get(key, double)` reads any number.** A value set during the session keeps its CLR
+  type, and an int set there did not read back as a double. So a `ModSettings` choice, stored as an
+  int, never changed when clicked. Choices are now stored as numbers, and any numeric value reads
+  as a double.
+- **A failed array access no longer makes the game fail later.** The runtime reports a bad array index
+  through a global flag (with the index and size beside it), which its array builtins and compiled code
+  test after each access. Only the error path sets it and nothing clears it, because a real error
+  stops the game. When the loader caught such an error (e.g. a Console `array_get(arr, 6)` on a
+  6-element array), the flag stayed set. The game's next array access that tests it then raised the
+  game's modal "Code Error" box with the stale index, in unrelated code and seconds to minutes later.
+  The loader now finds the flag through the `array_get`/`array_set` builtins and clears it when a
+  guarded call that set it fails. `tools\smoke-generic.ps1` checks this.
+- `tools\run-game.ps1` stops only the game whose exe is in its `-GameDir`, not every copy of the game on
+  the machine.
+
+## [0.4.0] - 2026-09-30
+
+### Added
+
+- Release packaging: `tools\package-release.ps1` packs the loader (optionally with a private .NET
+  runtime) and one zip per mod, each extracting straight into a game folder, and can upload them to a
+  GitHub release. `.github/workflows/release.yml` builds and tests everything on a `v*` tag and
+  creates a draft release; interop-based mods are added from a machine with the game.
 - **Interop:** an `InstanceVars` class with GameMaker's built-in instance variables (`x`, `y`, `id`,
   `object_index`, `sprite_index`, ...), which the variable harvest never sees; every object's `Vars`
   class repeats them (objects never seen live have no `Vars`; use `InstanceVars`). The interop stamp now carries a format number, so installed interops
@@ -151,9 +176,34 @@ bump may break the mod API or the native CoreApi table; each version says so und
 - **"Tested on" section in `README.md`.** It lists each game tested so far, with its store, build
   type (YYC or VM), GML function count, and whether the loader and the Console mod work. It also says
   how to test another game.
+- **Runtime content:** `Content.AddSprite` / `ReplaceSprite` (PNG, JPEG or GIF) and `Content.AddSound` (OGG).
+  Everything is owned by the mod that added it and released on unload.
+  - A replaced sprite gets its original image back.
+  - A released sprite is emptied rather than deleted, and its slot is reused.
+- **`GameDraw.OnGui`:** draws into the game's own GUI layer each frame.
+  - It uses the game's Draw GUI event on a live object, and moves to another object when the room changes.
+  - Draw state is restored after mod handlers run.
+- `CoreLoader.Input`: pick mode. The next click outside the overlay is taken, and the game never sees it.
+- `CoreLoader.Code`: `Describe` and `FindCallers`. Builtins are named even where compiled code calls
+  them through the runner's helper by registry index.
+- `UI.TreeNode` / `TreePop`, `UI.SetClipboard`, `UI.InputTextEnter`, `UI.Guarded`.
+- `StructProbe` test mod.
+- Visual Studio support for interop-based projects:
+  - `<InteropGame>` finds a game's generated interop automatically, using the per-machine
+    `CoreLoader.user.props` or `CORELOADER_GAME_DIRS`.
+  - `tools\setup-dev.ps1` writes that file and a `CoreLoader.Dev.sln` that includes the interop projects.
+- Game-thread record, and refusal of off-thread GML calls in every native API entry point.
+- Logs rotate to `lodestone.prev.log`; identical repeated lines are rate-limited.
 
 ### Changed
 
+- **Breaking:** **the loader is now called Lodestone for players.** It installs to `<game>\Lodestone\` (was
+  `CoreLoader\`), logs to `Lodestone\Logs\lodestone.log`, and its overlay window, log lines and the
+  shipped mods' author read "Lodestone". The assembly, namespace, API, template and `CORELOADER_*`
+  variables keep the CoreLoader name. `tools\deploy-coreloader.ps1` moves an existing `CoreLoader\`
+  folder to `Lodestone\`, and interop-based projects now look for `<game>\Lodestone\Interop\`.
+  A mod made from the template before this has `<CoreLoaderDir>$(GameDir)\CoreLoader</CoreLoaderDir>`
+  in its csproj: change it to `$(GameDir)\Lodestone`, or it no longer finds CoreLoader.dll.
 - **Breaking:** CoreApi version 10 (UI round 3, `last_gml_error`, `instance_from_id`). The managed
   runtime requires this exact version.
 - The overlay's top-level tabs are Mods, Symbols and Status. Symbols and Status used to sit under Debug.
@@ -177,6 +227,19 @@ bump may break the mod API or the native CoreApi table; each version says so und
   timestamped `*.old` while an earlier one is still locked), and the new build is used from the next
   launch. Mods it copies are hot-reloaded at once, as before. The runtime is installed before
   `version.dll`, and without `-Live` a running game stops the deploy before anything is copied.
+- **Breaking:** CoreApi version 9. It adds pick mode, tree nodes, the clipboard, `builtin_address` and
+  `builtin_name_at`. The managed runtime requires this exact version.
+- **Breaking:** `Code.FindCallers` takes a millisecond budget instead of a function count.
+- Mods start only once the game has loaded its assets (Stoneshard: ~16 s). Nothing a mod
+  registers can take a slot the game is about to fill.
+- A script with mod hooks on it is called with private copies of its arguments. `SetArg` changes only
+  what the original and later handlers see, so a multiplier can no longer compound on constant call sites.
+- Hot reload loads the new build first. If it cannot load yet, the running copy stays and the load is retried.
+- `hook_install` accepts only the exact start of a `gml_*` function, with the calling convention its name
+  implies. `gml_GlobalScript_*` and `gml_RoomCC_*` hook as events.
+- The remote command file is read only when `CORELOADER_REMOTE=1`.
+- Interop generation collects game data a few milliseconds per frame, and writes files on a worker,
+  so the game no longer freezes.
 
 ### Removed
 
@@ -197,25 +260,6 @@ bump may break the mod API or the native CoreApi table; each version says so und
 
 ### Fixed
 
-- **The overlay window keeps its place when the game resizes its window.** A game that opens a small
-  window and only then goes fullscreen (Stoneshard starts at 970x540) pulled the overlay to that
-  small window's edge, where it stayed for the session. The loader now remembers the saved or dragged
-  place and puts the window back there once the display allows; moving or resizing it by hand works
-  as before. Its saved layout starts afresh once (a layout saved before this could hold the stuck
-  position), and a new layout opens in the top-right corner instead of at (40, 40), clear of the HUD
-  most games draw at the top left.
-- **`ModConfig.Get(key, double)` reads any number.** A value set during the session keeps its CLR
-  type, and an int set there did not read back as a double. So a `ModSettings` choice, stored as an
-  int, never changed when clicked. Choices are now stored as numbers, and any numeric value reads
-  as a double.
-- **A failed array access no longer makes the game fail later.** The runtime reports a bad array index
-  through a global flag (with the index and size beside it), which its array builtins and compiled code
-  test after each access. Only the error path sets it and nothing clears it, because a real error
-  stops the game. When the loader caught such an error (e.g. a Console `array_get(arr, 6)` on a
-  6-element array), the flag stayed set. The game's next array access that tests it then raised the
-  game's modal "Code Error" box with the stale index, in unrelated code and seconds to minutes later.
-  The loader now finds the flag through the `array_get`/`array_set` builtins and clears it when a
-  guarded call that set it fails. `tools\smoke-generic.ps1` checks this.
 - **Games that rebuild their swap chain no longer fail to start.** The overlay kept its back-buffer view
   across frames, which held the game's first swap chain alive after the game released it. DXGI then
   refused the replacement for the same window (`CreateSwapChain ... E_ACCESSDENIED`), and The King is
@@ -227,48 +271,6 @@ bump may break the mod API or the native CoreApi table; each version says so und
   logging failures. The game itself runs as before.
 - A GML call that failed with a thrown error no longer leaks the thrown value: the guard that catches it
   skips its destructor, so the loader releases it once after reading the message.
-
-## [0.4.0] - 2026-09-29
-
-### Added
-
-- **Runtime content:** `Content.AddSprite` / `ReplaceSprite` (PNG, JPEG or GIF) and `Content.AddSound` (OGG).
-  Everything is owned by the mod that added it and released on unload.
-  - A replaced sprite gets its original image back.
-  - A released sprite is emptied rather than deleted, and its slot is reused.
-- **`GameDraw.OnGui`:** draws into the game's own GUI layer each frame.
-  - It uses the game's Draw GUI event on a live object, and moves to another object when the room changes.
-  - Draw state is restored after mod handlers run.
-- `CoreLoader.Input`: pick mode. The next click outside the overlay is taken, and the game never sees it.
-- `CoreLoader.Code`: `Describe` and `FindCallers`. Builtins are named even where compiled code calls
-  them through the runner's helper by registry index.
-- `UI.TreeNode` / `TreePop`, `UI.SetClipboard`, `UI.InputTextEnter`, `UI.Guarded`.
-- `StructProbe` test mod.
-- Visual Studio support for interop-based projects:
-  - `<InteropGame>` finds a game's generated interop automatically, using the per-machine
-    `CoreLoader.user.props` or `CORELOADER_GAME_DIRS`.
-  - `tools\setup-dev.ps1` writes that file and a `CoreLoader.Dev.sln` that includes the interop projects.
-- Game-thread record, and refusal of off-thread GML calls in every native API entry point.
-- Logs rotate to `coreloader.prev.log`; identical repeated lines are rate-limited.
-
-### Changed
-
-- **Breaking:** CoreApi version 9. It adds pick mode, tree nodes, the clipboard, `builtin_address` and
-  `builtin_name_at`. The managed runtime requires this exact version.
-- **Breaking:** `Code.FindCallers` takes a millisecond budget instead of a function count.
-- Mods start only once the game has loaded its assets (Stoneshard: ~16 s). Nothing a mod
-  registers can take a slot the game is about to fill.
-- A script with mod hooks on it is called with private copies of its arguments. `SetArg` changes only
-  what the original and later handlers see, so a multiplier can no longer compound on constant call sites.
-- Hot reload loads the new build first. If it cannot load yet, the running copy stays and the load is retried.
-- `hook_install` accepts only the exact start of a `gml_*` function, with the calling convention its name
-  implies. `gml_GlobalScript_*` and `gml_RoomCC_*` hook as events.
-- The remote command file is read only when `CORELOADER_REMOTE=1`.
-- Interop generation collects game data a few milliseconds per frame, and writes files on a worker,
-  so the game no longer freezes.
-
-### Fixed
-
 - **Leaks:**
   - Each native variable access leaked one string.
   - Legacy tools handed the game buffers that were later freed.
@@ -341,8 +343,9 @@ The native Stoneshard debugging and cheat mod: items, potions, character, body, 
 game speed, saves, console and tracer. Its tools are still in `src/` and appear only in Stoneshard;
 see `README.md`. A port to a C# mod is planned.
 
-[Unreleased]: https://github.com/Forevka/stoneshard-mod/compare/0b69328...HEAD
-[0.4.0]: https://github.com/Forevka/stoneshard-mod/compare/a3a13b0...0b69328
+[Unreleased]: https://github.com/Forevka/stoneshard-mod/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Forevka/stoneshard-mod/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Forevka/stoneshard-mod/compare/a3a13b0...v0.4.0
 [0.3.0]: https://github.com/Forevka/stoneshard-mod/compare/a78bc5e...a3a13b0
 [0.2.0]: https://github.com/Forevka/stoneshard-mod/compare/857b7ba...a78bc5e
 [0.1.0]: https://github.com/Forevka/stoneshard-mod/compare/877c421...857b7ba
