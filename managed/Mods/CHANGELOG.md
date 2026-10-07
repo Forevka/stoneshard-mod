@@ -8,6 +8,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-07
+
 ### Added
 
 - **StoneshardTrials: the trial's dungeon keeps the player.** Its way out to the surface is refused while
@@ -22,27 +24,6 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reports what each did (turns, HP before and after, the target's fate, new log lines). `hx.click` is
   the mouse fallback, refused unless the game is in the foreground. Clients: `tools\stoneshard.ps1`
   (compact tables) and `tools\stoneshard_harness.py`. See `managed/Mods/StoneshardHarness/README.md`.
-- **Reliquary** (Stoneshard): six artifacts that ask for something back, one per family of the
-  Stoneshard Reliquary design - Stavebound Ember, Gorgoneion, Wolf's Heart, Copper Ring of Faith,
-  Grafted Hand of the Hanged Man, Pilgrim's Millstone. Written only against the generated interop.
-  Relics are vanilla carrier items tagged in their saved `data` map, with placeholder icons; they work
-  from the bag (the ring when worn), show a live status line in the game's own tooltip, report in the
-  game's action log, and activate by hovering one and pressing a key (`activateKey`, default U).
-  Test-host commands `reliq.*`.
-  - The other seventeen: Faceless Mirror, Split Quiver, Cinder Rosary, Echoing Bell, Debtor's Knot,
-    Weeping Candle, Pallbearer's Coin, Vessel of Borrowed Years, Reliquary of Saint Mardun, Usurer's
-    Scale, Sundered Gate, Censer of the Drowned Choir, Lodestone Idol, Surveyor's Chain, Iron Lung,
-    Oath-Stone of the Deep Road, Sated Worm. Relics can install their own hooks (`Relic.Install`),
-    on scripts or object events.
-  - Pallbearer's Coin and the Vessel of Borrowed Years save you from bleeding out too, not only from
-    killing hits (`Relic.OnPlayerDying`, run as `scr_pure_damage` returns).
-  - The Censer of the Drowned Choir is not registered for now: neither of the game's statuses it used
-    stops abilities, and one of them crashed the game when it expired.
-- **FastTravel** (Stoneshard): fast travel from the world map. The map's own controls bar gains a
-  "[F] - Fast Travel" entry (click it, or press `toggleKey`); while the mode is on a banner in the
-  game's style says what a click on the hovered cell would do, and clicking land you have visited, or
-  a cell next to one, travels there the way a border crossing does. A blocked arrival is moved to the
-  nearest free cell joined to the room's edges; travel starts only from the open world (not inside a building or dungeon) and is refused with enemies nearby. Test-host commands `ft.*`.
 - **StoneshardTrials** (Stoneshard, proof of concept): a roguelike loop in the spirit of BG3's
   *Trials of Tav*. A new Adventure's Osbrook tavern is the hub, with a banner saying to leave it. Its
   street door opens onto a crypt, catacombs or bastion whose boss still lives, entered the way the
@@ -91,7 +72,39 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **ModMenu** (Stoneshard): a **MODS** entry in the pause menu that opens a window, drawn with the
   game's own board, buttons and text, for every setting registered through `ModSettings`. Test-host
   commands `mm.*`.
-- **TavernGames** (Stoneshard): dice and card games against tavern NPCs, for crowns. Talk to an
+
+### Changed
+
+- **Console, ScriptSpy, SpeedControl and ContentDemo declare the games they are for** (`CoreModAnyGame`),
+  as every mod must from this release. Builds of them from 0.4.0 are refused by the 0.5.0 loader: update them
+  together with it.
+
+## [0.4.0] - 2026-09-30
+
+### Added
+
+- **Reliquary** (Stoneshard): six artifacts that ask for something back, one per family of the
+  Stoneshard Reliquary design - Stavebound Ember, Gorgoneion, Wolf's Heart, Copper Ring of Faith,
+  Grafted Hand of the Hanged Man, Pilgrim's Millstone. Written only against the generated interop.
+  Relics are vanilla carrier items tagged in their saved `data` map, with placeholder icons; they work
+  from the bag (the ring when worn), show a live status line in the game's own tooltip, report in the
+  game's action log, and activate by hovering one and pressing a key (`activateKey`, default U).
+  Test-host commands `reliq.*`.
+  - The other seventeen: Faceless Mirror, Split Quiver, Cinder Rosary, Echoing Bell, Debtor's Knot,
+    Weeping Candle, Pallbearer's Coin, Vessel of Borrowed Years, Reliquary of Saint Mardun, Usurer's
+    Scale, Sundered Gate, Censer of the Drowned Choir, Lodestone Idol, Surveyor's Chain, Iron Lung,
+    Oath-Stone of the Deep Road, Sated Worm. Relics can install their own hooks (`Relic.Install`),
+    on scripts or object events.
+  - Pallbearer's Coin and the Vessel of Borrowed Years save you from bleeding out too, not only from
+    killing hits (`Relic.OnPlayerDying`, run as `scr_pure_damage` returns).
+  - The Censer of the Drowned Choir is not registered for now: neither of the game's statuses it used
+    stops abilities, and one of them crashed the game when it expired.
+- **FastTravel** (Stoneshard): fast travel from the world map. The map's own controls bar gains a
+  "[F] - Fast Travel" entry (click it, or press `toggleKey`); while the mode is on a banner in the
+  game's style says what a click on the hovered cell would do, and clicking land you have visited, or
+  a cell next to one, travels there the way a border crossing does. A blocked arrival is moved to the
+  nearest free cell joined to the room's edges; travel starts only from the open world (not inside a building or dungeon) and is refused with enemies nearby. Test-host commands `ft.*`.
+- **TavernGames** (Stoneshard; added to the 0.4.0 release on 2026-10-01): dice and card games against tavern NPCs, for crowns. Talk to an
   innkeeper, a drunk, a sellsword or anyone friendly inside a tavern and their conversation offers a
   line asking for a game ("Fancy a game? Dice, or cards?") just above the goodbye; it opens a table drawn with the game's own
   board, buttons, colour text and sounds (a play key, `playKey`, can be set as well; off by default).
@@ -120,6 +133,13 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     that sees no bottle within 2 s gives up, rather than rewriting the next bottle the game makes.
   - The item catalogue is read from the live object table and from the game exe's own CSV rows.
   - The save folder is backed up once per session, to `<game>\Lodestone\save-backups`, before the first cheat.
+- **Console Inspector tab:** click any instance in the game to inspect it.
+  - It shows the object, its parents and every variable.
+  - Variables can be edited with GML expressions, frozen, and expanded as trees.
+  - A selection can be dumped to a file or the clipboard.
+  - A read-only code view lists each event's calls (scripts, events and builtins) and strings, with a callers search.
+- New console commands: `inspect`, `dump`, `code` and `callers`.
+- `ContentDemo` mod: the runtime content and `GameDraw` example.
 
 ### Changed
 
@@ -151,21 +171,6 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `scr_inventory_get_containers`) is what pointed at it.
 - The test host's `cheats.potion` answered the wrong build number when the bottle's alarm ran during the
   give itself, so a client waiting for the result timed out.
-
-## [0.4.0] - 2026-09-29
-
-### Added
-
-- **Console Inspector tab:** click any instance in the game to inspect it.
-  - It shows the object, its parents and every variable.
-  - Variables can be edited with GML expressions, frozen, and expanded as trees.
-  - A selection can be dumped to a file or the clipboard.
-  - A read-only code view lists each event's calls (scripts, events and builtins) and strings, with a callers search.
-- New console commands: `inspect`, `dump`, `code` and `callers`.
-- `ContentDemo` mod: the runtime content and `GameDraw` example.
-
-### Fixed
-
 - **Console and Inspector cannot disable themselves:** bad hex literals, nesting over 64 levels,
   `obj[expr]` evaluated twice, and handler errors are all caught.
 
@@ -183,7 +188,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - tools: ScriptSpy, GlobalsEditor, InstanceInspector, SpeedControl;
   - game-specific: DwarfBoost, StoneshardBoost.
 
-[Unreleased]: https://github.com/Forevka/stoneshard-mod/compare/0b69328...HEAD
-[0.4.0]: https://github.com/Forevka/stoneshard-mod/compare/a3a13b0...0b69328
+[Unreleased]: https://github.com/Forevka/stoneshard-mod/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Forevka/stoneshard-mod/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Forevka/stoneshard-mod/compare/a3a13b0...v0.4.0
 [0.3.0]: https://github.com/Forevka/stoneshard-mod/compare/a78bc5e...a3a13b0
 [0.2.0]: https://github.com/Forevka/stoneshard-mod/compare/857b7ba...a78bc5e

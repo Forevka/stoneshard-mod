@@ -8,7 +8,7 @@ the `StoneshardCheats` C# mod, and `src/` holds no game-specific code.
 - Player-facing brand: **Lodestone** (install folder `<game>\Lodestone\`, `lodestone.log`, overlay title,
   release zips). The code, assembly and API stay CoreLoader. Native: `paths::kInstallFolder`.
 - Releases: `tools\package-release.ps1` + `.github/workflows/release.yml` (draft release on a `v*` tag;
-  interop mods uploaded locally with `-Mods FastTravel,Reliquary -NoLoader -Upload v<ver>`).
+  interop mods uploaded locally with `-Mods FastTravel,Reliquary,TavernGames,StoneshardTrials,ModMenu -NoLoader -Upload v<ver>`).
 - User-facing guide: the documentation site in `docs-site/` (Docusaurus; mod authoring, cookbook, API, loader internals), published to GitHub Pages by `.github/workflows/docs.yml`. `README.md` is the project overview; `managed/README.md` is a stub pointing at the site.
 - History: `CHANGELOG.md` (the loader: native, API, tools, test mods) and `managed/Mods/CHANGELOG.md` (the shipped
   mods). **Update the right one with every user-visible change** (see Versioning).

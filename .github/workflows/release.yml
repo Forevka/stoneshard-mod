@@ -3,11 +3,11 @@
 #
 # A pushed tag v<Version> (matching <Version> in managed/CoreLoader/CoreLoader.csproj)
 # creates a DRAFT release with the zips. Mods written against a generated interop
-# (FastTravel, Reliquary) cannot be built here - there is no game - so add them
+# (FastTravel, Reliquary, TavernGames, StoneshardTrials, ModMenu) cannot be built here - there is no game - so add them
 # from a machine with Stoneshard installed, then publish the draft:
 #
 #   dotnet build managed\CoreLoader.sln -c Release
-#   tools\package-release.ps1 -Mods FastTravel,Reliquary -NoLoader -Upload v<Version>
+#   tools\package-release.ps1 -Mods FastTravel,Reliquary,TavernGames,StoneshardTrials,ModMenu -NoLoader -Upload v<Version>
 #
 # Run by hand (workflow_dispatch), it builds and keeps the zips as a workflow
 # artifact without releasing anything.
