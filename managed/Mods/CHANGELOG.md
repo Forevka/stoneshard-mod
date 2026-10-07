@@ -8,8 +8,6 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-10-07
-
 ### Added
 
 - **StoneshardTrials: the trial's dungeon keeps the player.** Its way out to the surface is refused while
@@ -72,6 +70,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **ModMenu** (Stoneshard): a **MODS** entry in the pause menu that opens a window, drawn with the
   game's own board, buttons and text, for every setting registered through `ModSettings`. Test-host
   commands `mm.*`.
+
+## [0.5.0] - 2026-10-07
 
 ### Changed
 
